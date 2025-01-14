@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
-import { objectPick } from '@vueuse/shared';
+import { HistoryEventEntryType } from '@rotki/common';
+import { pick } from 'es-toolkit';
 import {
+  isAssetMovementEvent,
   isEventAccountingRuleProcessed,
   isEventMissingAccountingRule,
+  isEvmEvent,
 } from '@/utils/history/events';
+import { useSupportedChains } from '@/composables/info/chains';
+import HistoryEventAction from '@/components/history/events/HistoryEventAction.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import HistoryEventNote from '@/components/history/events/HistoryEventNote.vue';
+import HistoryEventAsset from '@/components/history/events/HistoryEventAsset.vue';
+import HistoryEventType from '@/components/history/events/HistoryEventType.vue';
+import LazyLoader from '@/components/helper/LazyLoader.vue';
 import type { HistoryEventEntry } from '@/types/history/events';
 
 interface DeleteEvent {
@@ -15,6 +24,7 @@ interface DeleteEvent {
 const props = withDefaults(
   defineProps<{
     events: HistoryEventEntry[];
+    eventGroup: HistoryEventEntry;
     loading?: boolean;
     total?: number;
   }>(),
@@ -34,18 +44,20 @@ const { t } = useI18n();
 const { getChain } = useSupportedChains();
 
 function isNoTxHash(item: HistoryEventEntry) {
-  return item.entryType === HistoryEventEntryType.EVM_EVENT
+  return (
+    item.entryType === HistoryEventEntryType.EVM_EVENT
     && ((item.counterparty === 'eth2' && item.eventSubtype === 'deposit asset')
-    || (item.counterparty === 'gitcoin' && item.eventSubtype === 'apply')
-    || item.counterparty === 'safe-multisig');
+      || (item.counterparty === 'gitcoin' && item.eventSubtype === 'apply')
+      || item.counterparty === 'safe-multisig')
+  );
 }
 
 const editEvent = (item: HistoryEventEntry) => emit('edit-event', item);
 
 function deleteEvent(item: HistoryEventEntry) {
   return emit('delete-event', {
-    item,
     canDelete: isEvmEvent(item) ? props.events.length > 1 : true,
+    item,
   });
 }
 
@@ -61,18 +73,24 @@ function getEventNoteAttrs(event: HistoryEventEntry) {
 
   if ('blockNumber' in event)
     data.blockNumber = event.blockNumber;
+  else if ('blockNumber' in props.eventGroup)
+    data.blockNumber = props.eventGroup.blockNumber;
 
   if ('counterparty' in event && event.counterparty)
     data.counterparty = event.counterparty;
 
   // todo: validate optional or nullable state of schema
-  const { notes, asset } = objectPick(event, ['notes', 'asset']);
+  const { asset, notes } = pick(event, ['notes', 'asset']);
 
   return {
-    notes: notes || undefined,
     asset,
+    notes: notes || undefined,
     ...data,
   };
+}
+
+function hideEventAction(item: HistoryEventEntry): boolean {
+  return isAssetMovementEvent(item) && item.eventSubtype === 'fee';
 }
 </script>
 
@@ -109,6 +127,8 @@ function getEventNoteAttrs(event: HistoryEventEntry) {
           align="end"
           :delete-tooltip="t('transactions.events.actions.delete')"
           :edit-tooltip="t('transactions.events.actions.edit')"
+          :no-delete="hideEventAction(item)"
+          :no-edit="hideEventAction(item)"
           @edit-click="editEvent(item)"
           @delete-click="deleteEvent(item)"
         >
@@ -126,7 +146,7 @@ function getEventNoteAttrs(event: HistoryEventEntry) {
               >
                 <RuiIcon
                   size="16"
-                  name="information-line"
+                  name="lu-info"
                 />
               </RuiButton>
             </template>

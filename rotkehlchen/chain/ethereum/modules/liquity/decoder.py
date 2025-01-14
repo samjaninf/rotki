@@ -11,6 +11,7 @@ from rotkehlchen.chain.evm.decoding.structures import (
     DecodingOutput,
 )
 from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_ETH, A_LQTY, A_LUSD
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
@@ -18,7 +19,7 @@ from rotkehlchen.history.events.structures.evm_event import LIQUITY_STAKING_DETA
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress, EvmTransaction
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import (
     ACTIVE_POOL,
@@ -82,16 +83,34 @@ class LiquityDecoder(DecoderInterface):
             # This comment applies to all decoding functions in this file.
             return DecodingOutput(matched_counterparty=CPT_LIQUITY)
 
+        debt_event: EvmEvent | None = None
+        fee_event: EvmEvent | None = None
         for event in context.decoded_events:
             try:
                 crypto_asset = event.asset.resolve_to_crypto_asset()
             except (UnknownAsset, WrongAssetType):
                 self.notify_user(event=event, counterparty=CPT_LIQUITY)
                 continue
+
+            if event.event_type == HistoryEventType.SPEND and event.event_subtype == HistoryEventSubType.FEE and event.counterparty == CPT_LIQUITY and event.asset == self.lusd:  # noqa: E501
+                fee_event = event
+                if debt_event:  # debt event appeared before fee event. We need to make changes
+                    # You borrow debt + fee, and right after pay the fee. If we
+                    # don't do that the fee payment is a missing acquisition
+                    debt_event.balance.amount += fee_event.balance.amount
+                    debt_event.notes = f'Generate {debt_event.balance.amount} LUSD from liquity'
+
             if event.event_type == HistoryEventType.RECEIVE and event.asset == A_LUSD:
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.GENERATE_DEBT
                 event.counterparty = CPT_LIQUITY
+                debt_event = event
+
+                if fee_event:  # fee event appears before the debt event, we need to make changes
+                    # You borrow debt + fee, and right after pay the fee. If we
+                    # don't do that the fee payment is a missing acquisition
+                    event.balance.amount += fee_event.balance.amount
+
                 event.notes = f'Generate {event.balance.amount} LUSD from liquity'
 
             elif event.event_type == HistoryEventType.SPEND and event.event_subtype == HistoryEventSubType.NONE and event.asset == A_LUSD:  # noqa: E501
@@ -110,6 +129,10 @@ class LiquityDecoder(DecoderInterface):
                 event.counterparty = CPT_LIQUITY
                 event.notes = f'Withdraw {event.balance.amount} {crypto_asset.symbol} collateral from liquity'  # noqa: E501
 
+        maybe_reshuffle_events(  # make sure debt generation event comes before fee
+            ordered_events=[debt_event, fee_event],
+            events_list=context.decoded_events,
+        )
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_stability_pool_event(
@@ -123,22 +146,23 @@ class LiquityDecoder(DecoderInterface):
         if self.base.maybe_get_proxy_owner(context.transaction.to_address) is not None and post_decoding is False:  # type: ignore[arg-type]  # transaction.to_address is not None here  # noqa: E501
             return DecodingOutput(matched_counterparty=CPT_LIQUITY)
 
+        deposit_event, withdraw_event, reward_events = None, None, []
         collected_eth, collected_lqty = ZERO, ZERO
         if context.tx_log.topics[0] == STABILITY_POOL_GAIN_WITHDRAW:
             collected_eth = asset_normalized_value(
-                amount=hex_or_bytes_to_int(context.tx_log.data[0:32]),
+                amount=int.from_bytes(context.tx_log.data[0:32]),
                 asset=self.eth,
             )
         elif context.tx_log.topics[0] in {STABILITY_POOL_LQTY_PAID_TO_DEPOSITOR, STABILITY_POOL_LQTY_PAID_TO_FRONTEND}:  # noqa: E501
             collected_lqty = asset_normalized_value(
-                amount=hex_or_bytes_to_int(context.tx_log.data[0:32]),
+                amount=int.from_bytes(context.tx_log.data[0:32]),
                 asset=self.lqty,
             )
             if collected_lqty == ZERO:
                 return DEFAULT_DECODING_OUTPUT
 
             if context.tx_log.topics[0] == STABILITY_POOL_LQTY_PAID_TO_FRONTEND:
-                frontend_address = hex_or_bytes_to_address(context.tx_log.topics[1])
+                frontend_address = bytes_to_address(context.tx_log.topics[1])
                 event = self.base.make_event_from_transaction(
                     transaction=context.transaction,
                     tx_log=context.tx_log,
@@ -159,6 +183,7 @@ class LiquityDecoder(DecoderInterface):
                 event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
                 event.counterparty = CPT_LIQUITY
                 event.notes = f"Deposit {event.balance.amount} {self.lusd.symbol} in liquity's stability pool"  # noqa: E501
+                deposit_event = event
             elif event.event_type == HistoryEventType.RECEIVE:
                 if (
                     (
@@ -176,12 +201,25 @@ class LiquityDecoder(DecoderInterface):
                     event.counterparty = CPT_LIQUITY
                     resolved_asset = event.asset.resolve_to_asset_with_symbol()
                     event.notes = f"Collect {event.balance.amount} {resolved_asset.symbol} from liquity's stability pool"  # noqa: E501
+                    reward_events.append(event)
                 elif event.asset == self.lusd:
                     event.event_type = HistoryEventType.STAKING
                     event.event_subtype = HistoryEventSubType.REMOVE_ASSET
                     event.counterparty = CPT_LIQUITY
                     event.notes = f"Withdraw {event.balance.amount} {self.lusd.symbol} from liquity's stability pool"  # noqa: E501
+                    withdraw_event = event
+            elif event.counterparty == CPT_LIQUITY and event.event_type == HistoryEventType.STAKING:  # noqa: E501  # already decoded events
+                if event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET:
+                    deposit_event = event
+                elif event.event_subtype == HistoryEventSubType.REMOVE_ASSET:
+                    withdraw_event = event
+                elif event.event_subtype == HistoryEventSubType.REWARD:
+                    reward_events.append(event)
 
+        maybe_reshuffle_events(
+            ordered_events=[deposit_event, withdraw_event, *reward_events],
+            events_list=context.decoded_events,
+        )
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_borrower_operations(
@@ -195,12 +233,12 @@ class LiquityDecoder(DecoderInterface):
         if self.base.maybe_get_proxy_owner(context.transaction.to_address) is not None and post_decoding is False:  # type: ignore[arg-type]  # transaction.to_address is not None here  # noqa: E501
             return DecodingOutput(matched_counterparty=CPT_LIQUITY)
 
-        borrower = self.base.get_address_or_proxy_owner(hex_or_bytes_to_address(context.tx_log.topics[1]))  # noqa: E501
+        borrower = self.base.get_address_or_proxy_owner(bytes_to_address(context.tx_log.topics[1]))
         if borrower is None or self.base.is_tracked(borrower) is False:
             return DEFAULT_DECODING_OUTPUT
 
         if (fee_amount := asset_normalized_value(
-            amount=hex_or_bytes_to_int(context.tx_log.data[0:32]),
+            amount=int.from_bytes(context.tx_log.data[0:32]),
             asset=self.lusd,
         )) == ZERO:  # for many operations it emits a zero event log
             return DEFAULT_DECODING_OUTPUT
@@ -232,12 +270,13 @@ class LiquityDecoder(DecoderInterface):
 
         user, lqty_amount = None, ZERO
         if context.tx_log.topics[0] == STAKING_LQTY_CHANGE:
-            user = self.base.get_address_or_proxy_owner(hex_or_bytes_to_address(context.tx_log.topics[1]))  # noqa: E501
+            user = self.base.get_address_or_proxy_owner(bytes_to_address(context.tx_log.topics[1]))
             lqty_amount = asset_normalized_value(
-                amount=hex_or_bytes_to_int(context.tx_log.data[0:32]),
+                amount=int.from_bytes(context.tx_log.data[0:32]),
                 asset=self.lqty,
             )
 
+        deposit_withdraw_event, reward_events = None, []
         for event in context.decoded_events:
             if (
                 context.tx_log.topics[0] == STAKING_LQTY_CHANGE and
@@ -255,12 +294,14 @@ class LiquityDecoder(DecoderInterface):
                     event.counterparty = CPT_LIQUITY
                     event.notes = f'Stake {event.balance.amount} {self.lqty.symbol} in the Liquity protocol'  # noqa: E501
                     event.extra_data = extra_data
+                    deposit_withdraw_event = event
                 elif event.location_label == user and event.event_type == HistoryEventType.RECEIVE:
                     event.event_type = HistoryEventType.STAKING
                     event.event_subtype = HistoryEventSubType.REMOVE_ASSET
                     event.counterparty = CPT_LIQUITY
                     event.notes = f'Unstake {event.balance.amount} {self.lqty.symbol} from the Liquity protocol'  # noqa: E501
                     event.extra_data = extra_data
+                    deposit_withdraw_event = event
             elif (
                 context.tx_log.topics[0] == STAKING_ETH_SENT and
                 event.asset in STAKING_REWARDS_ASSETS and
@@ -270,7 +311,17 @@ class LiquityDecoder(DecoderInterface):
                 event.event_subtype = HistoryEventSubType.REWARD
                 event.counterparty = CPT_LIQUITY
                 event.notes = f"Receive reward of {event.balance.amount} {event.asset.resolve_to_crypto_asset().symbol} from Liquity's staking"  # noqa: E501
+                reward_events.append(event)
+            elif event.counterparty == CPT_LIQUITY and event.event_type == HistoryEventType.STAKING:  # noqa: E501
+                if event.event_subtype == HistoryEventSubType.REWARD:  # already decoded reward events  # noqa: E501
+                    reward_events.append(event)
+                elif event.event_subtype in (HistoryEventSubType.DEPOSIT_ASSET, HistoryEventSubType.REMOVE_ASSET):  # already decoded deposit/withdraw event # noqa: E501
+                    deposit_withdraw_event = event
 
+        maybe_reshuffle_events(
+            ordered_events=[deposit_withdraw_event, *reward_events],
+            events_list=context.decoded_events,
+        )
         return DEFAULT_DECODING_OUTPUT
 
     # -- DecoderInterface methods

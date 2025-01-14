@@ -74,7 +74,8 @@ DB Upgrade status
 =========================
 
 The messages sent by rotki when a user is logging in and a db upgrade is happening. The format is the following.
-
+A message having ``total_steps`` and ``current_step`` being ``0`` is sent at the start for the frontend to
+switch to the progress screen from the login screen.
 
 ::
 
@@ -101,6 +102,8 @@ Data migration status
 =========================
 
 The messages sent by rotki when a user is logging in and a db upgrade is happening. The format is the following.
+A message having ``total_steps`` and ``current_step`` being ``0`` is sent at the start for the frontend to
+switch to the progress screen from the login screen.
 
 
 ::
@@ -347,3 +350,48 @@ When a reminder for a calendar event is processed we emit a message with the fol
 
 
 - ``data``: Contains the information of the calendar event, that is: identifier, name, description, timestamp, address, blockchain, counterparty and color.
+
+
+Protocol cache updates
+============================
+
+Whenever a protocol cache is being updated for protocols like Curve, Convex, Gearbox, [Velo/Aero]drome, etc., Messages are emitted every 5 seconds to notify the progress of it.
+
+::
+
+    {
+        "data": {
+            "protocol":"curve",
+            "chain":"ethereum",
+            "processed": 324,
+            "total":3042,
+        },
+        "type":"protocol_cache_updates"
+    }
+
+
+- ``data``: Contains the information of the progress of the process of updating the cache, that is: protocol, chain, processed, and total.
+
+
+Unknown asset on exchange
+============================
+
+If an unknown asset is encountered on an exchange we emit a message with the following format.
+
+::
+
+    {
+        "type": "exchange_unknown_asset",
+        "data": {
+            "location": "bybit",
+            "name": "Bybit 1",
+            "identifier": "ENA",
+            "details": "balance query",
+        }
+    }
+
+
+- ``location``: Exchange where the asset was found.
+- ``name``: Differentiates between multiple instances of the same exchange.
+- ``identifier``: Asset identifier of the unknown asset.
+- ``details``: Details about what type of event was being processed when the unknown asset was encountered.

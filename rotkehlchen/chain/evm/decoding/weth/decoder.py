@@ -18,7 +18,7 @@ from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
@@ -61,8 +61,8 @@ class WethDecoderBase(DecoderInterface, ABC):
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_deposit_event(self, context: DecoderContext) -> DecodingOutput:
-        depositor = hex_or_bytes_to_address(context.tx_log.topics[1])
-        deposited_amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        depositor = bytes_to_address(context.tx_log.topics[1])
+        deposited_amount_raw = int.from_bytes(context.tx_log.data[:32])
         deposited_amount = asset_normalized_value(
             amount=deposited_amount_raw,
             asset=self.base_asset,
@@ -100,8 +100,10 @@ class WethDecoderBase(DecoderInterface, ABC):
         return DecodingOutput(event=in_event)
 
     def _decode_withdrawal_event(self, context: DecoderContext) -> DecodingOutput:
-        withdrawer = hex_or_bytes_to_address(context.tx_log.topics[1])
-        withdrawn_amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        if not self.base.is_tracked(withdrawer := bytes_to_address(context.tx_log.topics[1])):
+            return DEFAULT_DECODING_OUTPUT
+
+        withdrawn_amount_raw = int.from_bytes(context.tx_log.data[:32])
         withdrawn_amount = asset_normalized_value(
             amount=withdrawn_amount_raw,
             asset=self.base_asset,

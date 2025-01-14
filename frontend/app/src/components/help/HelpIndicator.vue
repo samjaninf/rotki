@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+
 const props = defineProps<{ visible: boolean }>();
 
 const emit = defineEmits<{ (e: 'update:visible', visible: boolean): void }>();
@@ -9,8 +11,6 @@ const { t } = useI18n();
 function toggleVisibility() {
   emit('update:visible', !get(visible));
 }
-
-const css = useCssModule();
 </script>
 
 <template>
@@ -19,8 +19,8 @@ const css = useCssModule();
     @click="toggleVisibility()"
   >
     <RuiIcon
-      :class="{ [css.visible]: visible }"
-      name="question-line"
+      :class="{ [$style.visible]: visible }"
+      name="lu-circle-help"
     />
   </MenuTooltipButton>
 </template>

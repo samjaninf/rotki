@@ -1,15 +1,17 @@
 <script setup lang="ts">
+import { checkIfDevelopment } from '@shared/utils';
+import { useSessionStore } from '@/store/session';
+import { useSessionSettingsStore } from '@/store/settings/session';
+
 const DevApp = defineAsyncComponent(() => import('@/DevApp.vue'));
 
 const { animationsEnabled } = storeToRefs(useSessionSettingsStore());
 const route = useRoute();
 
 const isDevelopment = checkIfDevelopment();
-const isPlayground = computed(
-  () => isDevelopment && get(route).name === 'playground',
-);
+const isPlayground = computed(() => isDevelopment && get(route).path === '/playground');
 
-const { locale } = useI18nLocale();
+const { locale } = useI18n();
 
 const { adaptiveLanguage } = storeToRefs(useSessionStore());
 
@@ -28,16 +30,15 @@ watch(adaptiveLanguage, (language) => {
 </script>
 
 <template>
-  <VApp
+  <div
     v-if="!isPlayground"
     id="rotki"
     :key="adaptiveLanguage"
-    class="app"
+    class="app !text-rui-text bg-rui-grey-50 dark:bg-[#121212]"
     :class="{ ['app--animations-disabled']: !animationsEnabled }"
   >
     <slot />
-    <AppPremiumManager />
-  </VApp>
+  </div>
   <DevApp v-else />
 </template>
 

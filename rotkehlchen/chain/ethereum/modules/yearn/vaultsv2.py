@@ -1,8 +1,6 @@
 import logging
 from typing import TYPE_CHECKING
 
-from gevent.lock import Semaphore
-
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.constants.misc import EXP18
@@ -12,7 +10,6 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import YEARN_VAULTS_V2_PROTOCOL, ChecksumEvmAddress
-from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 
 from .constants import BLOCKS_PER_YEAR
@@ -23,6 +20,7 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.premium.premium import Premium
+    from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -35,12 +33,11 @@ class YearnVaultsV2(EthereumModule):
             ethereum_inquirer: 'EthereumInquirer',
             database: 'DBHandler',
             premium: 'Premium | None',  # pylint: disable=unused-argument
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
     ) -> None:
         self.ethereum = ethereum_inquirer
         self.database = database
         self.msg_aggregator = msg_aggregator
-        self.history_lock = Semaphore()
 
     def _calculate_vault_roi_and_pps(self, vault: EvmToken) -> tuple[FVal | None, int]:
         """
@@ -70,14 +67,14 @@ class YearnVaultsV2(EthereumModule):
         nominator = price_per_full_share - EXP18
         now_block_number = self.ethereum.get_latest_block_number()
         try:
-            denonimator = now_block_number - self.ethereum.etherscan.get_blocknumber_by_time(ts=vault.started, closest='before')  # noqa: E501
+            denominator = now_block_number - self.ethereum.etherscan.get_blocknumber_by_time(ts=vault.started, closest='before')  # noqa: E501
         except RemoteError as e:
             self.msg_aggregator.add_error(
                 f'Failed to query ROI for vault {vault.evm_address}. '
                 f'Etherscan error {e!s}.',
             )
             return None, price_per_full_share
-        return FVal(nominator) / FVal(denonimator) * BLOCKS_PER_YEAR / EXP18, price_per_full_share
+        return FVal(nominator) / FVal(denominator) * BLOCKS_PER_YEAR / EXP18, price_per_full_share
 
     def _get_single_addr_balance(
             self,

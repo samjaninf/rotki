@@ -14,7 +14,7 @@ from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import CPT_METAMASK_SWAPS, METAMASK_FEE_TOPIC, SWAP_SIGNATURE
 
@@ -50,22 +50,22 @@ class MetamaskCommonDecoder(DecoderInterface):
         if context.tx_log.topics[0] != SWAP_SIGNATURE:
             return DEFAULT_DECODING_OUTPUT
 
-        sender = hex_or_bytes_to_address(context.tx_log.topics[2])
+        sender = bytes_to_address(context.tx_log.topics[2])
         if not self.base.is_tracked(sender):
             return DEFAULT_DECODING_OUTPUT
 
         fee_raw = fee_asset_address = fee_asset = None  # extract the fee info
         for log in context.all_logs:
             if log.topics[0] == METAMASK_FEE_TOPIC:
-                fee_raw = hex_or_bytes_to_int(log.data)
+                fee_raw = int.from_bytes(log.data)
                 fee_asset = self.evm_inquirer.native_token
                 fee_asset_address = log.address
                 break
             if (
                 log.topics[0] == ERC20_OR_ERC721_TRANSFER and
-                hex_or_bytes_to_address(log.topics[2]) == self.fee_receiver_address
+                bytes_to_address(log.topics[2]) == self.fee_receiver_address
             ):
-                fee_raw = hex_or_bytes_to_int(log.data)
+                fee_raw = int.from_bytes(log.data)
                 fee_asset_address = log.address
                 break
 
@@ -81,7 +81,10 @@ class MetamaskCommonDecoder(DecoderInterface):
                 event.notes = f'Swap {event.balance.amount} {event.asset.resolve_to_asset_with_symbol().symbol} in metamask'  # noqa: E501
                 event.address = self.router_address
                 out_event = event
-            elif event.event_type == HistoryEventType.RECEIVE and event.location_label == sender:  # find the receive event  # noqa: E501
+            elif (
+                    (event.event_type == HistoryEventType.TRADE and event.event_subtype == HistoryEventSubType.RECEIVE) or  # noqa: E501
+                    (event.event_type == HistoryEventType.RECEIVE and event.event_subtype == HistoryEventSubType.NONE and event.location_label == sender)  # noqa: E501
+            ):  # find the receive event
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
                 event.counterparty = CPT_METAMASK_SWAPS

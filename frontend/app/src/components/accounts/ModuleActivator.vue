@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { type Module, SUPPORTED_MODULES } from '@/types/modules';
+import { useQueriedAddressesStore } from '@/store/session/queried-addresses';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useAccountLoading } from '@/composables/accounts/loading';
+import AppImage from '@/components/common/AppImage.vue';
 import type { CamelCase } from '@/types/common';
 
 const emit = defineEmits(['update:selection']);
 
-const enabledModules: Ref<Module[]> = ref([]);
+const enabledModules = ref<Module[]>([]);
 const { activeModules } = storeToRefs(useGeneralSettingsStore());
 const queriedAddressesStore = useQueriedAddressesStore();
 const { queriedAddresses } = storeToRefs(queriedAddressesStore);
@@ -59,32 +63,30 @@ const loading = isAccountOperationRunning();
       :disabled="loading"
       @change="updateSelection($event)"
     >
-      <template #default>
-        <RuiButton
-          v-for="module in visibleModules"
-          :key="module.identifier"
-          icon
-          type="button"
-          :disabled="loading"
-          :value="module.identifier"
+      <RuiButton
+        v-for="module in visibleModules"
+        :key="module.identifier"
+        icon
+        type="button"
+        :disabled="loading"
+        :model-value="module.identifier"
+      >
+        <RuiTooltip
+          class="flex"
+          :popper="{ placement: 'top' }"
+          :open-delay="400"
         >
-          <RuiTooltip
-            class="flex"
-            :popper="{ placement: 'top' }"
-            :open-delay="400"
-          >
-            <template #activator>
-              <AppImage
-                height="24px"
-                width="24px"
-                contain
-                :src="module.icon"
-              />
-            </template>
-            <span>{{ module.name }}</span>
-          </RuiTooltip>
-        </RuiButton>
-      </template>
+          <template #activator>
+            <AppImage
+              height="24px"
+              width="24px"
+              contain
+              :src="module.icon"
+            />
+          </template>
+          <span>{{ module.name }}</span>
+        </RuiTooltip>
+      </RuiButton>
     </RuiButtonGroup>
     <div class="text-caption text-rui-text-secondary">
       {{ t('module_activator.hint') }}

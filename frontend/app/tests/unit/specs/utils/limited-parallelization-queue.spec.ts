@@ -1,13 +1,6 @@
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  expect,
-  it,
-  vi,
-  vitest,
-} from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, vitest } from 'vitest';
 import flushPromises from 'flush-promises';
+import { wait } from '@shared/utils';
 import { LimitedParallelizationQueue } from '@/utils/limited-parallelization-queue';
 
 describe('limitedParallelizationQueue', () => {
@@ -28,12 +21,12 @@ describe('limitedParallelizationQueue', () => {
   it('runs up to 5 task in parallel', async () => {
     const listener = vi.fn().mockImplementation(() => {});
     queue.setOnCompletion(listener);
-    queue.queue('1', () => wait(1500));
-    queue.queue('2', () => wait(3000));
-    queue.queue('3', () => wait(9800));
-    queue.queue('4', () => wait(19800));
-    queue.queue('5', () => wait(39800));
-    queue.queue('6', () => wait(2800));
+    queue.queue('1', async () => wait(1500));
+    queue.queue('2', async () => wait(3000));
+    queue.queue('3', async () => wait(9800));
+    queue.queue('4', async () => wait(19800));
+    queue.queue('5', async () => wait(39800));
+    queue.queue('6', async () => wait(2800));
 
     expect(queue.pending).toBe(1);
     expect(queue.running).toBe(5);
@@ -54,7 +47,7 @@ describe('limitedParallelizationQueue', () => {
 
     expect(listener).toHaveBeenCalledTimes(1);
 
-    queue.queue('1', () => wait(1500));
+    queue.queue('1', async () => wait(1500));
     expect(queue.pending).toBe(0);
     expect(queue.running).toBe(1);
 
@@ -65,17 +58,17 @@ describe('limitedParallelizationQueue', () => {
   });
 
   it('new task with the same id becomes pending', () => {
-    queue.queue('1', () => wait(1500));
-    queue.queue('1', () => wait(3000));
+    queue.queue('1', async () => wait(1500));
+    queue.queue('1', async () => wait(3000));
 
     expect(queue.running).toBe(1);
     expect(queue.pending).toBe(1);
   });
 
   it('new pending task replaces pending task with the same id', async () => {
-    queue.queue('1', () => wait(1500));
-    queue.queue('1', () => wait(3000));
-    queue.queue('1', () => wait(4000));
+    queue.queue('1', async () => wait(1500));
+    queue.queue('1', async () => wait(3000));
+    queue.queue('1', async () => wait(4000));
 
     expect(queue.running).toBe(1);
     expect(queue.pending).toBe(1);
@@ -93,8 +86,8 @@ describe('limitedParallelizationQueue', () => {
   });
 
   it('clear will remove any pending tasks from the queue', () => {
-    queue.queue('1', () => wait(1500));
-    queue.queue('1', () => wait(3000));
+    queue.queue('1', async () => wait(1500));
+    queue.queue('1', async () => wait(3000));
 
     expect(queue.running).toBe(1);
     expect(queue.pending).toBe(1);

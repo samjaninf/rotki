@@ -3,13 +3,21 @@ from collections.abc import Callable
 from unittest.mock import patch
 
 import pytest
+import requests
 
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.types import AssetData, AssetType
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_BTC, A_ETH
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.globaldb.asset_updates.manager import (
+    ASSETS_VERSION_KEY,
+    AssetsUpdater,
+    UpdateFileType,
+)
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.globaldb.updates import ASSETS_VERSION_KEY, AssetsUpdater, UpdateFileType
+from rotkehlchen.globaldb.utils import GLOBAL_DB_VERSION
+from rotkehlchen.tests.api.test_assets_updates import mock_asset_updates
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import ChainID, EvmTokenKind, Timestamp
 
@@ -18,7 +26,7 @@ VALID_ASSET_MAPPINGS = """INSERT INTO multiasset_mappings(collection_id, asset) 
     INSERT INTO multiasset_mappings(collection_id, asset) VALUES (5, "BTC");
     *
 """
-VALID_ASSET_COLLECTIONS = """INSERT INTO asset_collections(id, name, symbol) VALUES (99999999, "My custom ETH", "ETHS")
+VALID_ASSET_COLLECTIONS = """INSERT INTO asset_collections(id, name, symbol, main_asset) VALUES (99999999, "My custom ETH", "ETHS", "ETHS")
     *
 """  # noqa: E501
 VALID_ASSETS = """INSERT INTO assets(identifier, name, type) VALUES("MYBONK", "Bonk", "Y"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("MYBONK", "BONK", "bonk", "BONK", NULL, 1672279200, NULL);
@@ -29,8 +37,11 @@ INSERT INTO assets(identifier, name, type) VALUES("new-asset", "New Asset", "Y")
 
 
 @pytest.fixture(name='assets_updater')
-def fixture_assets_updater(messages_aggregator):
-    return AssetsUpdater(messages_aggregator)
+def fixture_assets_updater(messages_aggregator, globaldb):
+    return AssetsUpdater(
+        globaldb=globaldb,
+        msg_aggregator=messages_aggregator,
+    )
 
 
 def get_mock_github_assets_response(
@@ -345,20 +356,29 @@ def test_parse_full_insert_assets(
         text: str,
         expected_data: AssetData | None,
         error_msg: str,
+        globaldb,
 ) -> None:
     text = text.replace('\n', '')
     if expected_data is not None:
-        assert expected_data == assets_updater._parse_full_insert_assets(text)
+        assert expected_data == assets_updater.asset_parser.parse(
+            insert_text=text,
+            connection=globaldb.conn,
+            version=15,  # any version works for assets since no change has happened.
+        )
     else:
         with pytest.raises(DeserializationError) as excinfo:
-            assets_updater._parse_full_insert_assets(text)
+            assets_updater.asset_parser.parse(
+                insert_text=text,
+                connection=globaldb.conn,
+                version=15,  # any version works for assets since no change has happened.
+            )
 
         assert error_msg in str(excinfo.value)
 
 
 def test_some_updates_are_malformed(assets_updater: AssetsUpdater) -> None:
     """
-    Checks the folowing cases:
+    Checks the following cases:
     1. If some of the updates are broken, others are not affected.
     2. If an update is broken, info about asset stays the same in all tables as before the update.
 
@@ -368,13 +388,13 @@ def test_some_updates_are_malformed(assets_updater: AssetsUpdater) -> None:
     # In "BTC" update everything is good
     # In "NEW-ASSET-1" insertion swapped_for is incorrect
     # In "NEW-ASSET-2" insertion everything is good
-    update_text = """INSERT INTO assets(identifier, name, type) VALUES("ETH", "name1", "B"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("ETH", "symbol1", "", "", NULL, NULL, "NONEXISTENT");
+    update_text = """INSERT INTO assets(identifier, name, type) VALUES('ETH', 'name1', 'B'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('ETH', 'symbol1', '', '', NULL, NULL, 'NONEXISTENT');
 *
-INSERT INTO assets(identifier, name, type) VALUES("BTC", "name2", "B"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("BTC", "symbol2", "", "", NULL, NULL, NULL);
+INSERT INTO assets(identifier, name, type) VALUES('BTC', 'name2', 'B'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('BTC', 'symbol2', '', '', NULL, NULL, NULL);
 *
-INSERT INTO assets(identifier, name, type) VALUES("NEW-ASSET-1", "name3", "B"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("NEW-ASSET-1", "symbol3", "", "", NULL, NULL, "LOLKEK");
+INSERT INTO assets(identifier, name, type) VALUES('NEW-ASSET-1', 'name3', 'B'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('NEW-ASSET-1', 'symbol3', '', '', NULL, NULL, 'LOLKEK');
 *
-INSERT INTO assets(identifier, name, type) VALUES("NEW-ASSET-2", "name4", "B"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("NEW-ASSET-2", "symbol4", "", "", NULL, NULL, NULL);
+INSERT INTO assets(identifier, name, type) VALUES('NEW-ASSET-2', 'name4', 'B'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('NEW-ASSET-2', 'symbol4', '', '', NULL, NULL, NULL);
 *
 """  # noqa: E501
     connection = GlobalDBHandler().conn
@@ -387,16 +407,16 @@ INSERT INTO assets(identifier, name, type) VALUES("NEW-ASSET-2", "name4", "B"); 
     )
 
     # Should have stayed unchanged since one of the insertions was incorrect
-    assert connection.execute('SELECT name FROM assets WHERE identifier="ETH"').fetchone()[0] == 'Ethereum'  # noqa: E501
-    assert connection.execute('SELECT symbol FROM common_asset_details WHERE identifier="ETH"').fetchone()[0] == 'ETH'  # noqa: E501
+    assert connection.execute("SELECT name FROM assets WHERE identifier='ETH'").fetchone()[0] == 'Ethereum'  # noqa: E501
+    assert connection.execute("SELECT symbol FROM common_asset_details WHERE identifier='ETH'").fetchone()[0] == 'ETH'  # noqa: E501
     # BTC should have been updated since the insertion were correct
-    assert connection.execute('SELECT name FROM assets WHERE identifier="BTC"').fetchone()[0] == 'name2'  # noqa: E501
-    assert connection.execute('SELECT symbol FROM common_asset_details WHERE identifier="BTC"').fetchone()[0] == 'symbol2'  # noqa: E501
+    assert connection.execute("SELECT name FROM assets WHERE identifier='BTC'").fetchone()[0] == 'name2'  # noqa: E501
+    assert connection.execute("SELECT symbol FROM common_asset_details WHERE identifier='BTC'").fetchone()[0] == 'symbol2'  # noqa: E501
     # NEW-ASSET-1 should have not been added since the insertions were incorrect
-    assert connection.execute('SELECT * FROM assets WHERE identifier="NEW-ASSET-1"').fetchone() is None  # noqa: E501
+    assert connection.execute("SELECT * FROM assets WHERE identifier='NEW-ASSET-1'").fetchone() is None  # noqa: E501
     # NEW-ASSET-2 should have been added since the insertions were correct
-    assert connection.execute('SELECT name FROM assets WHERE identifier="NEW-ASSET-2"').fetchone()[0] == 'name4'  # noqa: E501
-    assert connection.execute('SELECT symbol FROM common_asset_details WHERE identifier="NEW-ASSET-2"').fetchone()[0] == 'symbol4'  # noqa: E501
+    assert connection.execute("SELECT name FROM assets WHERE identifier='NEW-ASSET-2'").fetchone()[0] == 'name4'  # noqa: E501
+    assert connection.execute("SELECT symbol FROM common_asset_details WHERE identifier='NEW-ASSET-2'").fetchone()[0] == 'symbol4'  # noqa: E501
 
 
 def test_updates_assets_collections_errors(assets_updater: AssetsUpdater):
@@ -408,17 +428,17 @@ def test_updates_assets_collections_errors(assets_updater: AssetsUpdater):
     - Try to add to a collection that doesn't exists
     - Add an asset that was newly introduced to a collection
     """
-    update_text_assets = """INSERT INTO assets(identifier, name, type) VALUES("MYBONK", "Bonk", "Y"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("MYBONK", "BONK", "bonk", "BONK", NULL, 1672279200, NULL);
+    update_text_assets = """INSERT INTO assets(identifier, name, type) VALUES('MYBONK', 'Bonk', 'Y'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('MYBONK', 'BONK', 'bonk', 'BONK', NULL, 1672279200, NULL);
     *
     """  # noqa: E501
-    update_text_collection = """INSERT INTO asset_collections(id, name) VALUES (99999999, "My custom ETH")
+    update_text_collection = """INSERT INTO asset_collections(id, name) VALUES (99999999, 'My custom ETH')
     *
     """  # noqa: E501
-    update_mapping_collection = """INSERT INTO multiasset_mappings(collection_id, asset) VALUES (1, "ETH99999");
+    update_mapping_collection = """INSERT INTO multiasset_mappings(collection_id, asset) VALUES (1, 'ETH99999');
     *
-    INSERT INTO multiasset_mappings(collection_id, asset) VALUES (99999999, "eip155:1/erc20:0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84");
+    INSERT INTO multiasset_mappings(collection_id, asset) VALUES (99999999, 'eip155:1/erc20:0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84');
     *
-    INSERT INTO multiasset_mappings(collection_id, asset) VALUES (1, "MYBONK");
+    INSERT INTO multiasset_mappings(collection_id, asset) VALUES (1, 'MYBONK');
     *
     """  # noqa: E501
 
@@ -452,9 +472,9 @@ def test_updates_assets_collections_errors(assets_updater: AssetsUpdater):
 
     warnings = assets_updater.msg_aggregator.consume_warnings()
     assert warnings == [
-        'Skipping entry during assets collection update to v999 due to a deserialization error. At asset DB update could not parse asset collection data out of INSERT INTO asset_collections(id, name) VALUES (99999999, "My custom ETH")',  # noqa: E501
+        "Skipping entry during assets collection update to v999 due to a deserialization error. At asset DB update could not parse asset collection data out of INSERT INTO asset_collections(id, name) VALUES (99999999, 'My custom ETH')",  # noqa: E501
         'Tried to add unknown asset ETH99999 to collection of assets. Skipping',
-        'Skipping entry during assets collection multimapping update to v999 due to a deserialization error. Tried to add asset to collection with id 99999999 but it does not exist',  # noqa: E501
+        'Skipping entry during assets collection multimapping update due to a deserialization error. Tried to add asset to collection with id 99999999 but it does not exist',  # noqa: E501
     ]
 
 
@@ -479,16 +499,16 @@ def test_asset_update(
         assets_updater.perform_update(up_to_version=999, conflicts={})
 
     with GlobalDBHandler().conn.read_ctx() as cursor:
-        assert cursor.execute('SELECT * FROM assets WHERE identifier = "MYBONK"').fetchall() == ([
+        assert cursor.execute("SELECT * FROM assets WHERE identifier = 'MYBONK'").fetchall() == ([
             ('MYBONK', 'Bonk', 'Y'),
         ] if update_assets else [])
-        assert cursor.execute('SELECT * FROM assets WHERE identifier = "new-asset"').fetchall() == ([  # noqa: E501
+        assert cursor.execute("SELECT * FROM assets WHERE identifier = 'new-asset'").fetchall() == ([  # noqa: E501
             ('new-asset', 'New Asset', 'Y'),
         ] if update_assets else [])
 
         cursor.execute('SELECT * FROM asset_collections WHERE id = 99999999')
         assert cursor.fetchall() == ([
-            (99999999, 'My custom ETH', 'ETHS'),
+            (99999999, 'My custom ETH', 'ETHS', 'ETHS'),
         ] if update_collections else [])
 
         cursor.execute('SELECT * FROM multiasset_mappings WHERE collection_id = 5')
@@ -503,3 +523,68 @@ def test_asset_update(
         assert warnings == [
             f'Skipping assets update 998 since it requires a min schema of 4 and max schema of 4 while the local DB schema version is {GlobalDBHandler().get_schema_version()}. You will have to follow an alternative method to obtain the assets of this update. Easiest would be to reset global DB.',  # noqa: E501
         ]
+
+
+def test_conflict_updates(assets_updater: AssetsUpdater, globaldb: GlobalDBHandler):
+    """Test that the logic doesn't add duplicates for assets that were inserted twice
+    in the globaldb assets updates. Also test a bug in asset updates where the foreign key entries
+    are removed when an asset update conflict is resolved through 'remote' option.
+    """
+    with globaldb.conn.write_ctx() as write_cursor:
+        assert write_cursor.execute(
+            'SELECT COUNT(*) FROM underlying_tokens_list WHERE parent_token_entry=?;',
+            ('eip155:42161/erc20:0xA5EDBDD9646f8dFF606d7448e414884C7d905dCA',),
+        ).fetchone()[0] == 1
+        assert write_cursor.execute(
+            'SELECT COUNT(*) FROM multiasset_mappings WHERE asset=?;',
+            ('eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',),
+        ).fetchone()[0] == 1
+
+    update_1 = """INSERT INTO assets(identifier, name, type) VALUES("eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", "Bridged USDC", "C"); INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES("eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", "A", 42161, "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", 6, ""); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", "USDC.e", "usd-coin", "USDC", NULL, 1623868379, NULL);
+*"""  # noqa: E501
+    update_2 = """INSERT INTO assets(identifier, name, type) VALUES("eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", "Bridged USDC", "C"); INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES("eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", "A", 42161, "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", 6, NULL); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", "USDC.e", "usd-coin-ethereum-bridged", "USDC", NULL, 1623868379, NULL);
+*"""  # noqa: E501
+    update_patch = mock_asset_updates(
+        original_requests_get=requests.get,
+        latest=16,
+        updates={'15': {
+            'changes': 1,
+            'min_schema_version': GLOBAL_DB_VERSION,
+            'max_schema_version': GLOBAL_DB_VERSION,
+        }, '16': {
+            'changes': 1,
+            'min_schema_version': GLOBAL_DB_VERSION,
+            'max_schema_version': GLOBAL_DB_VERSION,
+        }},
+        sql_actions={'15': {'assets': update_1, 'collections': '', 'mappings': ''}, '16': {'assets': update_2, 'collections': '', 'mappings': ''}},  # noqa: E501
+    )
+    cursor = globaldb.conn.cursor()
+    cursor.execute(f"DELETE FROM settings WHERE name='{ASSETS_VERSION_KEY}'")
+    with update_patch:
+        conflicts = assets_updater.perform_update(
+            up_to_version=16,
+            conflicts=None,
+        )
+    assert conflicts is not None
+    assert len(conflicts) == 1
+    assert conflicts[0]['remote'] == {'name': 'Bridged USDC', 'symbol': 'USDC.e', 'asset_type': 'evm token', 'started': 1623868379, 'forked': None, 'swapped_for': None, 'address': '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8', 'token_kind': 'erc20', 'decimals': 6, 'cryptocompare': 'USDC', 'coingecko': 'usd-coin-ethereum-bridged', 'protocol': None, 'evm_chain': 'arbitrum_one'}  # noqa: E501
+
+    # resolve with all the remote updates and check if the multiasset and underlying_asset mappings still exists  # noqa: E501
+    with update_patch:
+        assets_updater.perform_update(
+            up_to_version=16,
+            conflicts={
+                Asset(conflict['identifier']): 'remote'
+                for conflict in conflicts
+            },
+        )
+    assert cursor.execute("SELECT value FROM settings WHERE name='assets_version'").fetchone()[0] == '16'  # noqa: E501
+    with globaldb.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM underlying_tokens_list WHERE parent_token_entry=?;',
+            ('eip155:42161/erc20:0xA5EDBDD9646f8dFF606d7448e414884C7d905dCA',),
+        ).fetchone()[0] == 1
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM multiasset_mappings WHERE asset=?;',
+            ('eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',),
+        ).fetchone()[0] == 1

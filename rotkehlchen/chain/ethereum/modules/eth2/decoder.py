@@ -5,9 +5,12 @@ from eth_utils import encode_hex
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.constants import ETH2_DEPOSIT_ADDRESS
-from rotkehlchen.chain.ethereum.modules.curve.decoder import DEFAULT_DECODING_OUTPUT
 from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
-from rotkehlchen.chain.evm.decoding.structures import DecoderContext, DecodingOutput
+from rotkehlchen.chain.evm.decoding.structures import (
+    DEFAULT_DECODING_OUTPUT,
+    DecoderContext,
+    DecodingOutput,
+)
 from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
@@ -17,7 +20,7 @@ from rotkehlchen.history.events.structures.eth2 import EthDepositEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey
-from rotkehlchen.utils.misc import from_gwei, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import from_gwei
 
 from .constants import CPT_ETH2, UNKNOWN_VALIDATOR_INDEX
 
@@ -34,7 +37,7 @@ class Eth2Decoder(DecoderInterface):
             return DEFAULT_DECODING_OUTPUT
 
         public_key = Eth2PubKey(encode_hex(context.tx_log.data[192:240]))
-        amount = from_gwei(hex_or_bytes_to_int(context.tx_log.data[352:360], byteorder='little'))
+        amount = from_gwei(int.from_bytes(context.tx_log.data[352:360], byteorder='little'))
 
         validator_index = UNKNOWN_VALIDATOR_INDEX
         extra_data = None

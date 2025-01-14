@@ -1,4 +1,5 @@
 import os
+
 import pytest
 
 from rotkehlchen.accounting.accountant import Accountant
@@ -10,7 +11,7 @@ from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR
 from rotkehlchen.db.accounting_rules import DBAccountingRules
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.eth2 import EthWithdrawalEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -19,6 +20,7 @@ from rotkehlchen.tests.utils.accounting import (
     accounting_history_process,
     assert_pnl_totals_close,
     check_pnls_and_csv,
+    get_calculated_asset_amount,
     history1,
 )
 from rotkehlchen.tests.utils.constants import A_DASH
@@ -27,8 +29,6 @@ from rotkehlchen.tests.utils.history import prices
 from rotkehlchen.tests.utils.messages import no_message_errors
 from rotkehlchen.types import (
     AssetAmount,
-    AssetMovementCategory,
-    Fee,
     Location,
     Price,
     Timestamp,
@@ -125,7 +125,7 @@ def test_include_gas_costs(accountant, google_service):
             location_label=addr1,
             asset=A_ETH,
             balance=Balance(amount=FVal('0.000030921')),
-            notes='Burned 0.000030921 ETH for gas',
+            notes='Burn 0.000030921 ETH for gas',
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             counterparty=CPT_GAS,
@@ -235,82 +235,12 @@ def test_margin_events_affect_gained_lost_amount(accountant, google_service):
         history_list=history,
     )
     no_message_errors(accountant.msg_aggregator)
-    assert accountant.pots[0].cost_basis.get_calculated_asset_amount('BTC').is_close('3.7468')
+    assert get_calculated_asset_amount(accountant.pots[0].cost_basis, A_BTC).is_close('3.7468')
     expected_pnls = PnlTotals({
         AccountingEventType.TRADE: PNL(taxable=FVal('1941.115'), free=ZERO),
         AccountingEventType.FEE: PNL(taxable=FVal('-1.8712160'), free=ZERO),
         AccountingEventType.MARGIN_POSITION: PNL(taxable=FVal('-44.405'), free=ZERO),
     })
-    check_pnls_and_csv(accountant, expected_pnls, google_service)
-
-
-@pytest.mark.parametrize('mocked_price_queries', [prices])
-@pytest.mark.parametrize(('db_settings', 'expected'), [
-    ({'account_for_assets_movements': False, 'taxfree_after_period': -1}, ZERO),
-    ({'account_for_assets_movements': True, 'taxfree_after_period': -1}, FVal('-0.07814830147911')),  # noqa: E501
-])
-def test_assets_movements_not_accounted_for(accountant, expected, google_service):
-    # asset_movements_list partially copied from
-    # rotkehlchen/tests/integration/test_end_to_end_tax_report.py
-    history = [
-        Trade(
-            timestamp=1446979735,
-            location=Location.EXTERNAL,
-            base_asset=A_BTC,
-            quote_asset=A_EUR,
-            trade_type=TradeType.BUY,
-            amount=FVal(82),
-            rate=FVal('268.678317859'),
-            fee=None,
-            fee_currency=None,
-            link=None,
-        ), Trade(
-            timestamp=1446979735,
-            location=Location.EXTERNAL,
-            base_asset=A_ETH,
-            quote_asset=A_EUR,
-            trade_type=TradeType.BUY,
-            amount=FVal(1450),
-            rate=FVal('0.2315893'),
-            fee=None,
-            fee_currency=None,
-            link=None,
-        ), AssetMovement(
-            # before query period -- 8.915 * 0.001 = 8.915e-3
-            location=Location.KRAKEN,
-            category=AssetMovementCategory.WITHDRAWAL,
-            address=None,
-            transaction_id=None,
-            timestamp=Timestamp(1479510304),  # 18/11/2016,
-            asset=A_ETH,  # cryptocompare hourly ETH/EUR: 8.915
-            amount=FVal('95'),
-            fee_asset=A_ETH,
-            fee=Fee(FVal('0.001')),
-            link='krakenid1',
-        ), AssetMovement(  # 0.00029*1964.685 = 0.56975865
-            location=Location.POLONIEX,
-            address='foo',
-            transaction_id='0xfoo',
-            category=AssetMovementCategory.WITHDRAWAL,
-            timestamp=Timestamp(1495969504),  # 28/05/2017,
-            asset=A_BTC,  # cryptocompare hourly BTC/EUR: 1964.685
-            amount=FVal('8.5'),
-            fee_asset=A_BTC,
-            fee=Fee(FVal('0.00029')),
-            link='poloniexid1',
-        ),
-    ]
-
-    accounting_history_process(
-        accountant=accountant,
-        start_ts=1436979735,
-        end_ts=1519693374,
-        history_list=history,
-    )
-    no_message_errors(accountant.msg_aggregator)
-    expected_pnls = PnlTotals()
-    if expected != ZERO:
-        expected_pnls[AccountingEventType.ASSET_MOVEMENT] = PNL(taxable=expected, free=ZERO)
     check_pnls_and_csv(accountant, expected_pnls, google_service)
 
 

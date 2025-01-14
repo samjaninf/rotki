@@ -1,31 +1,13 @@
+import type { Theme, Themes } from '../settings/themes';
+import type { DebugSettings, FrontendSettingsPayload, TimeUnit } from '../settings/frontend';
+import type { LpType, ProfitLossModel } from '../defi/common';
 import type { MaybeRef } from '@vueuse/core';
 import type { ComputedRef, Ref } from 'vue';
 import type { AssetInfo } from '../data';
-import type { LpType, ProfitLossModel } from '../defi';
-import type {
-  BalancerBalance,
-  BalancerProfitLoss,
-} from '../defi/balancer';
-import type {
-  XswapBalance,
-  XswapPool,
-  XswapPoolProfit,
-} from '../defi/xswap';
-import type { AssetBalanceWithPrice, BigNumber } from '../index';
-import type {
-  DebugSettings,
-  FrontendSettingsPayload,
-  Theme,
-  Themes,
-  TimeUnit,
-} from '../settings';
-import type {
-  LocationData,
-  NetValue,
-  OwnedAssets,
-  TimedAssetBalances,
-  TimedBalances,
-} from '../statistics';
+import type { XswapBalance, XswapPool, XswapPoolProfit } from '../defi/xswap';
+import type { BigNumber } from '../numbers';
+import type { AssetBalanceWithPrice } from '../balances';
+import type { LocationData, NetValue, OwnedAssets, TimedAssetBalances, TimedBalances } from '../statistics';
 
 export interface PremiumInterface {
   readonly useHostComponents: boolean;
@@ -38,12 +20,7 @@ export interface StatisticsApi {
   assetValueDistribution: () => Promise<TimedAssetBalances>;
   locationValueDistribution: () => Promise<LocationData>;
   ownedAssets: () => Promise<OwnedAssets>;
-  timedBalances: (
-    asset: string,
-    start: number,
-    end: number,
-    collectionId?: number
-  ) => Promise<TimedBalances>;
+  timedBalances: (asset: string, start: number, end: number, collectionId?: number) => Promise<TimedBalances>;
   fetchNetValue: () => Promise<void>;
   netValue: (startingData: number) => Ref<NetValue>;
 }
@@ -65,14 +42,6 @@ export interface CompoundApi {
   compoundDebtLoss: Ref<ProfitLossModel[]>;
   compoundLiquidationProfit: Ref<ProfitLossModel[]>;
   compoundInterestProfit: Ref<ProfitLossModel[]>;
-}
-
-export interface BalancerApi {
-  balancerProfitLoss: (addresses: string[]) => Ref<BalancerProfitLoss[]>;
-  balancerBalances: (addresses: string[]) => Ref<BalancerBalance[]>;
-  balancerPools: Ref<XswapPool[]>;
-  balancerAddresses: Ref<string[]>;
-  fetchBalancerBalances: (refresh: boolean) => Promise<void>;
 }
 
 export interface SushiApi {
@@ -107,7 +76,6 @@ export interface DataUtilities {
   readonly utils: UtilsApi;
   readonly statistics: StatisticsApi;
   readonly compound: CompoundApi;
-  readonly balancer: BalancerApi;
   readonly balances: BalancesApi;
   readonly sushi: SushiApi;
 }
@@ -115,6 +83,9 @@ export interface DataUtilities {
 export interface UserSettingsApi {
   currencySymbol: Ref<string>;
   floatingPrecision: Ref<number>;
+  decimalSeparator: Ref<string>;
+  thousandSeparator: Ref<string>;
+  subscriptDecimals: Ref<boolean>;
   shouldShowAmount: Ref<boolean>;
   shouldShowPercentage: Ref<boolean>;
   scrambleData: Ref<boolean>;
@@ -130,21 +101,27 @@ export interface SettingsApi {
   update: (settings: FrontendSettingsPayload) => Promise<void>;
   defaultThemes: () => Themes;
   themes: () => Themes;
+  isDark: ComputedRef<boolean>;
   user: UserSettingsApi;
   i18n: {
-    t: (
-      key: string,
-      values?: Record<string, unknown>,
-      choice?: number
-    ) => string;
-    te: (
-      key: string,
-    ) => boolean;
+    t: (key: string, values?: Record<string, unknown>, choice?: number) => string;
+    te: (key: string) => boolean;
   };
 }
+
+export type GraphApi = (canvasId: string) => {
+  getCanvasCtx: () => CanvasRenderingContext2D;
+  baseColor: ComputedRef<string>;
+  gradient: ComputedRef<CanvasGradient>;
+  secondaryColor: ComputedRef<string>;
+  backgroundColor: ComputedRef<string>;
+  fontColor: ComputedRef<string>;
+  gridColor: ComputedRef<string>;
+};
 
 export interface PremiumApi {
   readonly date: DateUtilities;
   readonly data: DataUtilities;
   readonly settings: SettingsApi;
+  readonly graphs: GraphApi;
 }

@@ -18,6 +18,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.aave import A_ADAI_V1, A_AETH_V1
+from rotkehlchen.tests.utils.decoders import patch_decoder_reload_data
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
     ChainID,
@@ -31,25 +32,21 @@ from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.chain.polygon_pos.node_inquirer import PolygonPOSInquirer
 
 ADDY = '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12'
 ADDY2 = '0x5727c0481b90a129554395937612d8b9301D6c7b'
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [[ADDY]])
-def test_aave_deposit_v1(database, ethereum_inquirer):
+def test_aave_deposit_v1(ethereum_inquirer):
     """Data taken from
     https://etherscan.io/tx/0x930879d66d13c37edf25cdbb2d2e85b65c3b2a026529ff4085146bb7a5398410
     """
     tx_hash = deserialize_evm_tx_hash('0x930879d66d13c37edf25cdbb2d2e85b65c3b2a026529ff4085146bb7a5398410')  # noqa: E501
     timestamp = TimestampMS(1595376667000)
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     amount = '2507.675873220870275072'
     expected_events = [
         EvmEvent(
@@ -62,7 +59,7 @@ def test_aave_deposit_v1(database, ethereum_inquirer):
             asset=A_ETH,
             balance=Balance(amount=FVal('0.00825148723006')),
             location_label=ADDY,
-            notes='Burned 0.00825148723006 ETH for gas',
+            notes='Burn 0.00825148723006 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=tx_hash,
@@ -108,19 +105,15 @@ def test_aave_deposit_v1(database, ethereum_inquirer):
     assert expected_events == events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [[ADDY]])
-def test_aave_withdraw_v1(database, ethereum_inquirer):
+def test_aave_withdraw_v1(ethereum_inquirer):
     """Data taken from
     https://etherscan.io/tx/0x4fed67963375a3f90916f0cf7cb9e4d12644629e36233025b36060494ffba486
     """
     tx_hash = deserialize_evm_tx_hash('0x4fed67963375a3f90916f0cf7cb9e4d12644629e36233025b36060494ffba486')  # noqa: E501
     timestamp = TimestampMS(1598217272000)
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     amount = '7968.408929477087756071'
     interest = '88.663672238882760399'
     expected_events = [
@@ -134,7 +127,7 @@ def test_aave_withdraw_v1(database, ethereum_inquirer):
             asset=A_ETH,
             balance=Balance(amount=FVal('0.028562839354')),
             location_label=ADDY,
-            notes='Burned 0.028562839354 ETH for gas',
+            notes='Burn 0.028562839354 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=tx_hash,
@@ -180,18 +173,14 @@ def test_aave_withdraw_v1(database, ethereum_inquirer):
     assert expected_events == events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [[ADDY2]])
-def test_aave_eth_withdraw_v1(database, ethereum_inquirer):
+def test_aave_eth_withdraw_v1(ethereum_inquirer):
     """Data taken from
     https://etherscan.io/tx/0xbd333bdd5784c10630aac5683e63f703e660a78d06f95b2ff2a8788a8dade787
     """
     tx_hash = deserialize_evm_tx_hash('0xbd333bdd5784c10630aac5683e63f703e660a78d06f95b2ff2a8788a8dade787')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     amount = '1.000240847792940067'
     interest = '0.000240847792940067'
     expected_events = [
@@ -205,7 +194,7 @@ def test_aave_eth_withdraw_v1(database, ethereum_inquirer):
             asset=A_ETH,
             balance=Balance(amount=FVal('0.021740928')),
             location_label=ADDY2,
-            notes='Burned 0.021740928 ETH for gas',
+            notes='Burn 0.021740928 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=tx_hash,
@@ -285,7 +274,6 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
                 log_index=251,
                 data=hexstring_to_bytes('0x'),
                 address=string_to_evm_address('0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0x00058a56ea94653cdf4f152d227ace22d4c00ad99e2a43f58cb7d9e3feb295f2'),
                     hexstring_to_bytes('0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'),
@@ -302,7 +290,7 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
         ethereum_inquirer=ethereum_inquirer,
         transactions=eth_transactions,
     )
-    events, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
+    events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
             tx_hash=evmhash,
@@ -314,7 +302,7 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
             asset=A_ETH,
             balance=Balance(amount=ZERO),
             location_label=user_address,
-            notes='Burned 0 ETH for gas',
+            notes='Burn 0 ETH for gas',
             counterparty=CPT_GAS,
             identifier=None,
             extra_data=None,
@@ -372,7 +360,6 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
                 log_index=24,
                 data=hexstring_to_bytes('0x'),
                 address=string_to_evm_address('0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0x44c58d81365b66dd4b1a7f36c25aa97b8c71c361ee4937adc1a00000227db5dd'),
                     hexstring_to_bytes('0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'),
@@ -389,7 +376,7 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
         ethereum_inquirer=ethereum_inquirer,
         transactions=eth_transactions,
     )
-    events, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
+    events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
             tx_hash=evmhash,
@@ -401,7 +388,7 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
             asset=A_ETH,
             balance=Balance(amount=ZERO),
             location_label=user_address,
-            notes='Burned 0 ETH for gas',
+            notes='Burn 0 ETH for gas',
             counterparty=CPT_GAS,
             identifier=None,
             extra_data=None,
@@ -459,7 +446,6 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
                 log_index=418,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000005150ae84a8cdf00000'),
                 address=string_to_evm_address('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),
                     hexstring_to_bytes('0x0000000000000000000000002715273613632226985186221669179813245119'),
@@ -469,7 +455,6 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
                 log_index=419,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000005150ae84a8cdf00000'),
                 address=string_to_evm_address('0x030bA81f1c18d280636F32af80b9AAd02Cf0854e'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),
                     hexstring_to_bytes('0x0000000000000000000000000000000000000000000000000000000000000000'),
@@ -479,7 +464,6 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
                 log_index=421,
                 data=hexstring_to_bytes('0x000000000000000000000000271527361363222698518622166917981324511900000000000000000000000000000000000000000000005150ae84a8cdf00000'),
                 address=string_to_evm_address('0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xde6857219544bb5b7746f48ed30be6386fefc61b2f864cacf559893bf50fd951'),
                     hexstring_to_bytes('0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'),
@@ -490,14 +474,15 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
         ],
     )
     dbevmtx = DBEvmTx(database)
-    with dbevmtx.db.user_write() as cursor:
-        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
     decoder = EthereumTransactionDecoder(
         database=database,
         ethereum_inquirer=ethereum_inquirer,
         transactions=eth_transactions,
     )
-    events, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
+    with dbevmtx.db.user_write() as cursor, patch_decoder_reload_data():
+        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
+        decoder.reload_data(cursor)
+    events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
             tx_hash=evmhash,
@@ -509,13 +494,13 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
             asset=A_ETH,
             balance=Balance(amount=ZERO),
             location_label=user_address,
-            notes='Burned 0 ETH for gas',
+            notes='Burn 0 ETH for gas',
             counterparty=CPT_GAS,
             identifier=None,
             extra_data=None,
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=419,
+            sequence_index=1,
             timestamp=0,
             location=Location.ETHEREUM,
             event_type=HistoryEventType.DEPOSIT,
@@ -530,7 +515,7 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
             address=string_to_evm_address('0x030bA81f1c18d280636F32af80b9AAd02Cf0854e'),
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=420,
+            sequence_index=2,
             timestamp=0,
             location=Location.ETHEREUM,
             event_type=HistoryEventType.RECEIVE,
@@ -553,13 +538,9 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
     '0x2715273613632226985186221669179813245119',
     '0x6B44ba0a126a2A1a8aa6cD1AdeeD002e141Bcd44',
 ]])
-def test_aave_v2_withdraw(database, ethereum_inquirer, ethereum_accounts):
+def test_aave_v2_withdraw(ethereum_inquirer, ethereum_accounts):
     tx_hash = deserialize_evm_tx_hash('0x8fe440f37fd0fa1467067a195ea862db1f96c40634ea7bb3782cc3c3431e9b5c')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     timestamp, gas_amount, user_address = TimestampMS(1660809759000), '0.0217873', ethereum_accounts[0]  # noqa: E501
     expected_events = [
         EvmEvent(
@@ -572,7 +553,7 @@ def test_aave_v2_withdraw(database, ethereum_inquirer, ethereum_accounts):
             asset=A_ETH,
             balance=Balance(amount=FVal(gas_amount)),
             location_label=user_address,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
             identifier=None,
             extra_data=None,
@@ -626,13 +607,9 @@ def test_aave_v2_withdraw(database, ethereum_inquirer, ethereum_accounts):
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x00000000000Cd56832cE5dfBcBFf02e7eC639BC9']])
-def test_aave_v2_borrow(database, ethereum_inquirer, ethereum_accounts):
+def test_aave_v2_borrow(ethereum_inquirer, ethereum_accounts):
     tx_hash = deserialize_evm_tx_hash('0x6c8af2a4157632e33fac9d94a03619f54d318ce1254998aabc5384053eb98ffb')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     timestamp = TimestampMS(1622302530000)
     gas_amount = '0.014311845'
     user_address = ethereum_accounts[0]
@@ -647,13 +624,13 @@ def test_aave_v2_borrow(database, ethereum_inquirer, ethereum_accounts):
             asset=A_ETH,
             balance=Balance(amount=FVal(gas_amount)),
             location_label=user_address,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
             identifier=None,
             extra_data=None,
         ), EvmEvent(
             tx_hash=tx_hash,
-            sequence_index=307,
+            sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
             event_type=HistoryEventType.RECEIVE,
@@ -667,7 +644,7 @@ def test_aave_v2_borrow(database, ethereum_inquirer, ethereum_accounts):
             address=ZERO_ADDRESS,
         ), EvmEvent(
             tx_hash=tx_hash,
-            sequence_index=310,
+            sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
             event_type=HistoryEventType.RECEIVE,
@@ -719,7 +696,6 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
                 log_index=152,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000010f13944fcc61b82177'),
                 address=string_to_evm_address('0x267EB8Cf715455517F9BD5834AeAE3CeA1EBdbD8'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),
                     hexstring_to_bytes('0x00000000000000000000000000000000000cd56832ce5dfbcbff02e7ec639bc9'),
@@ -729,7 +705,6 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
                 log_index=155,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000010f13944fcc61b82177'),
                 address=string_to_evm_address('0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),
                     hexstring_to_bytes('0x00000000000000000000000000000000000cd56832ce5dfbcbff02e7ec639bc9'),
@@ -739,7 +714,6 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
                 log_index=156,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000010f13944fcc61b82177'),
                 address=string_to_evm_address('0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0x4cdde6e09bb755c9a5589ebaec640bbfedff1362d4b255ebf8339782b9942faa'),
                     hexstring_to_bytes('0x000000000000000000000000c011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f'),
@@ -757,7 +731,7 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
         ethereum_inquirer=ethereum_inquirer,
         transactions=eth_transactions,
     )
-    events, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
+    events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
             tx_hash=evmhash,
@@ -769,13 +743,13 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
             asset=A_ETH,
             balance=Balance(amount=ZERO),
             location_label=user_address,
-            notes='Burned 0 ETH for gas',
+            notes='Burn 0 ETH for gas',
             counterparty=CPT_GAS,
             identifier=None,
             extra_data=None,
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=153,
+            sequence_index=1,
             timestamp=0,
             location=Location.ETHEREUM,
             event_type=HistoryEventType.SPEND,
@@ -790,7 +764,7 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
             address=ZERO_ADDRESS,
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=156,
+            sequence_index=2,
             timestamp=0,
             location=Location.ETHEREUM,
             event_type=HistoryEventType.SPEND,
@@ -808,10 +782,9 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [['0x1dB64086b4cdA94884E4FC296799a512dfc564CA']])
 def test_aave_v2_liquidation(
-        database: 'DBHandler',
         ethereum_inquirer: 'EthereumInquirer',
         ethereum_accounts: list['ChecksumEvmAddress'],
 ) -> None:
@@ -819,11 +792,7 @@ def test_aave_v2_liquidation(
     https://etherscan.io/tx/0x2077a54ecae4a06c553f96c120acc0237887fdd1fc2596aab103f6681712974d
     """
     tx_hash = deserialize_evm_tx_hash('0x2077a54ecae4a06c553f96c120acc0237887fdd1fc2596aab103f6681712974d')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     timestamp = TimestampMS(1684738775000)
     user_address = ethereum_accounts[0]
     expected_events = [
@@ -846,7 +815,7 @@ def test_aave_v2_liquidation(
             sequence_index=11,
             timestamp=timestamp,
             location=Location.ETHEREUM,
-            event_type=HistoryEventType.SPEND,
+            event_type=HistoryEventType.LOSS,
             event_subtype=HistoryEventSubType.LIQUIDATE,
             asset=EvmToken('eip155:1/erc20:0x030bA81f1c18d280636F32af80b9AAd02Cf0854e'),
             balance=Balance(amount=FVal('0.956418919660594328')),
@@ -859,10 +828,9 @@ def test_aave_v2_liquidation(
     assert expected_events == events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [['0x8ca7ED9b02ec1E8bEee868a32495Ed5b157eeE08']])
 def test_aave_v1_liquidation(
-        database: 'DBHandler',
         ethereum_inquirer: 'EthereumInquirer',
         ethereum_accounts: list['ChecksumEvmAddress'],
 ) -> None:
@@ -870,11 +838,7 @@ def test_aave_v1_liquidation(
     https://etherscan.io/tx/0x75ef28b5593efd3f0f9eff338e234f59b2bd34a7148a90ce020122900722a832
     """
     tx_hash = deserialize_evm_tx_hash('0x75ef28b5593efd3f0f9eff338e234f59b2bd34a7148a90ce020122900722a832')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     timestamp = TimestampMS(1659244817000)
     user_address = ethereum_accounts[0]
     expected_events = [
@@ -911,19 +875,15 @@ def test_aave_v1_liquidation(
     assert expected_events == events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [['0xe903fEed7c1098Ba92E4b7092ca77bBc48503d90']])
-def test_aave_v2_supply_ether(database, ethereum_inquirer, ethereum_accounts):
+def test_aave_v2_supply_ether(ethereum_inquirer, ethereum_accounts):
     """
     Test deposit in aave using the eth wrapper contract. Data taken from
     https://etherscan.io/tx/0xefc9040c100829a391a636f02eb96a9361bd0bc2ca5e8e5f97bbc4a1831cdec9
     """
     tx_hash = deserialize_evm_tx_hash('0xefc9040c100829a391a636f02eb96a9361bd0bc2ca5e8e5f97bbc4a1831cdec9')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     expected_events = [
         EvmEvent(
             tx_hash=tx_hash,
@@ -935,40 +895,10 @@ def test_aave_v2_supply_ether(database, ethereum_inquirer, ethereum_accounts):
             asset=A_ETH,
             balance=Balance(amount=FVal('0.0104361555519052')),
             location_label=ethereum_accounts[0],
-            notes='Burned 0.0104361555519052 ETH for gas',
+            notes='Burn 0.0104361555519052 ETH for gas',
             counterparty=CPT_GAS,
             identifier=None,
             extra_data=None,
-        ), EvmEvent(
-            tx_hash=tx_hash,
-            sequence_index=1,
-            timestamp=TimestampMS(1646516157000),
-            location=Location.ETHEREUM,
-            event_type=HistoryEventType.DEPOSIT,
-            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
-            asset=A_ETH,
-            balance=Balance(amount=FVal(0.1)),
-            location_label=ethereum_accounts[0],
-            notes='Deposit 0.1 WETH into AAVE v2',
-            counterparty=CPT_AAVE_V2,
-            identifier=None,
-            extra_data=None,
-            address=string_to_evm_address('0xcc9a0B7c43DC2a5F023Bb9b738E45B0Ef6B06E04'),
-        ), EvmEvent(
-            tx_hash=tx_hash,
-            sequence_index=180,
-            timestamp=TimestampMS(1646516157000),
-            location=Location.ETHEREUM,
-            event_type=HistoryEventType.RECEIVE,
-            event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
-            asset=EvmToken('eip155:1/erc20:0x030bA81f1c18d280636F32af80b9AAd02Cf0854e'),  # aWETH
-            balance=Balance(amount=FVal(0.1)),
-            location_label=ethereum_accounts[0],
-            notes='Receive 0.1 aWETH from AAVE v2',
-            counterparty=CPT_AAVE_V2,
-            identifier=None,
-            extra_data=None,
-            address=ZERO_ADDRESS,
         ), EvmEvent(
             tx_hash=tx_hash,
             sequence_index=182,
@@ -984,18 +914,47 @@ def test_aave_v2_supply_ether(database, ethereum_inquirer, ethereum_accounts):
             identifier=None,
             extra_data=None,
             address=string_to_evm_address('0xcc9a0B7c43DC2a5F023Bb9b738E45B0Ef6B06E04'),
+        ), EvmEvent(
+            tx_hash=tx_hash,
+            sequence_index=183,
+            timestamp=TimestampMS(1646516157000),
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.DEPOSIT,
+            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+            asset=A_ETH,
+            balance=Balance(amount=FVal(0.1)),
+            location_label=ethereum_accounts[0],
+            notes='Deposit 0.1 WETH into AAVE v2',
+            counterparty=CPT_AAVE_V2,
+            identifier=None,
+            extra_data=None,
+            address=string_to_evm_address('0xcc9a0B7c43DC2a5F023Bb9b738E45B0Ef6B06E04'),
+        ), EvmEvent(
+            tx_hash=tx_hash,
+            sequence_index=184,
+            timestamp=TimestampMS(1646516157000),
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
+            asset=EvmToken('eip155:1/erc20:0x030bA81f1c18d280636F32af80b9AAd02Cf0854e'),  # aWETH
+            balance=Balance(amount=FVal(0.1)),
+            location_label=ethereum_accounts[0],
+            notes='Receive 0.1 aWETH from AAVE v2',
+            counterparty=CPT_AAVE_V2,
+            identifier=None,
+            extra_data=None,
+            address=ZERO_ADDRESS,
         ),
     ]
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('polygon_pos_accounts', [['0x572f60c0b887203324149D9C308574BcF2dfaD82']])
-def test_aave_v2_borrow_polygon(database, polygon_pos_inquirer, polygon_pos_accounts) -> None:
+def test_aave_v2_borrow_polygon(polygon_pos_inquirer, polygon_pos_accounts) -> None:
     tx_hash = deserialize_evm_tx_hash('0x2c2777e24bc8a59171e33d54c2a87d846fc23e7f21a32b99d22397e64429b39c')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=polygon_pos_inquirer,
-        database=database,
         tx_hash=tx_hash,
     )
     timestamp = TimestampMS(1711437462000)
@@ -1011,11 +970,11 @@ def test_aave_v2_borrow_polygon(database, polygon_pos_inquirer, polygon_pos_acco
             asset=A_POLYGON_POS_MATIC,
             balance=Balance(amount=FVal(gas_fees)),
             location_label=polygon_pos_accounts[0],
-            notes=f'Burned {gas_fees} MATIC for gas',
+            notes=f'Burn {gas_fees} POL for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=tx_hash,
-            sequence_index=430,
+            sequence_index=1,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
             event_type=HistoryEventType.RECEIVE,
@@ -1028,7 +987,7 @@ def test_aave_v2_borrow_polygon(database, polygon_pos_inquirer, polygon_pos_acco
             address=ZERO_ADDRESS,
         ), EvmEvent(
             tx_hash=tx_hash,
-            sequence_index=433,
+            sequence_index=2,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
             event_type=HistoryEventType.RECEIVE,
@@ -1046,14 +1005,10 @@ def test_aave_v2_borrow_polygon(database, polygon_pos_inquirer, polygon_pos_acco
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x6A61Ea7832f84C3096c70f042aB88D9a56732D7B']])
-def test_aave_stake(database, ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+def test_aave_stake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
     """Test that the decoder can decode the stake event from Aave"""
     tx_hash = deserialize_evm_tx_hash('0xfaf96358784483a96a61db6aa4ecf4ac87294b841671ca208de6b5d8f83edf17')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     timestamp, staked, gas_fees, approval_amount = TimestampMS(1716118019000), '5.126267078394001645', '0.000367527', '115792089237316195423570985008687907853269984665640564038985.825837738726184306'  # noqa: E501
     expected_events = [
         EvmEvent(
@@ -1065,7 +1020,7 @@ def test_aave_stake(database, ethereum_inquirer: 'EthereumInquirer', ethereum_ac
             asset=A_ETH,
             balance=Balance(amount=FVal(gas_fees)),
             location_label=ethereum_accounts[0],
-            notes=f'Burned {gas_fees} ETH for gas',
+            notes=f'Burn {gas_fees} ETH for gas',
             tx_hash=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
@@ -1113,15 +1068,76 @@ def test_aave_stake(database, ethereum_inquirer: 'EthereumInquirer', ethereum_ac
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0xeD62616a7c1DD354801f4E72389299a81493e004']])
+def test_aave_stake_behalfof(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+    """Test that the decoder can decode the stake event from Aave from 2022
+    The implementation of the proxy contract was different back then."""
+    tx_hash = deserialize_evm_tx_hash('0x5532a19bdd4aa26656dc5099d80862a5218cbaf7c96f30cae4a8bb0d19803bfc')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    timestamp, staked, gas_fees, approval_amount = TimestampMS(1684566515000), '58.469937', '0.011340746321963024', '115792089237316195423570985008687907853269984665640564039399.114070913129639935'  # noqa: E501
+    expected_events = [
+        EvmEvent(
+            sequence_index=0,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            balance=Balance(amount=FVal(gas_fees)),
+            location_label=ethereum_accounts[0],
+            notes=f'Burn {gas_fees} ETH for gas',
+            tx_hash=tx_hash,
+            counterparty=CPT_GAS,
+        ), EvmEvent(
+            sequence_index=123,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.INFORMATIONAL,
+            event_subtype=HistoryEventSubType.APPROVE,
+            asset=A_AAVE,
+            balance=Balance(amount=FVal(approval_amount)),
+            location_label=ethereum_accounts[0],
+            notes=f'Set AAVE spending approval of {ethereum_accounts[0]} by {STK_AAVE_ADDR} to {approval_amount}',  # noqa: E501
+            tx_hash=tx_hash,
+            address=STK_AAVE_ADDR,
+        ), EvmEvent(
+            sequence_index=124,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.STAKING,
+            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+            asset=A_AAVE,
+            balance=Balance(amount=FVal(staked)),
+            location_label=ethereum_accounts[0],
+            notes=f'Stake {staked} AAVE',
+            tx_hash=tx_hash,
+            counterparty=CPT_AAVE,
+            product=EvmProduct.STAKING,
+            address=STK_AAVE_ADDR,
+        ), EvmEvent(
+            sequence_index=125,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
+            asset=Asset(STKAAVE_IDENTIFIER),
+            balance=Balance(amount=FVal(staked)),
+            location_label=ethereum_accounts[0],
+            notes=f'Receive {staked} stkAAVE from staking in Aave',
+            counterparty=CPT_AAVE,
+            tx_hash=tx_hash,
+            address=ZERO_ADDRESS,
+        ),
+    ]
+    assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x201B93778C36Aad0510d96c0a3733A6Efa9d0bC5']])
-def test_aave_unstake(database, ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+def test_aave_unstake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
     """Test that the decoder can decode the unstake/redeem event from Aave"""
     tx_hash = deserialize_evm_tx_hash('0xaaef5990d08a0f4cb83b0f98b995f734c96ab6dca41bf7de54c3719fe463ce24')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     timestamp, unstaked, gas_fees = TimestampMS(1716216731000), '2.71357', '0.001456740929488432'
     expected_events = [
         EvmEvent(
@@ -1133,7 +1149,7 @@ def test_aave_unstake(database, ethereum_inquirer: 'EthereumInquirer', ethereum_
             asset=A_ETH,
             balance=Balance(amount=FVal(gas_fees)),
             location_label=ethereum_accounts[0],
-            notes=f'Burned {gas_fees} ETH for gas',
+            notes=f'Burn {gas_fees} ETH for gas',
             tx_hash=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
@@ -1163,6 +1179,176 @@ def test_aave_unstake(database, ethereum_inquirer: 'EthereumInquirer', ethereum_
             tx_hash=tx_hash,
             address=STK_AAVE_ADDR,
             counterparty=CPT_AAVE,
+        ),
+    ]
+    assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0x76d098850ff14b5922774d156a2D3eb842d88B4a']])
+def test_aave_unstake_old(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+    """Test that the decoder can decode the unstake/redeem event from Aave back in 2022"""
+    tx_hash = deserialize_evm_tx_hash('0x4d28e34be9ccc8a64d0fe9bc30982700b042cd0bdbe7c3bc3968107dce6471e3')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    timestamp, unstaked, gas_fees = TimestampMS(1648296289000), '31.703464134297535778', '0.006477313887656742'  # noqa: E501
+    expected_events = [
+        EvmEvent(
+            sequence_index=0,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            balance=Balance(amount=FVal(gas_fees)),
+            location_label=ethereum_accounts[0],
+            notes=f'Burn {gas_fees} ETH for gas',
+            tx_hash=tx_hash,
+            counterparty=CPT_GAS,
+        ), EvmEvent(
+            sequence_index=363,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.RETURN_WRAPPED,
+            asset=Asset(STKAAVE_IDENTIFIER),
+            balance=Balance(amount=FVal(unstaked)),
+            location_label=ethereum_accounts[0],
+            notes=f'Unstake {unstaked} stkAAVE',
+            tx_hash=tx_hash,
+            address=ZERO_ADDRESS,
+            counterparty=CPT_AAVE,
+            product=EvmProduct.STAKING,
+        ), EvmEvent(
+            sequence_index=368,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.STAKING,
+            event_subtype=HistoryEventSubType.REMOVE_ASSET,
+            asset=A_AAVE,
+            balance=Balance(amount=FVal(unstaked)),
+            location_label=ethereum_accounts[0],
+            notes=f'Receive {unstaked} AAVE after unstaking from Aave',
+            tx_hash=tx_hash,
+            address=STK_AAVE_ADDR,
+            counterparty=CPT_AAVE,
+        ),
+    ]
+    assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0x9C836687964D89B52Ae80E3e941745Ddd67e5222']])
+def test_stake_reward(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+    """Test that the decoder can decode aave reward claiming"""
+    tx_hash = deserialize_evm_tx_hash('0xc8ed217572a15a81891ad6480a56150d5b2721c9e517564c3e8ead4439cdcb62')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    timestamp, gas_fees, amount = TimestampMS(1712099315000), '0.002299167729873168', '0.724507060516081735'  # noqa: E501
+    expected_events = [
+        EvmEvent(
+            sequence_index=0,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            balance=Balance(amount=FVal(gas_fees)),
+            location_label=ethereum_accounts[0],
+            notes=f'Burn {gas_fees} ETH for gas',
+            tx_hash=tx_hash,
+            counterparty=CPT_GAS,
+        ), EvmEvent(
+            sequence_index=330,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.STAKING,
+            event_subtype=HistoryEventSubType.REWARD,
+            asset=A_AAVE,
+            balance=Balance(amount=FVal(amount)),
+            location_label=ethereum_accounts[0],
+            notes=f'Claim {amount} AAVE from staking',
+            tx_hash=tx_hash,
+            address=STK_AAVE_ADDR,
+            counterparty=CPT_AAVE,
+            product=EvmProduct.STAKING,
+        ),
+    ]
+    assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0x6Cf9AA65EBaD7028536E353393630e2340ca6049']])
+def test_stake_reward_from_incentives(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+    """Test that the decoder can decode aave staking reward claiming in the old way ~2022
+    which takes it from the aave incentives"""
+    tx_hash = deserialize_evm_tx_hash('0x376c51a492f3f309c408b00278fbb77e54adcbb883f9e0fc190c5478fc153bbf')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    timestamp, gas_fees, amount = TimestampMS(1649141661000), '0.03959433', '14.159467670600490614'
+    expected_events = [
+        EvmEvent(
+            sequence_index=0,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            balance=Balance(amount=FVal(gas_fees)),
+            location_label=ethereum_accounts[0],
+            notes=f'Burn {gas_fees} ETH for gas',
+            tx_hash=tx_hash,
+            counterparty=CPT_GAS,
+        ), EvmEvent(
+            sequence_index=67,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.REWARD,
+            asset=Asset('eip155:1/erc20:0x4da27a545c0c5B758a6BA100e3a049001de870f5'),
+            balance=Balance(amount=FVal(amount)),
+            location_label=ethereum_accounts[0],
+            notes=f'Claim {amount} stkAAVE from Aave incentives',
+            tx_hash=tx_hash,
+            address=string_to_evm_address('0xd784927Ff2f95ba542BfC824c8a8a98F3495f6b5'),
+            counterparty=CPT_AAVE_V2,
+        ),
+    ]
+    assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('polygon_pos_accounts', [['0x9131C96c791A5aAd3dF4F8C85Acc755a8dD487Ed']])
+def test_polygon_incentives(polygon_pos_inquirer: 'PolygonPOSInquirer', polygon_pos_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+    tx_hash = deserialize_evm_tx_hash('0x6ebaa1502335caa7aa9b6589169885d0361e96bab9ed3b1264308a716d6524c3')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(
+        evm_inquirer=polygon_pos_inquirer,
+        tx_hash=tx_hash,
+    )
+    timestamp, user, gas_fees, amount = TimestampMS(1677815446000), polygon_pos_accounts[0], '0.010600028218383051', '2.703388364402691276'  # noqa: E501
+    expected_events = [
+        EvmEvent(
+            sequence_index=0,
+            timestamp=timestamp,
+            location=Location.POLYGON_POS,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_POLYGON_POS_MATIC,
+            balance=Balance(amount=FVal(gas_fees)),
+            location_label=user,
+            notes=f'Burn {gas_fees} POL for gas',
+            tx_hash=tx_hash,
+            counterparty=CPT_GAS,
+        ), EvmEvent(
+            sequence_index=199,
+            timestamp=timestamp,
+            location=Location.POLYGON_POS,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.REWARD,
+            asset=Asset('eip155:137/erc20:0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270'),
+            balance=Balance(amount=FVal(amount)),
+            location_label=user,
+            notes=f'Claim {amount} WMATIC from Aave incentives',
+            tx_hash=tx_hash,
+            address=string_to_evm_address('0x357D51124f59836DeD84c8a1730D72B749d8BC23'),
+            counterparty=CPT_AAVE_V2,
         ),
     ]
     assert events == expected_events

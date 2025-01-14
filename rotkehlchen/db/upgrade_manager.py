@@ -2,12 +2,10 @@ import logging
 import os
 import shutil
 import traceback
-from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 from pysqlcipher3 import dbapi2 as sqlcipher
 
-from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.constants.misc import USERDB_NAME
 from rotkehlchen.db.settings import ROTKEHLCHEN_DB_VERSION
 from rotkehlchen.db.upgrades.v26_v27 import upgrade_v26_to_v27
@@ -26,11 +24,15 @@ from rotkehlchen.db.upgrades.v38_v39 import upgrade_v38_to_v39
 from rotkehlchen.db.upgrades.v39_v40 import upgrade_v39_to_v40
 from rotkehlchen.db.upgrades.v40_v41 import upgrade_v40_to_v41
 from rotkehlchen.db.upgrades.v41_v42 import upgrade_v41_to_v42
+from rotkehlchen.db.upgrades.v42_v43 import upgrade_v42_to_v43
+from rotkehlchen.db.upgrades.v43_v44 import upgrade_v43_to_v44
+from rotkehlchen.db.upgrades.v44_v45 import upgrade_v44_to_v45
+from rotkehlchen.db.upgrades.v45_v46 import upgrade_v45_to_v46
+from rotkehlchen.db.upgrades.v46_v47 import upgrade_v46_to_v47
 from rotkehlchen.errors.misc import DBUpgradeError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.utils.interfaces import ProgressUpdater
 from rotkehlchen.utils.misc import ts_now
-from rotkehlchen.utils.upgrades import UpgradeRecord
+from rotkehlchen.utils.upgrades import DBUpgradeProgressHandler, UpgradeRecord
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -106,26 +108,27 @@ UPGRADES_LIST = [
         from_version=41,
         function=upgrade_v41_to_v42,
     ),
+    UpgradeRecord(
+        from_version=42,
+        function=upgrade_v42_to_v43,
+    ),
+    UpgradeRecord(
+        from_version=43,
+        function=upgrade_v43_to_v44,
+    ),
+    UpgradeRecord(
+        from_version=44,
+        function=upgrade_v44_to_v45,
+    ),
+    UpgradeRecord(
+        from_version=45,
+        function=upgrade_v45_to_v46,
+    ),
+    UpgradeRecord(
+        from_version=46,
+        function=upgrade_v46_to_v47,
+    ),
 ]
-
-
-class DBUpgradeProgressHandler(ProgressUpdater):
-    """Class to notify users through websockets about progress of upgrading the database."""
-
-    def _notify_frontend(self, step_name: str | None = None) -> None:
-        """Sends to the user through websockets all information about db upgrading progress."""
-        self.messages_aggregator.add_message(
-            message_type=WSMessageType.DB_UPGRADE_STATUS,
-            data={
-                'start_version': self.start_version,
-                'target_version': self.target_version,
-                'current_upgrade': {
-                    'to_version': self.current_version,
-                    'total_steps': self.current_round_total_steps,
-                    'current_step': self.current_round_current_step,
-                },
-            },
-        )
 
 
 class DBUpgradeManager:
@@ -156,7 +159,7 @@ class DBUpgradeManager:
                     f'version is {our_version}. To be able to use it you will need to '
                     f'first use a previous version of rotki and then use this one. '
                     f'Refer to the documentation for more information. '
-                    f'https://rotki.readthedocs.io/en/latest/usage_guide.html#upgrading-rotki-after-a-very-long-time',
+                    f'https://docs.rotki.com/usage-guides#upgrading-rotki-after-a-long-time',
                 )
 
             if our_version > ROTKEHLCHEN_DB_VERSION:
@@ -193,7 +196,15 @@ class DBUpgradeManager:
             4. If something went wrong during upgrade restore backup and quit
             5. If all went well set version and delete the backup
 
+        We do a WAL checkpoint at the start. That blocks until there is no database
+        writer and all readers are reading from the most recent database snapshot. It
+        then checkpoints all frames in the log file and syncs the database file.
+        FULL blocks concurrent writers while it is running, but readers can proceed.
+
+        Reason for this is to make sure the .db file is the only thing needed for the DB
+        backup as we only copy that file.
         """
+        self.db.conn.execute('PRAGMA wal_checkpoint(FULL);')
         with self.db.conn.read_ctx() as cursor:
             current_version = self.db.get_setting(cursor, 'version')
         if current_version != upgrade.from_version:
@@ -202,46 +213,38 @@ class DBUpgradeManager:
         progress_handler.new_round(version=to_version)
 
         # First make a backup of the DB
-        with TemporaryDirectory() as tmpdirname:
-            tmp_db_filename = f'{ts_now()}_rotkehlchen_db_v{upgrade.from_version}.backup'
-            tmp_db_path = os.path.join(tmpdirname, tmp_db_filename)
-            shutil.copyfile(
-                os.path.join(self.db.user_data_dir, USERDB_NAME),
-                tmp_db_path,
+        tmp_db_filename = f'{ts_now()}_rotkehlchen_db_v{upgrade.from_version}.backup'
+        shutil.copyfile(
+            os.path.join(self.db.user_data_dir, USERDB_NAME),
+            os.path.join(self.db.user_data_dir, tmp_db_filename),
+        )
+
+        # Add a flag to the db that an upgrade is happening
+        with self.db.user_write() as write_cursor:
+            self.db.set_setting(
+                write_cursor=write_cursor,
+                name='ongoing_upgrade_from_version',
+                value=upgrade.from_version,
             )
 
-            # Add a flag to the db that an upgrade is happening
-            with self.db.user_write() as write_cursor:
-                self.db.set_setting(
-                    write_cursor=write_cursor,
-                    name='ongoing_upgrade_from_version',
-                    value=upgrade.from_version,
-                )
-
-            try:
-                kwargs = upgrade.kwargs if upgrade.kwargs is not None else {}
-                upgrade.function(db=self.db, progress_handler=progress_handler, **kwargs)
-            except BaseException as e:
-                # Problem .. restore DB backup, log all info and bail out
-                error_message = (
-                    f'Failed at database upgrade from version {upgrade.from_version} to '
-                    f'{to_version}: {e!s}'
-                )
-                stacktrace = traceback.format_exc()
-                log.error(f'{error_message}\n{stacktrace}')
-                shutil.copyfile(
-                    tmp_db_path,
-                    os.path.join(self.db.user_data_dir, USERDB_NAME),
-                )
-                raise DBUpgradeError(error_message) from e
-
-            # even for success keep the backup of the previous db
+        try:
+            kwargs = upgrade.kwargs if upgrade.kwargs is not None else {}
+            upgrade.function(db=self.db, progress_handler=progress_handler, **kwargs)
+        except BaseException as e:
+            # Problem .. restore DB backup, log all info and bail out
+            error_message = (
+                f'Failed at database upgrade from version {upgrade.from_version} to '
+                f'{to_version}: {e!s}'
+            )
+            stacktrace = traceback.format_exc()
+            log.error(f'{error_message}\n{stacktrace}')
             shutil.copyfile(
-                tmp_db_path,
                 os.path.join(self.db.user_data_dir, tmp_db_filename),
+                os.path.join(self.db.user_data_dir, USERDB_NAME),
             )
+            raise DBUpgradeError(error_message) from e
 
-        # Upgrade success all is good
+        # Upgrade success all is good - Note: We keep the backups even for success
         with self.db.user_write() as cursor:
             cursor.execute('DELETE FROM settings WHERE name=?', ('ongoing_upgrade_from_version',))
             self.db.set_setting(write_cursor=cursor, name='version', value=to_version)

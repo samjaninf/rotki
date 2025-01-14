@@ -3,6 +3,7 @@ from typing import Any
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.ethereum.airdrops import AIRDROP_IDENTIFIER_KEY
 from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.decoding.clique.decoder import CliqueAirdropDecoderInterface
 from rotkehlchen.chain.evm.decoding.constants import STAKED
@@ -18,7 +19,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import CPT_OMNI, OMNI_AIDROP_CONTRACT, OMNI_STAKING_CONTRACT, OMNI_TOKEN_ID
 
@@ -46,6 +47,7 @@ class OmniDecoder(CliqueAirdropDecoderInterface):
                 event.event_subtype = HistoryEventSubType.AIRDROP
                 event.counterparty = CPT_OMNI
                 event.notes = notes
+                event.extra_data = {AIRDROP_IDENTIFIER_KEY: 'omni'}
                 transfer_found = True
             elif (
                 event.event_type == HistoryEventType.SPEND and
@@ -68,6 +70,7 @@ class OmniDecoder(CliqueAirdropDecoderInterface):
                 notes=notes,
                 counterparty=CPT_OMNI,
                 address=OMNI_AIDROP_CONTRACT,
+                extra_data={AIRDROP_IDENTIFIER_KEY: 'omni'},
             )
             for event in context.decoded_events:  # find the stake event and assure comes after
                 if (
@@ -94,11 +97,11 @@ class OmniDecoder(CliqueAirdropDecoderInterface):
         if context.tx_log.topics[0] != STAKED:
             return DEFAULT_DECODING_OUTPUT
 
-        if not self.base.is_tracked(user_address := hex_or_bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
+        if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1])):
             return DEFAULT_DECODING_OUTPUT
 
         staked_amount = token_normalized_value_decimals(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data),
+            token_amount=int.from_bytes(context.tx_log.data),
             token_decimals=18,  # omni has 18 decimals
         )
         transfer_found = False
@@ -143,4 +146,4 @@ class OmniDecoder(CliqueAirdropDecoderInterface):
 
     @staticmethod
     def counterparties() -> tuple[CounterpartyDetails, ...]:
-        return (CounterpartyDetails(identifier=CPT_OMNI, label='Omni', image='diva.svg'),)
+        return (CounterpartyDetails(identifier=CPT_OMNI, label='Omni', image='omni.svg'),)

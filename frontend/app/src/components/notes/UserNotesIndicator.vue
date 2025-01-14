@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+
 const props = defineProps<{
   visible: boolean;
 }>();
@@ -20,7 +22,7 @@ function toggleVisibility() {
   >
     <RuiIcon
       :class="visible ? 'help--visible' : null"
-      name="sticky-note-line"
+      name="lu-notebook"
     />
   </MenuTooltipButton>
 </template>

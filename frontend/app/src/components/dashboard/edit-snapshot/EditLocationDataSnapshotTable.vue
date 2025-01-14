@@ -1,82 +1,80 @@
 <script setup lang="ts">
 import { CURRENCY_USD } from '@/types/currencies';
+import { useConfirmStore } from '@/store/confirm';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import EditLocationDataSnapshotForm from '@/components/dashboard/edit-snapshot/EditLocationDataSnapshotForm.vue';
+import BigDialog from '@/components/dialogs/BigDialog.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import type { LocationDataSnapshot, LocationDataSnapshotPayload } from '@/types/snapshots';
+import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
 import type { BigNumber } from '@rotki/common';
-import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library-compat';
-import type {
-  LocationDataSnapshot,
-  LocationDataSnapshotPayload,
-} from '@/types/snapshots';
 
 const props = defineProps<{
-  value: LocationDataSnapshot[];
+  modelValue: LocationDataSnapshot[];
   timestamp: number;
 }>();
 
 const emit = defineEmits<{
   (e: 'update:step', step: number): void;
-  (e: 'input', value: LocationDataSnapshot[]): void;
+  (e: 'update:model-value', value: LocationDataSnapshot[]): void;
 }>();
 
 const { t } = useI18n();
 
 type IndexedLocationDataSnapshot = LocationDataSnapshot & { index: number };
 
-const {
-  openDialog,
-  setOpenDialog,
-  closeDialog,
-  submitting,
-  setSubmitFunc,
-  trySubmit,
-} = useEditLocationsSnapshotForm();
+const { timestamp } = toRefs(props);
 
-const { value, timestamp } = toRefs(props);
+const openDialog = ref<boolean>(false);
+const stateUpdated = ref<boolean>(false);
+const submitting = ref<boolean>(false);
+
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const editedIndex = ref<number | null>(null);
-const form = ref<LocationDataSnapshotPayload | null>(null);
+const modelValue = ref<LocationDataSnapshotPayload | null>(null);
 const excludedLocations = ref<string[]>([]);
 const tableRef = ref<any>();
-const sort: Ref<DataTableSortData> = ref({
+const sort = ref<DataTableSortData<LocationDataSnapshot>>({
   column: 'usdValue',
   direction: 'desc' as const,
 });
+const form = ref<InstanceType<typeof EditLocationDataSnapshotForm>>();
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const tableHeaders = computed<DataTableColumn<IndexedLocationDataSnapshot>[]>(() => [
   {
-    label: t('common.location'),
-    key: 'location',
-    class: 'w-[12.5rem]',
-    cellClass: 'py-2',
     align: 'center',
-    sortable: true,
-  },
-  {
-    label: t('common.value_in_symbol', { symbol: get(currencySymbol) }),
-    key: 'usdValue',
-    align: 'end',
-    sortable: true,
-  },
-  {
-    label: '',
-    key: 'action',
-    class: 'w-[6.25rem]',
     cellClass: 'py-2',
+    class: 'w-[12.5rem]',
+    key: 'location',
+    label: t('common.location'),
+    sortable: true,
+  },
+  {
+    align: 'end',
+    key: 'usdValue',
+    label: t('common.value_in_symbol', { symbol: get(currencySymbol) }),
+    sortable: true,
+  },
+  {
+    cellClass: 'py-2',
+    class: 'w-[6.25rem]',
+    key: 'action',
+    label: '',
   },
 ]);
 
 const { exchangeRate } = useBalancePricesStore();
-const fiatExchangeRate = computed<BigNumber>(
-  () => get(exchangeRate(get(currencySymbol))) ?? One,
-);
+const fiatExchangeRate = computed<BigNumber>(() => get(exchangeRate(get(currencySymbol))) ?? One);
 
 const data = computed<IndexedLocationDataSnapshot[]>(() =>
-  get(value)
-    .map((item, index) => ({ ...item, index }))
-    .filter(item => item.location !== 'total'),
+  props.modelValue.map((item, index) => ({ ...item, index })).filter(item => item.location !== 'total'),
 );
 
 function input(value: LocationDataSnapshot[]) {
-  emit('input', value);
+  emit('update:model-value', value);
 }
 
 function updateStep(step: number) {
@@ -91,81 +89,80 @@ function editClick(item: IndexedLocationDataSnapshot) {
       ? item.usdValue.toFixed()
       : item.usdValue.multipliedBy(get(fiatExchangeRate)).toFixed();
 
-  set(form, {
+  set(modelValue, {
     ...item,
     usdValue: convertedFiatValue,
   });
 
   set(
     excludedLocations,
-    get(value)
-      .map(item => item.location)
-      .filter(identifier => identifier !== item.location),
+    props.modelValue.map(item => item.location).filter(identifier => identifier !== item.location),
   );
 
-  setOpenDialog(true);
+  set(openDialog, true);
 }
 
 function add() {
   set(editedIndex, null);
-  set(form, {
-    timestamp: get(timestamp),
+  set(modelValue, {
     location: '',
+    timestamp: get(timestamp),
     usdValue: '',
   });
   set(
     excludedLocations,
-    get(value).map(item => item.location),
+    props.modelValue.map(item => item.location),
   );
-  setOpenDialog(true);
+  set(openDialog, true);
 }
 
-function save() {
-  const formVal = get(form);
+async function save() {
+  const formRef = get(form);
+  const valid = await formRef?.validate();
+  if (!valid)
+    return false;
 
-  if (!formVal)
-    return;
+  const data = get(modelValue);
 
+  if (!data)
+    return false;
+
+  set(submitting, true);
   const index = get(editedIndex);
-  const val = get(value);
+  const val = props.modelValue;
   const timestampVal = get(timestamp);
 
   const convertedUsdValue
     = get(currencySymbol) === CURRENCY_USD
-      ? bigNumberify(formVal.usdValue)
-      : bigNumberify(formVal.usdValue).dividedBy(get(fiatExchangeRate));
+      ? bigNumberify(data.usdValue)
+      : bigNumberify(data.usdValue).dividedBy(get(fiatExchangeRate));
 
   const newValue = [...val];
   const payload = {
+    location: data.location,
     timestamp: timestampVal,
-    location: formVal.location,
     usdValue: convertedUsdValue,
   };
 
   if (index !== null)
     newValue[index] = payload;
-  else
-    newValue.unshift(payload);
+  else newValue.unshift(payload);
+
+  set(submitting, false);
 
   input(newValue);
   clearEditDialog();
 }
 
-setSubmitFunc(save);
-
 function clearEditDialog() {
-  closeDialog();
+  set(openDialog, false);
   set(editedIndex, null);
-  set(form, null);
+  set(modelValue, null);
   set(excludedLocations, []);
 }
 
-function updateForm(newForm: LocationDataSnapshotPayload) {
-  set(form, newForm);
-}
-
 function confirmDelete(index: number) {
-  const val = get(value);
+  const val = props.modelValue;
 
   if (index === null)
     return;
@@ -177,7 +174,7 @@ function confirmDelete(index: number) {
 }
 
 const total = computed<BigNumber>(() => {
-  const totalEntry = get(value).find(item => item.location === 'total');
+  const totalEntry = props.modelValue.find(item => item.location === 'total');
 
   if (!totalEntry)
     return Zero;
@@ -190,10 +187,8 @@ const { show } = useConfirmStore();
 function showDeleteConfirmation(item: IndexedLocationDataSnapshot) {
   show(
     {
+      message: t('dashboard.snapshot.edit.dialog.location_data.delete_confirmation'),
       title: t('dashboard.snapshot.edit.dialog.location_data.delete_title'),
-      message: t(
-        'dashboard.snapshot.edit.dialog.location_data.delete_confirmation',
-      ),
     },
     () => confirmDelete(item.index),
   );
@@ -204,10 +199,10 @@ function showDeleteConfirmation(item: IndexedLocationDataSnapshot) {
   <div>
     <RuiDataTable
       ref="tableRef"
-      class="table-inside-dialog"
+      v-model:sort="sort"
+      class="table-inside-dialog !max-h-[calc(100vh-26.25rem)]"
       :cols="tableHeaders"
       :rows="data"
-      :sort.sync="sort"
       :scroller="tableRef?.$el"
       row-attr="location"
       dense
@@ -245,7 +240,10 @@ function showDeleteConfirmation(item: IndexedLocationDataSnapshot) {
         <div class="font-bold text-h6 -mt-1">
           <AmountDisplay
             :value="total"
-            fiat-currency="USD"
+            :amount="total"
+            :price-asset="CURRENCY_USD"
+            :fiat-currency="CURRENCY_USD"
+            :timestamp="timestamp"
           />
         </div>
       </div>
@@ -257,7 +255,7 @@ function showDeleteConfirmation(item: IndexedLocationDataSnapshot) {
           @click="add()"
         >
           <template #prepend>
-            <RuiIcon name="add-circle-line" />
+            <RuiIcon name="lu-circle-plus" />
           </template>
           {{ t('dashboard.snapshot.edit.dialog.actions.add_new_entry') }}
         </RuiButton>
@@ -266,7 +264,7 @@ function showDeleteConfirmation(item: IndexedLocationDataSnapshot) {
           @click="updateStep(1)"
         >
           <template #prepend>
-            <RuiIcon name="arrow-left-line" />
+            <RuiIcon name="lu-arrow-left" />
           </template>
           {{ t('common.actions.back') }}
         </RuiButton>
@@ -276,7 +274,7 @@ function showDeleteConfirmation(item: IndexedLocationDataSnapshot) {
         >
           {{ t('common.actions.next') }}
           <template #append>
-            <RuiIcon name="arrow-right-line" />
+            <RuiIcon name="lu-arrow-right" />
           </template>
         </RuiButton>
       </div>
@@ -291,14 +289,16 @@ function showDeleteConfirmation(item: IndexedLocationDataSnapshot) {
       "
       :primary-action="t('common.actions.save')"
       :loading="submitting"
-      @confirm="trySubmit()"
+      :prompt-on-close="stateUpdated"
+      @confirm="save()"
       @cancel="clearEditDialog()"
     >
       <EditLocationDataSnapshotForm
-        v-if="form"
-        :form="form"
+        v-if="modelValue"
+        ref="form"
+        v-model="modelValue"
+        v-model:state-updated="stateUpdated"
         :excluded-locations="excludedLocations"
-        @update:form="updateForm($event)"
       />
     </BigDialog>
   </div>

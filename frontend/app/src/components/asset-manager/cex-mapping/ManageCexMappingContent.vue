@@ -1,14 +1,25 @@
 <script setup lang="ts">
-import { omit } from 'lodash-es';
+import { omit } from 'es-toolkit';
+import { useMessageStore } from '@/store/message';
+import { useConfirmStore } from '@/store/confirm';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useAssetCexMappingApi } from '@/composables/api/assets/cex-mapping';
+import ManageCexMappingFormDialog from '@/components/asset-manager/cex-mapping/ManageCexMappingFormDialog.vue';
+import ManageCexMappingTable from '@/components/asset-manager/cex-mapping/ManageCexMappingTable.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import type { CexMapping, CexMappingRequestPayload } from '@/types/asset';
-import type { Collection } from '@/types/collection';
 
 const { t } = useI18n();
+const router = useRouter();
+const route = useRoute();
 
-const { fetchAllCexMapping, deleteCexMapping } = useAssetCexMappingApi();
+const { deleteCexMapping, fetchAllCexMapping } = useAssetCexMappingApi();
 
-const selectedLocation: Ref<string> = ref('');
-const selectedSymbol: Ref<string> = ref('');
+const selectedLocation = ref<string>('');
+const selectedSymbol = ref<string>('');
+const editMode = ref<boolean>(false);
+
+const modelValue = ref<CexMapping>();
 
 const extraParams = computed(() => {
   const location = get(selectedLocation);
@@ -22,39 +33,48 @@ const extraParams = computed(() => {
 });
 
 const {
-  state,
-  isLoading: loading,
-  editableItem,
   fetchData,
+  isLoading: loading,
   pagination,
+  state,
 } = usePaginationFilters<
   CexMapping,
-  CexMappingRequestPayload,
-  CexMapping,
-  Collection<CexMapping>
->(null, true, useEmptyFilter, fetchAllCexMapping, {
+  CexMappingRequestPayload
+>(fetchAllCexMapping, {
+  extraParams,
+  history: 'router',
   onUpdateFilters(query) {
     set(selectedLocation, query.location || '');
     set(selectedSymbol, query.locationSymbol || '');
   },
-  extraParams,
 });
 
 onMounted(async () => {
+  const { query } = get(route);
+  if (query.add) {
+    await router.replace({ query: {} });
+    add({
+      location: (query.location as string) || '',
+      locationSymbol: (query.locationSymbol as string) || '',
+    });
+  }
+
   await fetchData();
 });
 
-const { setOpenDialog, setPostSubmitFunc } = useCexMappingForm();
-setPostSubmitFunc(fetchData);
-
-function add() {
-  set(editableItem, null);
-  setOpenDialog(true);
+function add(payload?: Partial<CexMapping>) {
+  set(modelValue, {
+    asset: '',
+    location: get(selectedLocation) || '',
+    locationSymbol: get(selectedSymbol) || '',
+    ...payload,
+  });
+  set(editMode, false);
 }
 
 function edit(editMapping: CexMapping) {
-  set(editableItem, editMapping);
-  setOpenDialog(true);
+  set(modelValue, editMapping);
+  set(editMode, true);
 }
 
 const { show } = useConfirmStore();
@@ -62,7 +82,7 @@ const { setMessage } = useMessageStore();
 
 async function confirmDelete(mapping: CexMapping) {
   try {
-    const success = await deleteCexMapping(omit(mapping, 'asset'));
+    const success = await deleteCexMapping(omit(mapping, ['asset']));
     if (success)
       await fetchData();
   }
@@ -78,21 +98,15 @@ async function confirmDelete(mapping: CexMapping) {
 function showDeleteConfirmation(item: CexMapping) {
   show(
     {
-      title: t('asset_management.cex_mapping.confirm_delete.title'),
       message: t('asset_management.cex_mapping.confirm_delete.message', {
         asset: item.locationSymbol,
         location: item.location || t('asset_management.cex_mapping.all_exchanges'),
       }),
+      title: t('asset_management.cex_mapping.confirm_delete.title'),
     },
     async () => await confirmDelete(item),
   );
 }
-
-const dialogTitle = computed<string>(() =>
-  get(editableItem)
-    ? t('asset_management.cex_mapping.edit_title')
-    : t('asset_management.cex_mapping.add_title'),
-);
 </script>
 
 <template>
@@ -108,7 +122,7 @@ const dialogTitle = computed<string>(() =>
         @click="fetchData()"
       >
         <template #prepend>
-          <RuiIcon name="refresh-line" />
+          <RuiIcon name="lu-refresh-ccw" />
         </template>
         {{ t('common.refresh') }}
       </RuiButton>
@@ -119,26 +133,26 @@ const dialogTitle = computed<string>(() =>
         @click="add()"
       >
         <template #prepend>
-          <RuiIcon name="add-line" />
+          <RuiIcon name="lu-plus" />
         </template>
         {{ t('asset_management.cex_mapping.add_mapping') }}
       </RuiButton>
     </template>
     <RuiCard>
       <ManageCexMappingTable
+        v-model:location="selectedLocation"
+        v-model:symbol="selectedSymbol"
+        v-model:pagination="pagination"
         :collection="state"
-        :location.sync="selectedLocation"
-        :symbol.sync="selectedSymbol"
         :loading="loading"
-        :pagination.sync="pagination"
         @refresh="fetchData()"
         @edit="edit($event)"
         @delete="showDeleteConfirmation($event)"
       />
       <ManageCexMappingFormDialog
-        :title="dialogTitle"
-        :editable-item="editableItem"
-        :selected-location="selectedLocation"
+        v-model="modelValue"
+        :edit-mode="editMode"
+        @refresh="fetchData()"
       />
     </RuiCard>
   </TablePageLayout>

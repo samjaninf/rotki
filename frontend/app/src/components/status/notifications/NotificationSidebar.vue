@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { Priority, Severity } from '@rotki/common/lib/messages';
+import { Priority, Severity } from '@rotki/common';
 import { Routes } from '@/router/routes';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useConfirmStore } from '@/store/confirm';
+import Notification from '@/components/status/notifications/Notification.vue';
+import LazyLoader from '@/components/helper/LazyLoader.vue';
+import PendingTasks from '@/components/status/notifications/PendingTasks.vue';
 
-defineProps<{ visible: boolean }>();
-
-const emit = defineEmits(['close']);
+const display = defineModel<boolean>({ required: true });
 
 const { t } = useI18n();
-
-const css = useCssModule();
 
 const confirmStore = useConfirmStore();
 const { visible: dialogVisible } = storeToRefs(confirmStore);
@@ -19,14 +21,7 @@ const { prioritized: allNotifications } = storeToRefs(notificationStore);
 const { remove } = notificationStore;
 
 function close() {
-  emit('close');
-}
-
-function input(visible: boolean) {
-  if (visible)
-    return;
-
-  close();
+  set(display, false);
 }
 
 function clear() {
@@ -37,8 +32,8 @@ function clear() {
 function showConfirmation() {
   show(
     {
-      title: t('notification_sidebar.confirmation.title'),
       message: t('notification_sidebar.confirmation.message'),
+      title: t('notification_sidebar.confirmation.title'),
       type: 'info',
     },
     clear,
@@ -55,13 +50,13 @@ enum TabCategory {
 }
 
 const tabCategoriesLabel = computed(() => ({
-  [TabCategory.VIEW_ALL]: t('notification_sidebar.tabs.view_all'),
+  [TabCategory.ERROR]: t('notification_sidebar.tabs.error'),
   [TabCategory.NEEDS_ACTION]: t('notification_sidebar.tabs.needs_action'),
   [TabCategory.REMINDER]: t('notification_sidebar.tabs.reminder'),
-  [TabCategory.ERROR]: t('notification_sidebar.tabs.error'),
+  [TabCategory.VIEW_ALL]: t('notification_sidebar.tabs.view_all'),
 }));
 
-const selectedTab: Ref<TabCategory> = ref(TabCategory.VIEW_ALL);
+const selectedTab = ref<TabCategory>(TabCategory.VIEW_ALL);
 
 const selectedNotifications = computed(() => {
   const all = get(allNotifications);
@@ -84,53 +79,48 @@ const [DefineNoMessages, ReuseNoMessages] = createReusableTemplate();
 const contentWrapper = ref();
 const { y } = useScroll(contentWrapper);
 
-const initialAppear: Ref<boolean> = ref(false);
+const initialAppear = ref<boolean>(false);
 
-watch([y, selectedTab, selectedNotifications], ([currentY, currSelectedTab, currNotifications], [_, prevSelectedTab, prevNotifications]) => {
-  if (currSelectedTab !== prevSelectedTab || (prevNotifications.length === 0 && currNotifications.length > 0)) {
-    set(initialAppear, false);
-    nextTick(() => {
-      set(initialAppear, true);
-    });
-  }
-  else {
-    if (currentY > 0)
+watch(
+  [y, selectedTab, selectedNotifications],
+  ([currentY, currSelectedTab, currNotifications], [_, prevSelectedTab, prevNotifications]) => {
+    if (currSelectedTab !== prevSelectedTab || (prevNotifications.length === 0 && currNotifications.length > 0)) {
       set(initialAppear, false);
-    else
-      set(initialAppear, true);
-  }
-});
+      nextTick(() => {
+        set(initialAppear, true);
+      });
+    }
+    else {
+      if (currentY > 0)
+        set(initialAppear, false);
+      else set(initialAppear, true);
+    }
+  },
+);
 </script>
 
 <template>
-  <VNavigationDrawer
-    :class="css.sidebar"
-    class="border-default"
+  <RuiNavigationDrawer
+    v-model="display"
+    :content-class="$style.sidebar"
     width="400px"
-    absolute
-    clipped
-    :value="visible"
-    :stateless="dialogVisible"
-    right
+    position="right"
     temporary
-    hide-overlay
-    @input="input($event)"
+    :stateless="dialogVisible"
   >
     <DefineNoMessages>
-      <div :class="css['no-messages']">
+      <div :class="$style['no-messages']">
         <RuiIcon
           size="64px"
           color="primary"
-          name="information-line"
+          name="lu-info"
         />
         <div class="text-rui-text text-lg mt-2">
           {{ t('notification_sidebar.no_messages') }}
         </div>
       </div>
     </DefineNoMessages>
-    <div
-      class="h-full overflow-hidden flex flex-col"
-    >
+    <div class="h-full overflow-hidden flex flex-col">
       <div class="flex justify-between items-center p-2 pl-4">
         <div class="text-h6">
           {{ t('notification_sidebar.title') }}
@@ -140,14 +130,14 @@ watch([y, selectedTab, selectedNotifications], ([currentY, currSelectedTab, curr
           icon
           @click="close()"
         >
-          <RuiIcon name="close-line" />
+          <RuiIcon name="lu-x" />
         </RuiButton>
       </div>
 
       <ReuseNoMessages v-if="!hasRunningTasks && allNotifications.length === 0" />
       <div
         v-else
-        :class="css.messages"
+        :class="$style.messages"
       >
         <PendingTasks />
         <div class="border-b border-default mx-4">
@@ -155,29 +145,28 @@ watch([y, selectedTab, selectedNotifications], ([currentY, currSelectedTab, curr
             v-model="selectedTab"
             color="primary"
           >
-            <template #default>
-              <RuiTab
-                v-for="item in Object.values(TabCategory)"
-                :key="item"
-                size="sm"
-                class="!min-w-0"
-                :tab-value="item"
-              >
-                {{ tabCategoriesLabel[item] }}
-              </RuiTab>
-            </template>
+            <RuiTab
+              v-for="item in Object.values(TabCategory)"
+              :key="item"
+              size="sm"
+              class="!min-w-0"
+              :value="item"
+            >
+              {{ tabCategoriesLabel[item] }}
+            </RuiTab>
           </RuiTabs>
         </div>
         <div
           v-if="selectedNotifications.length > 0"
           ref="contentWrapper"
-          :class="css.content"
+          :class="$style.content"
         >
           <LazyLoader
             v-for="item in selectedNotifications"
             :key="item.id"
             :initial-appear="initialAppear"
             min-height="120px"
+            class="grow-0 shrink-0"
           >
             <Notification
               :notification="item"
@@ -203,7 +192,7 @@ watch([y, selectedTab, selectedNotifications], ([currentY, currSelectedTab, curr
           >
             <template #prepend>
               <RuiIcon
-                name="calendar-event-line"
+                name="lu-calendar-days"
                 size="20"
               />
             </template>
@@ -212,14 +201,10 @@ watch([y, selectedTab, selectedNotifications], ([currentY, currSelectedTab, curr
         </RouterLink>
       </div>
     </div>
-  </VNavigationDrawer>
+  </RuiNavigationDrawer>
 </template>
 
 <style module lang="scss">
-.sidebar {
-  @apply border-t pt-0 top-[3.5rem] md:top-[4rem] #{!important};
-}
-
 .no-messages {
   @apply flex flex-col items-center justify-center flex-1;
 }
@@ -230,7 +215,7 @@ watch([y, selectedTab, selectedNotifications], ([currentY, currSelectedTab, curr
 }
 
 .content {
-  @apply ps-3.5 pe-2 mt-2 grid grid-cols-1 gap-2;
+  @apply ps-3.5 pe-2 mt-2 flex flex-col gap-2;
   @apply overflow-y-auto #{!important};
 }
 </style>

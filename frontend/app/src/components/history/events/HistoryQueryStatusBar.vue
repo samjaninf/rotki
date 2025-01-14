@@ -1,19 +1,16 @@
 <script setup lang="ts">
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+
 defineProps<{
   colspan: number;
   finished: boolean;
-  decoding: boolean;
-  total: number;
 }>();
 
 const emit = defineEmits<{ (e: 'reset'): void }>();
 </script>
 
 <template>
-  <tr
-    v-if="total > 0 || decoding"
-    class="!bg-black/[0.04] dark:!bg-white/[0.04]"
-  >
+  <tr class="!bg-black/[0.04] dark:!bg-white/[0.04]">
     <td
       :colspan="colspan"
       class="px-4"
@@ -27,6 +24,7 @@ const emit = defineEmits<{ (e: 'reset'): void }>();
               thickness="2"
               variant="indeterminate"
               circular
+              color="primary"
             />
 
             <SuccessDisplay
@@ -50,7 +48,7 @@ const emit = defineEmits<{ (e: 'reset'): void }>();
           variant="text"
           @click="emit('reset')"
         >
-          <RuiIcon name="close-line" />
+          <RuiIcon name="lu-x" />
         </RuiButton>
       </div>
     </td>

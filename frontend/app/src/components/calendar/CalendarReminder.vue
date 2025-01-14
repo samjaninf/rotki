@@ -1,33 +1,49 @@
 <script setup lang="ts">
+import { logger } from '@/utils/logging';
+import { useNotificationsStore } from '@/store/notifications';
+import { useCalendarReminderApi } from '@/composables/history/calendar/reminder';
+import CalendarReminderEntry from '@/components/calendar/CalendarReminderEntry.vue';
 import type { CalendarEvent } from '@/types/history/calendar';
 import type { CalendarReminderTemporaryPayload, CalenderReminderPayload } from '@/types/history/calendar/reminder';
 
-const props = withDefaults(
-  defineProps<{
-    editableItem?: CalendarEvent;
-  }>(),
-  {
-    editableItem: undefined,
-  },
-);
-const { editableItem } = toRefs(props);
+const modelValue = defineModel<CalendarEvent>({ required: true });
+
+const props = defineProps<{
+  editMode: boolean;
+}>();
 
 const { t } = useI18n();
 
-const showReminders: Ref<boolean> = ref(false);
-
-const temporaryData: Ref<CalendarReminderTemporaryPayload[]> = ref([]);
-
-const length = computed(() => get(temporaryData).filter(item => item.secsBefore > 0).length);
-
-const {
-  fetchCalendarReminders,
-  addCalendarReminder,
-  editCalendarReminder,
-  deleteCalendarReminder,
-} = useCalendarReminderApi();
+const showReminders = ref<boolean>(false);
+const temporaryData = ref<CalendarReminderTemporaryPayload[]>([]);
+const newIdCreated = ref<number>(-1);
 
 const { notify } = useNotificationsStore();
+
+const {
+  addCalendarReminder,
+  deleteCalendarReminder,
+  editCalendarReminder,
+  fetchCalendarReminders,
+} = useCalendarReminderApi();
+
+const length = computed<number>(() => get(temporaryData).filter(item => item.secsBefore > 0).length);
+
+const remindInTime = computed<boolean>({
+  get() {
+    return get(temporaryData).some(item => item.secsBefore === 0);
+  },
+  async set(value: boolean) {
+    if (!value) {
+      const index = get(temporaryData).findIndex(item => item.secsBefore === 0);
+      if (index > -1)
+        await deleteData(index);
+    }
+    else {
+      await addReminder(0, true);
+    }
+  },
+});
 
 async function addCalendarReminderHandler(reminders: CalenderReminderPayload[]) {
   try {
@@ -35,10 +51,10 @@ async function addCalendarReminderHandler(reminders: CalenderReminderPayload[]) 
     if (result.failed && result.failed.length > 0) {
       notify({
         display: true,
-        title: t('calendar.reminder.add_error.title'),
         message: t('calendar.reminder.add_error.some_failed', {
           ids: result.failed.join(', '),
         }),
+        title: t('calendar.reminder.add_error.title'),
       });
     }
   }
@@ -46,67 +62,61 @@ async function addCalendarReminderHandler(reminders: CalenderReminderPayload[]) 
     logger.error(error);
     notify({
       display: true,
-      title: t('calendar.reminder.add_error.title'),
       message: t('calendar.reminder.add_error.message', {
         message: error.message,
       }),
+      title: t('calendar.reminder.add_error.title'),
     });
   }
 }
 
 async function refreshTemporaryData() {
-  const item = get(editableItem);
-  if (!item)
+  if (!props.editMode) {
     return;
-
+  }
+  const item = get(modelValue);
   try {
     const identifier = item.identifier;
     const reminders = await fetchCalendarReminders({ identifier });
     const sortedReminders = reminders.sort((a, b) => a.identifier - b.identifier);
     const oldData = [...get(temporaryData)].filter(item => item.isTemporary);
-    const newData = [
-      ...sortedReminders.map(item => ({ ...item, isTemporary: false })),
-      ...oldData,
-    ];
+    const newData = [...sortedReminders.map(item => ({ ...item, isTemporary: false })), ...oldData];
     set(temporaryData, newData);
   }
   catch (error: any) {
     logger.error(error);
     notify({
       display: true,
-      title: t('calendar.reminder.fetch_error.title'),
       message: t('calendar.reminder.fetch_error.message', {
         message: error.message,
       }),
+      title: t('calendar.reminder.fetch_error.title'),
     });
   }
 }
 
 function isSameSecsBeforeExist(seconds: number) {
-  return get(temporaryData).filter(item => !item.isTemporary).some(item => item.secsBefore === seconds);
+  return get(temporaryData)
+    .filter(item => !item.isTemporary)
+    .some(item => item.secsBefore === seconds);
 }
-
-const newIdCreated: Ref<number> = ref(-1);
 
 // 15 minutes as default value
 async function addReminder(secsBefore: number = 900, inTimeReminder = false) {
   if (!inTimeReminder)
     set(showReminders, true);
 
-  const item = get(editableItem);
+  const item = get(modelValue);
 
-  if (!item || isSameSecsBeforeExist(secsBefore) || inTimeReminder) {
+  if (!props.editMode || isSameSecsBeforeExist(secsBefore) || inTimeReminder) {
     const newId = Date.now();
     const newData: CalendarReminderTemporaryPayload = {
-      secsBefore,
       identifier: newId,
       isTemporary: true,
+      secsBefore,
     };
 
-    set(temporaryData, [
-      ...get(temporaryData),
-      newData,
-    ]);
+    set(temporaryData, [...get(temporaryData), newData]);
 
     set(newIdCreated, newId);
   }
@@ -127,11 +137,10 @@ function toggleReminder() {
 }
 
 async function deleteData(index: number) {
-  const item = get(editableItem);
   const temp = [...get(temporaryData)];
   const data = temp[index];
 
-  if (!data.isTemporary && item) {
+  if (!data.isTemporary && props.editMode) {
     try {
       await deleteCalendarReminder(data.identifier);
     }
@@ -139,10 +148,10 @@ async function deleteData(index: number) {
       logger.error(error);
       notify({
         display: true,
-        title: t('calendar.reminder.delete_error.title'),
         message: t('calendar.reminder.delete_error.message', {
           message: error.message,
         }),
+        title: t('calendar.reminder.delete_error.title'),
       });
     }
     await refreshTemporaryData();
@@ -154,27 +163,27 @@ async function deleteData(index: number) {
 }
 
 async function updateData(index: number, { secsBefore }: CalendarReminderTemporaryPayload) {
-  const item = get(editableItem);
+  const item = get(modelValue);
   const temp = [...get(temporaryData)];
   const data = temp[index];
 
-  if (item) {
+  if (props.editMode) {
     if (!data.isTemporary) {
       try {
         await editCalendarReminder({
+          eventId: item.identifier,
           identifier: data.identifier,
           secsBefore,
-          eventId: item.identifier,
         });
       }
       catch (error: any) {
         logger.error(error);
         notify({
           display: true,
-          title: t('calendar.reminder.edit_error.title'),
           message: t('calendar.reminder.edit_error.message', {
             message: error.message,
           }),
+          title: t('calendar.reminder.edit_error.title'),
         });
       }
 
@@ -197,13 +206,13 @@ async function updateData(index: number, { secsBefore }: CalendarReminderTempora
   }
 }
 
-watchImmediate(editableItem, refreshTemporaryData);
-
 async function saveTemporaryReminder(eventId: number) {
   const temporary = get(temporaryData).filter(item => item.isTemporary);
 
   if (temporary.length > 0) {
-    const savedSeconds = get(temporaryData).filter(item => !item.isTemporary).map(item => item.secsBefore);
+    const savedSeconds = get(temporaryData)
+      .filter(item => !item.isTemporary)
+      .map(item => item.secsBefore);
 
     const secsBeforeToSave: number[] = [];
     temporary.forEach(({ secsBefore }) => {
@@ -211,23 +220,11 @@ async function saveTemporaryReminder(eventId: number) {
         secsBeforeToSave.push(secsBefore);
     });
 
-    await addCalendarReminderHandler(secsBeforeToSave.map(secsBefore => ({ secsBefore, eventId })));
+    await addCalendarReminderHandler(secsBeforeToSave.map(secsBefore => ({ eventId, secsBefore })));
   }
 }
 
-const remindInTime = computed({
-  get() {
-    return get(temporaryData).some(item => item.secsBefore === 0);
-  },
-  async set(value: boolean) {
-    if (!value) {
-      const index = get(temporaryData).findIndex(item => item.secsBefore === 0);
-      if (index > -1)
-        await deleteData(index);
-    }
-    else { await addReminder(0, true); }
-  },
-});
+onBeforeMount(() => refreshTemporaryData());
 
 defineExpose({
   saveTemporaryReminder,
@@ -258,7 +255,7 @@ defineExpose({
               v-if="length > 0"
               class="ml-2 transition"
               :class="{ 'transform -rotate-180': !showReminders }"
-              name="arrow-up-s-line"
+              name="lu-chevron-up"
             />
           </div>
         </RuiButton>
@@ -270,23 +267,21 @@ defineExpose({
           {{ t('calendar.reminder.add_reminder') }}
         </RuiButton>
       </div>
-      <RuiAccordions :value="showReminders ? 0 : -1">
+      <RuiAccordions :model-value="showReminders ? 0 : -1">
         <RuiAccordion eager>
           <template #default>
             <div
               v-if="length > 0"
               class="flex flex-col gap-2 pt-2"
             >
-              <template
-                v-for="(data, index) in temporaryData"
-              >
+              <template v-for="(data, index) in temporaryData">
                 <CalendarReminderEntry
                   v-if="data.secsBefore > 0"
                   :key="data.identifier"
-                  :value="data"
+                  :model-value="data"
                   :latest="data.identifier === newIdCreated"
                   @delete="deleteData(index)"
-                  @input="updateData(index, $event)"
+                  @update:model-value="updateData(index, $event)"
                 />
               </template>
             </div>

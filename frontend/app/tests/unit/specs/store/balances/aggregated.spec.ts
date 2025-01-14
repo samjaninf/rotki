@@ -1,13 +1,20 @@
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { sortBy } from 'lodash-es';
-import { expect } from 'vitest';
+import { type AssetBalanceWithPrice, Blockchain } from '@rotki/common';
+import { sortBy } from 'es-toolkit';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { convertBtcAccounts, convertBtcBalances } from '@/utils/blockchain/accounts';
 import { TRADE_LOCATION_BANKS } from '@/data/defaults';
 import { useCurrencies } from '@/types/currencies';
 import { BalanceType } from '@/types/balances';
+import { useManualBalancesStore } from '@/store/balances/manual';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useExchangesStore } from '@/store/exchanges';
+import { useExchangeBalancesStore } from '@/store/balances/exchanges';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
+import { useBalances } from '@/composables/balances';
 import { updateGeneralSettings } from '../../../utils/general-settings';
 import type { BlockchainTotals, BtcBalances } from '@/types/blockchain/balances';
-import type { AssetBalanceWithPrice } from '@rotki/common';
-import type { BitcoinAccounts } from '@/types/blockchain/accounts';
+import type { BitcoinAccounts, BlockchainAccountGroupWithBalance } from '@/types/blockchain/accounts';
 import '../../../i18n';
 
 describe('store::balances/aggregated', () => {
@@ -21,7 +28,7 @@ describe('store::balances/aggregated', () => {
     const { prices } = storeToRefs(useBalancePricesStore());
     const { manualBalancesData } = storeToRefs(useManualBalancesStore());
     const { balances } = useAggregatedBalances();
-    const { totals: ethTotals } = storeToRefs(useBlockchainStore());
+    const { balances: ethBalances } = storeToRefs(useBlockchainStore());
 
     set(connectedExchanges, [
       {
@@ -55,27 +62,22 @@ describe('store::balances/aggregated', () => {
       DAI: {
         value: bigNumberify(1),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
       EUR: {
         value: bigNumberify(1),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
       SAI: {
         value: bigNumberify(1),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
       ETH: {
         value: bigNumberify(3000),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
       BTC: {
         value: bigNumberify(40000),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
     });
 
@@ -92,31 +94,33 @@ describe('store::balances/aggregated', () => {
       },
     ]);
 
-    const totalsState = {
-      [Blockchain.ETH]: {
-        DAI: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-        },
-        BTC: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-        },
-        ETH: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-        },
-        SAI: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
+    set(ethBalances, {
+      [Blockchain.ETH.toString()]: {
+        '0x123': {
+          assets: {
+            DAI: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+            BTC: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+            ETH: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+            SAI: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+          },
+          liabilities: {},
         },
       },
-      [Blockchain.ETH2]: {},
-    };
+    });
 
-    set(ethTotals, totalsState);
-
-    const actualResult = sortBy(get(balances()), 'asset');
+    const actualResult = sortBy(get(balances()), ['asset']);
 
     const expectedResult = sortBy(
       [
@@ -151,13 +155,13 @@ describe('store::balances/aggregated', () => {
           usdPrice: bigNumberify(1),
         },
       ] satisfies AssetBalanceWithPrice[],
-      'asset',
+      ['asset'],
     );
 
     expect(actualResult).toMatchObject(expectedResult);
   });
 
-  it('btcAccounts', () => {
+  it('btcAccounts', async () => {
     const accounts: BitcoinAccounts = {
       standalone: [
         {
@@ -204,36 +208,29 @@ describe('store::balances/aggregated', () => {
       ],
     };
 
-    const totals: BlockchainTotals = { assets: {
-      [Blockchain.BTC.toUpperCase()]: {
-        usdValue: bigNumberify(20),
-        amount: bigNumberify(20),
+    const totals: BlockchainTotals = {
+      assets: {
+        [Blockchain.BTC.toUpperCase()]: {
+          usdValue: bigNumberify(20),
+          amount: bigNumberify(20),
+        },
       },
-    }, liabilities: {} };
+      liabilities: {},
+    };
 
-    const { updateAccounts, updateBalances, getBlockchainAccounts, getAccounts } = useBlockchainStore();
+    const { updateAccounts, updateBalances, getBlockchainAccounts, fetchAccounts } = useBlockchainStore();
 
-    updateAccounts(Blockchain.BTC, convertBtcAccounts(chain => get(chain).toUpperCase(), Blockchain.BTC, accounts));
+    updateAccounts(
+      Blockchain.BTC,
+      convertBtcAccounts(chain => get(chain).toUpperCase(), Blockchain.BTC, accounts),
+    );
     updateBalances(Blockchain.BTC, convertBtcBalances(Blockchain.BTC, totals, btcBalances));
 
     expect(getBlockchainAccounts(Blockchain.BTC)).toEqual([
       {
+        type: 'account',
         data: {
-          derivationPath: 'm',
-          xpub: 'xpub123',
-        },
-        amount: bigNumberify(0),
-        chain: Blockchain.BTC,
-        expandable: false,
-        groupHeader: true,
-        groupId: 'xpub123#m#btc',
-        label: undefined,
-        nativeAsset: 'BTC',
-        tags: undefined,
-        usdValue: bigNumberify(0),
-      },
-      {
-        data: {
+          type: 'address',
           address: '1234',
         },
         amount: bigNumberify(10),
@@ -242,28 +239,13 @@ describe('store::balances/aggregated', () => {
         nativeAsset: 'BTC',
         groupId: 'xpub123#m#btc',
         label: undefined,
-        expandable: false,
+        expansion: undefined,
         tags: undefined,
       },
       {
+        type: 'account',
         data: {
-          derivationPath: undefined,
-          xpub: 'xpub1234',
-        },
-        amount: bigNumberify(0),
-        chain: Blockchain.BTC,
-        expandable: false,
-        groupHeader: true,
-        groupId: 'xpub1234#btc',
-        label: '123',
-        nativeAsset: 'BTC',
-        tags: [
-          'a',
-        ],
-        usdValue: bigNumberify(0),
-      },
-      {
-        data: {
+          type: 'address',
           address: '123',
         },
         amount: bigNumberify(10),
@@ -271,59 +253,60 @@ describe('store::balances/aggregated', () => {
         chain: Blockchain.BTC,
         groupId: '123',
         nativeAsset: 'BTC',
-        expandable: false,
+        expansion: undefined,
         label: undefined,
         tags: undefined,
       },
     ]);
 
-    expect(getAccounts(Blockchain.BTC)).toEqual([
+    const knownGroups = await fetchAccounts({ limit: 10, offset: 0 });
+
+    const chain = Blockchain.BTC.toString();
+
+    const groups: BlockchainAccountGroupWithBalance[] = [
       {
-        chain: Blockchain.BTC,
+        type: 'group',
         data: {
-          derivationPath: 'm',
-          xpub: 'xpub123',
-        },
-        groupHeader: true,
-        groupId: 'xpub123#m#btc',
-        label: undefined,
-        nativeAsset: 'BTC',
-        tags: undefined,
-      },
-      {
-        chain: Blockchain.BTC,
-        data: {
-          address: '1234',
-        },
-        groupId: 'xpub123#m#btc',
-        label: undefined,
-        nativeAsset: 'BTC',
-        tags: undefined,
-      },
-      {
-        chain: Blockchain.BTC,
-        data: {
-          derivationPath: undefined,
-          xpub: 'xpub1234',
-        },
-        groupHeader: true,
-        groupId: 'xpub1234#btc',
-        label: '123',
-        nativeAsset: 'BTC',
-        tags: [
-          'a',
-        ],
-      },
-      {
-        chain: Blockchain.BTC,
-        data: {
+          type: 'address',
           address: '123',
         },
-        label: undefined,
-        nativeAsset: 'BTC',
+        usdValue: bigNumberify(10),
+        chains: [chain],
+        label: '123',
         tags: undefined,
       },
-    ]);
+      {
+        type: 'group',
+        data: {
+          type: 'xpub',
+          xpub: 'xpub123',
+          derivationPath: 'm',
+        },
+        nativeAsset: 'BTC',
+        chains: [chain],
+        expansion: 'accounts',
+        label: undefined,
+        tags: undefined,
+        amount: bigNumberify(10),
+        usdValue: bigNumberify(10),
+      },
+      {
+        type: 'group',
+        data: {
+          type: 'xpub',
+          xpub: 'xpub1234',
+          derivationPath: undefined,
+        },
+        amount: Zero,
+        usdValue: Zero,
+        nativeAsset: 'BTC',
+        chains: [chain],
+        label: '123',
+        tags: ['a'],
+      },
+    ];
+
+    expect(knownGroups.data).toEqual(groups);
   });
 
   it('aggregatedBalances, make sure `isCurrentCurrency` do not break the calculation', () => {
@@ -372,27 +355,22 @@ describe('store::balances/aggregated', () => {
       DAI: {
         value: bigNumberify(1),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
       EUR: {
         value: bigNumberify(1),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
       SAI: {
         value: bigNumberify(1),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
       ETH: {
         value: bigNumberify(3000),
         isManualPrice: false,
-        isCurrentCurrency: true,
       },
       BTC: {
         value: bigNumberify(40000),
         isManualPrice: false,
-        isCurrentCurrency: false,
       },
     });
 
@@ -411,33 +389,35 @@ describe('store::balances/aggregated', () => {
     ]);
 
     const { balances } = useAggregatedBalances();
-    const { totals } = storeToRefs(useBlockchainStore());
+    const { balances: allBalances } = storeToRefs(useBlockchainStore());
 
-    const totalsState = {
+    set(allBalances, {
       [Blockchain.ETH]: {
-        DAI: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-        },
-        BTC: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-        },
-        ETH: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-        },
-        SAI: {
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
+        '0x123': {
+          assets: {
+            DAI: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+            BTC: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+            ETH: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+            SAI: {
+              amount: bigNumberify(100),
+              usdValue: bigNumberify(100),
+            },
+          },
+          liabilities: {},
         },
       },
-      [Blockchain.ETH2]: {},
-    };
-
-    set(totals, totalsState);
+    });
     adjustPrices(get(prices));
-    const actualResult = sortBy(get(balances()), 'asset');
+    const actualResult = sortBy(get(balances()), ['asset']);
     const expectedResult = sortBy(
       [
         {
@@ -461,7 +441,7 @@ describe('store::balances/aggregated', () => {
         {
           asset: 'ETH',
           amount: bigNumberify(150),
-          usdValue: bigNumberify(375000),
+          usdValue: bigNumberify(450000),
           usdPrice: bigNumberify(3000),
         },
         {
@@ -471,7 +451,7 @@ describe('store::balances/aggregated', () => {
           usdPrice: bigNumberify(1),
         },
       ] as AssetBalanceWithPrice[],
-      'asset',
+      ['asset'],
     );
 
     expect(actualResult).toMatchObject(expectedResult);

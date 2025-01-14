@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import Fragment from '@/components/helper/Fragment';
+import { getCollectionData, setupEntryLimit } from '@/utils/collection';
 import UserNotesFormDialog from '@/components/notes/UserNotesFormDialog.vue';
-import type { Collection } from '@/types/collection';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { usePremium } from '@/composables/premium';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useUserNotesApi } from '@/composables/api/session/user-notes';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import CollectionHandler from '@/components/helper/CollectionHandler.vue';
 import type { UserNote, UserNotesRequestPayload } from '@/types/notes';
+
+const open = defineModel<boolean>('open', { required: true });
 
 const props = withDefaults(defineProps<{ location?: string }>(), {
   location: '',
@@ -10,10 +18,10 @@ const props = withDefaults(defineProps<{ location?: string }>(), {
 
 function getDefaultForm() {
   return {
-    title: '',
     content: '',
     isPinned: false,
     location: '',
+    title: '',
   };
 }
 
@@ -29,7 +37,7 @@ const loading = ref<boolean>(false);
 const search = ref<string>('');
 const titleSubstring = ref<string>('');
 
-const { fetchUserNotes, updateUserNote, addUserNote, deleteUserNote } = useUserNotesApi();
+const { deleteUserNote, fetchUserNotes, updateUserNote } = useUserNotesApi();
 
 const extraParams = computed(() => ({
   location: get(location),
@@ -37,19 +45,17 @@ const extraParams = computed(() => ({
 }));
 
 const {
-  state: notes,
   fetchData,
   pagination,
-} = usePaginationFilters<
-  UserNote,
-  UserNotesRequestPayload,
-  UserNote,
-  Collection<UserNote>
->(null, false, useEmptyFilter, fetchUserNotes, {
-  defaultSortBy: {
-    key: ['isPinned', 'lastUpdateTimestamp'],
-    ascending: [false, false],
-  },
+  state: notes,
+} = usePaginationFilters<UserNote, UserNotesRequestPayload>(fetchUserNotes, {
+  defaultSortBy: [{
+    column: 'isPinned',
+    direction: 'desc',
+  }, {
+    column: 'lastUpdateTimestamp',
+    direction: 'desc',
+  }],
   extraParams,
 });
 
@@ -63,19 +69,19 @@ async function fetchNotes(loadingIndicator = false) {
   set(loading, false);
 }
 
-const { limit: itemsPerPage, found, total } = getCollectionData<UserNote>(notes);
+const { found, limit: itemsPerPage, total } = getCollectionData<UserNote>(notes);
 
 const { showUpgradeRow } = setupEntryLimit(itemsPerPage, found, total);
 
-const page: Ref<number> = ref(1);
-const nextPageDisabled: Ref<boolean> = ref(true);
+const page = ref<number>(1);
+const nextPageDisabled = ref<boolean>(true);
 
 const LIMIT = 10;
 watch(page, (page) => {
   set(pagination, {
     ...get(pagination),
-    page: 1,
     limit: LIMIT * page,
+    page: 1,
   });
 });
 
@@ -88,46 +94,27 @@ async function togglePin(note: UserNote) {
   await callUpdateNote(payload);
 }
 
-const { closeDialog, setOpenDialog, setSubmitFunc } = useUserNotesForm();
-
 function resetForm() {
   set(editMode, false);
   set(form, getDefaultForm());
-  closeDialog();
+  set(open, false);
 }
 
 function addNote() {
   resetForm();
-  setOpenDialog(true);
+  set(open, true);
 }
 
 function editNote(note: UserNote) {
   set(editMode, true);
   set(form, { ...note });
-  setOpenDialog(true);
+  set(open, true);
 }
 
 async function callUpdateNote(payload: Partial<UserNote>) {
   await updateUserNote(payload);
   await fetchNotes();
 }
-
-async function save() {
-  try {
-    if (get(editMode)) {
-      await callUpdateNote(get(form));
-    }
-    else {
-      await addUserNote({ ...get(form), location: get(location) });
-      await fetchNotes();
-    }
-    resetForm();
-  }
-  catch (error) {
-    logger.error(error);
-  }
-}
-setSubmitFunc(save);
 
 function deleteNote(identifier: number) {
   set(showDeleteConfirmation, true);
@@ -179,7 +166,7 @@ watch(notes, (notes) => {
   set(nextPageDisabled, notes.data.length >= notes.found);
 });
 
-const bottom: Ref<boolean> = ref(false);
+const bottom = ref<boolean>(false);
 watch(arrivedState, (arrived) => {
   set(bottom, arrived.bottom && get(notes).data.length > 0);
 });
@@ -192,204 +179,211 @@ watch(shouldIncreasePage, (increasePage) => {
 </script>
 
 <template>
-  <Fragment>
-    <div class="p-4 flex items-center gap-3">
-      <RuiTextField
-        v-model="search"
-        variant="outlined"
-        color="primary"
-        dense
-        class="flex-1"
-        prepend-icon="search-line"
-        :label="t('notes_menu.search')"
-        clearable
-        hide-details
-      />
-
-      <RuiButton
-        color="primary"
-        class="py-2"
-        :disabled="showUpgradeRow"
-        @click="addNote()"
-      >
-        <template #prepend>
-          <RuiIcon name="add-line" />
-        </template>
-      </RuiButton>
-    </div>
-
-    <div
-      v-if="loading"
-      class="note__wrapper flex flex-col gap-3 px-4 pb-4"
-    >
-      <RuiCard
-        v-for="n in 10"
-        :key="n"
-        class="[&>div]:flex [&>div]:flex-col"
-      >
-        <RuiSkeletonLoader class="w-20 mb-3" />
-        <RuiSkeletonLoader class="w-24 mb-6" />
-        <RuiSkeletonLoader class="w-16 self-end" />
-      </RuiCard>
-    </div>
-
-    <div
-      v-else
-      ref="wrapper"
-      class="px-4 pb-4 note__wrapper"
-    >
-      <CollectionHandler :collection="notes">
-        <template #default="{ data, limit }">
-          <RuiAlert
-            v-if="showUpgradeRow"
-            type="warning"
-            class="mb-4"
-          >
-            <i18n path="notes_menu.limit_warning">
-              <template #limit>
-                {{ limit }}
-              </template>
-              <template #link>
-                <ExternalLink
-                  :text="t('upgrade_row.rotki_premium')"
-                  color="warning"
-                  premium
-                />
-              </template>
-            </i18n>
-          </RuiAlert>
-
-          <div v-if="data.length > 0">
-            <div class="flex flex-col gap-3">
-              <template v-for="note in data">
-                <RuiCard
-                  :key="note.identifier"
-                  dense
-                  class="note__item"
-                  :class="{
-                    'note__item--deleting':
-                      animateDelete && idToDelete === note.identifier,
-                  }"
-                >
-                  <div class="flex justify-between items-center">
-                    <div class="font-bold note__title">
-                      {{ note.title }}
-                    </div>
-                    <RuiButton
-                      class="!p-2"
-                      variant="text"
-                      icon
-                      @click="togglePin(note)"
-                    >
-                      <RuiIcon
-                        v-if="note.isPinned"
-                        color="primary"
-                        size="20"
-                        name="pushpin-fill"
-                      />
-                      <RuiIcon
-                        v-else
-                        size="20"
-                        name="unpin-line"
-                      />
-                    </RuiButton>
-                  </div>
-
-                  <div class="text-rui-text-secondary note__content">
-                    {{ note.content }}
-                  </div>
-
-                  <div
-                    v-if="showDeleteConfirmation && idToDelete === note.identifier"
-                    class="flex justify-between items-center pt-2"
-                  >
-                    <div class="note__content font-italic flex-1">
-                      {{ t('notes_menu.delete_confirmation') }}
-                    </div>
-                    <RuiButton
-                      variant="text"
-                      icon
-                      size="sm"
-                      color="error"
-                      @click="clearDeleteDialog()"
-                    >
-                      <RuiIcon
-                        size="16"
-                        color="error"
-                        name="close-line"
-                      />
-                    </RuiButton>
-
-                    <RuiButton
-                      variant="text"
-                      icon
-                      size="sm"
-                      @click="confirmDelete()"
-                    >
-                      <RuiIcon
-                        size="16"
-                        color="success"
-                        name="check-line"
-                      />
-                    </RuiButton>
-                  </div>
-                  <div
-                    v-else
-                    class="flex justify-between items-center pt-2"
-                  >
-                    <i18n
-                      path="notes_menu.last_updated"
-                      class="note__datetime text-rui-text-secondary font-italic flex-1"
-                    >
-                      <template #datetime>
-                        <DateDisplay :timestamp="note.lastUpdateTimestamp" />
-                      </template>
-                    </i18n>
-                    <RuiButton
-                      variant="text"
-                      icon
-                      size="sm"
-                      @click="editNote(note)"
-                    >
-                      <RuiIcon
-                        size="16"
-                        name="pencil-line"
-                      />
-                    </RuiButton>
-
-                    <RuiButton
-                      variant="text"
-                      icon
-                      size="sm"
-                      @click="deleteNote(note.identifier)"
-                    >
-                      <RuiIcon
-                        size="16"
-                        name="delete-bin-line"
-                      />
-                    </RuiButton>
-                  </div>
-                </RuiCard>
-              </template>
-            </div>
-          </div>
-
-          <div
-            v-else
-            class="note__empty text-rui-text"
-          >
-            {{ t('notes_menu.empty_notes') }}
-          </div>
-        </template>
-      </CollectionHandler>
-    </div>
-
-    <UserNotesFormDialog
-      v-model="form"
-      :edit-mode="editMode"
-      @reset="resetForm()"
+  <div class="p-4 flex items-center gap-3">
+    <RuiTextField
+      v-model="search"
+      variant="outlined"
+      color="primary"
+      dense
+      class="flex-1"
+      prepend-icon="lu-search"
+      :label="t('notes_menu.search')"
+      clearable
+      hide-details
     />
-  </Fragment>
+
+    <RuiButton
+      color="primary"
+      class="py-2"
+      :disabled="showUpgradeRow"
+      @click="addNote()"
+    >
+      <template #prepend>
+        <RuiIcon name="lu-plus" />
+      </template>
+    </RuiButton>
+  </div>
+
+  <div
+    v-if="loading"
+    class="note__wrapper flex flex-col gap-3 px-4 pb-4"
+  >
+    <RuiCard
+      v-for="n in 10"
+      :key="n"
+      class="[&>div]:flex [&>div]:flex-col"
+    >
+      <RuiSkeletonLoader class="w-20 mb-3" />
+      <RuiSkeletonLoader class="w-24 mb-6" />
+      <RuiSkeletonLoader class="w-16 self-end" />
+    </RuiCard>
+  </div>
+
+  <div
+    v-else
+    ref="wrapper"
+    class="px-4 pb-4 note__wrapper"
+  >
+    <CollectionHandler :collection="notes">
+      <template #default="{ data, limit }">
+        <RuiAlert
+          v-if="showUpgradeRow"
+          type="warning"
+          class="mb-4"
+        >
+          <i18n-t
+            keypath="notes_menu.limit_warning"
+            tag="span"
+          >
+            <template #limit>
+              {{ limit }}
+            </template>
+            <template #link>
+              <ExternalLink
+                :text="t('upgrade_row.rotki_premium')"
+                color="warning"
+                premium
+              />
+            </template>
+          </i18n-t>
+        </RuiAlert>
+
+        <div v-if="data.length > 0">
+          <div class="flex flex-col gap-3">
+            <template
+              v-for="note in data"
+              :key="note.identifier"
+            >
+              <RuiCard
+                dense
+                class="note__item"
+                :class="{
+                  'note__item--deleting': animateDelete && idToDelete === note.identifier,
+                }"
+              >
+                <div class="flex justify-between items-center">
+                  <div class="font-bold note__title">
+                    {{ note.title }}
+                  </div>
+                  <RuiButton
+                    class="!p-2"
+                    variant="text"
+                    icon
+                    @click="togglePin(note)"
+                  >
+                    <RuiIcon
+                      v-if="note.isPinned"
+                      color="primary"
+                      size="20"
+                      name="lu-pin"
+                      class="[&_path]:fill-rui-primary"
+                    />
+                    <RuiIcon
+                      v-else
+                      size="20"
+                      name="lu-pin"
+                    />
+                  </RuiButton>
+                </div>
+
+                <div class="text-rui-text-secondary note__content">
+                  {{ note.content }}
+                </div>
+
+                <div
+                  v-if="showDeleteConfirmation && idToDelete === note.identifier"
+                  class="flex justify-between items-center pt-2"
+                >
+                  <div class="note__content font-italic flex-1">
+                    {{ t('notes_menu.delete_confirmation') }}
+                  </div>
+                  <RuiButton
+                    variant="text"
+                    icon
+                    size="sm"
+                    color="error"
+                    @click="clearDeleteDialog()"
+                  >
+                    <RuiIcon
+                      size="16"
+                      color="error"
+                      name="lu-x"
+                    />
+                  </RuiButton>
+
+                  <RuiButton
+                    variant="text"
+                    icon
+                    size="sm"
+                    @click="confirmDelete()"
+                  >
+                    <RuiIcon
+                      size="16"
+                      color="success"
+                      name="lu-check"
+                    />
+                  </RuiButton>
+                </div>
+                <div
+                  v-else
+                  class="flex justify-between items-center pt-2"
+                >
+                  <i18n-t
+                    keypath="notes_menu.last_updated"
+                    class="note__datetime text-rui-text-secondary font-italic flex-1"
+                    tag="span"
+                  >
+                    <template #datetime>
+                      <DateDisplay :timestamp="note.lastUpdateTimestamp" />
+                    </template>
+                  </i18n-t>
+                  <RuiButton
+                    variant="text"
+                    icon
+                    size="sm"
+                    @click="editNote(note)"
+                  >
+                    <RuiIcon
+                      size="16"
+                      name="lu-pencil"
+                    />
+                  </RuiButton>
+
+                  <RuiButton
+                    variant="text"
+                    icon
+                    size="sm"
+                    @click="deleteNote(note.identifier)"
+                  >
+                    <RuiIcon
+                      size="16"
+                      name="lu-trash-2"
+                    />
+                  </RuiButton>
+                </div>
+              </RuiCard>
+            </template>
+          </div>
+        </div>
+
+        <div
+          v-else
+          class="note__empty text-rui-text"
+        >
+          {{ t('notes_menu.empty_notes') }}
+        </div>
+      </template>
+    </CollectionHandler>
+  </div>
+
+  <UserNotesFormDialog
+    v-model:open="open"
+    v-model="form"
+    :edit-mode="editMode"
+    :location="location"
+    @reset="resetForm()"
+    @refresh="fetchNotes()"
+  />
 </template>
 
 <style lang="scss" scoped>

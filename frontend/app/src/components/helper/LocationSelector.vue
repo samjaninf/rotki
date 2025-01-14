@@ -1,25 +1,29 @@
 <script setup lang="ts">
-import { isEqual } from 'lodash-es';
+import { isEqual } from 'es-toolkit';
+import { useLocations } from '@/composables/locations';
+import LocationIcon from '@/components/history/LocationIcon.vue';
 import type { TradeLocationData } from '@/types/history/trade/location';
+
+defineOptions({
+  inheritAttrs: false,
+});
+
+const model = defineModel<string>({ default: '', required: true });
 
 const props = withDefaults(
   defineProps<{
-    value?: string;
     items?: string[];
     excludes?: string[];
-    attach?: string;
+    dense?: boolean;
   }>(),
-  { value: '', items: () => [], excludes: () => [], attach: undefined },
+  {
+    dense: false,
+    excludes: () => [],
+    items: () => [],
+  },
 );
 
-const emit = defineEmits<{
-  (e: 'input', value: string): void;
-}>();
-
-const model = useSimpleVModel(props, emit);
-const rootAttrs = useAttrs();
-
-const { items, excludes } = toRefs(props);
+const { excludes, items } = toRefs(props);
 
 const { tradeLocations } = useLocations();
 
@@ -28,15 +32,9 @@ const locations = computed<TradeLocationData[]>(() => {
   const excludesVal = get(excludes);
 
   return get(tradeLocations).filter((item) => {
-    const included
-      = itemsVal && itemsVal.length > 0
-        ? itemsVal.includes(item.identifier)
-        : true;
+    const included = itemsVal && itemsVal.length > 0 ? itemsVal.includes(item.identifier) : true;
 
-    const excluded
-      = excludesVal && excludesVal.length > 0
-        ? excludesVal.includes(item.identifier)
-        : false;
+    const excluded = excludesVal && excludesVal.length > 0 ? excludesVal.includes(item.identifier) : false;
 
     return included && !excluded;
   });
@@ -59,13 +57,10 @@ watch([locations, model], ([locations, value], [prevLocations, prevValue]) => {
     :options="locations"
     key-attr="identifier"
     text-attr="name"
-    :item-height="52"
+    :item-height="dense ? 36 : 52"
+    :dense="dense"
     auto-select-first
-    v-bind="rootAttrs"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
+    v-bind="$attrs"
   >
     <template #item="{ item }">
       <LocationIcon

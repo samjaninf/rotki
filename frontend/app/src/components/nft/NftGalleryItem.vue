@@ -1,6 +1,15 @@
 <script setup lang="ts">
-import type { StyleValue } from 'vue/types/jsx';
+import { uniqueStrings } from '@/utils/data';
+import { getDomain } from '@/utils/url';
+import { useConfirmStore } from '@/store/confirm';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useNftImage } from '@/composables/nft-image';
+import IconLink from '@/components/base/IconLink.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
 import type { GalleryNft } from '@/types/nfts';
+import type { StyleValue } from 'vue';
 
 const props = defineProps<{
   item: GalleryNft;
@@ -13,35 +22,21 @@ const frontendStore = useFrontendSettingsStore();
 const { whitelistedDomainsForNftImages } = storeToRefs(frontendStore);
 const { updateSetting } = frontendStore;
 
-const imageUrlSource: ComputedRef<string | null> = computed(
-  () => get(item).imageUrl,
-);
+const imageUrlSource = computed<string | null>(() => get(item).imageUrl);
 
-const {
-  shouldRender,
-  isVideo,
-  renderedMedia,
-} = useNftImage(imageUrlSource);
+const { isVideo, renderedMedia, shouldRender } = useNftImage(imageUrlSource);
 
-const name = computed(() =>
-  get(item).name ? get(item).name : get(item).collection.name,
-);
+const name = computed(() => (get(item).name ? get(item).name : get(item).collection.name));
 
 const { t } = useI18n();
-const css = useCssModule();
 
-const domain: ComputedRef<string | null> = computed(() =>
-  getDomain(get(imageUrlSource) || ''),
-);
+const domain = computed<string | null>(() => getDomain(get(imageUrlSource) || ''));
 
 const { show } = useConfirmStore();
 
 function showAllowDomainConfirmation() {
   show(
     {
-      title: t(
-        'general_settings.nft_setting.update_whitelist_confirmation.title',
-      ),
       message: t(
         'general_settings.nft_setting.update_whitelist_confirmation.message',
         {
@@ -49,6 +44,7 @@ function showAllowDomainConfirmation() {
         },
         2,
       ),
+      title: t('general_settings.nft_setting.update_whitelist_confirmation.title'),
     },
     allowDomain,
   );
@@ -60,15 +56,12 @@ function allowDomain() {
   if (!domainVal)
     return;
 
-  const newWhitelisted = [
-    ...get(whitelistedDomainsForNftImages),
-    domainVal,
-  ].filter(uniqueStrings);
+  const newWhitelisted = [...get(whitelistedDomainsForNftImages), domainVal].filter(uniqueStrings);
 
   updateSetting({ whitelistedDomainsForNftImages: newWhitelisted });
 }
 
-const mediaStyle: ComputedRef<StyleValue> = computed(() => {
+const mediaStyle = computed<StyleValue>(() => {
   const backgroundColor = get(item).backgroundColor;
   if (!get(shouldRender) || !backgroundColor)
     return {};
@@ -103,7 +96,7 @@ const mediaStyle: ComputedRef<StyleValue> = computed(() => {
               :src="renderedMedia"
               :style="mediaStyle"
               class="w-full"
-              :class="css.media"
+              :class="$style.media"
             />
             <AppImage
               v-else
@@ -111,7 +104,7 @@ const mediaStyle: ComputedRef<StyleValue> = computed(() => {
               contain
               :style="mediaStyle"
               width="100%"
-              :class="css.media"
+              :class="$style.media"
             />
           </ExternalLink>
         </template>
@@ -123,7 +116,7 @@ const mediaStyle: ComputedRef<StyleValue> = computed(() => {
         v-if="!shouldRender"
         :popper="{ placement: 'top' }"
         :open-delay="400"
-        :class="css['unlock-button']"
+        :class="$style['unlock-button']"
       >
         <template #activator>
           <RuiButton
@@ -132,7 +125,7 @@ const mediaStyle: ComputedRef<StyleValue> = computed(() => {
             @click="showAllowDomainConfirmation()"
           >
             <RuiIcon
-              name="lock-unlock-line"
+              name="lu-lock-keyhole-open"
               size="16"
             />
           </RuiButton>

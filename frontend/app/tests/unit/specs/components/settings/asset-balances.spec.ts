@@ -1,28 +1,41 @@
-import { type Wrapper, mount } from '@vue/test-utils';
+import { type VueWrapper, mount } from '@vue/test-utils';
 import { setActivePinia } from 'pinia';
-import Vuetify from 'vuetify';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AssetBalances from '@/components/AssetBalances.vue';
+import { useSessionStore } from '@/store/session';
 import { createCustomPinia } from '../../../utils/create-pinia';
 import { libraryDefaults } from '../../../utils/provide-defaults';
 
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn(),
+  useRouter: vi.fn().mockReturnValue({
+    push: vi.fn(),
+  }),
+  createRouter: vi.fn().mockImplementation(() => ({
+    beforeEach: vi.fn(),
+  })),
+  createWebHashHistory: vi.fn(),
+}));
+
 describe('assetBalances.vue', () => {
-  let wrapper: Wrapper<any>;
+  let wrapper: VueWrapper<InstanceType<typeof AssetBalances>>;
   beforeEach(() => {
-    const vuetify = new Vuetify();
     const pinia = createCustomPinia();
     setActivePinia(pinia);
     wrapper = mount(AssetBalances, {
-      vuetify,
-      pinia,
-      propsData: {
+      global: {
+        plugins: [pinia],
+        provide: libraryDefaults,
+      },
+      props: {
         balances: [],
       },
-      provide: libraryDefaults,
     });
   });
 
   afterEach(() => {
     useSessionStore().$reset();
+    wrapper.unmount();
   });
 
   it('table enters into loading state when balances load', async () => {

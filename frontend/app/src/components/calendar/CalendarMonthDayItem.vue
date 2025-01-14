@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useRotkiTheme } from '@rotki/ui-library-compat';
 import type { Dayjs } from 'dayjs';
 import type { CalendarEvent } from '@/types/history/calendar';
 
@@ -22,7 +21,7 @@ const emit = defineEmits<{
 
 const { day, events, isPast } = toRefs(props);
 
-const label = computed(() => (get(day).date).format('D'));
+const label = computed(() => get(day).date.format('D'));
 
 function selectDate() {
   emit('select-date');
@@ -74,7 +73,7 @@ function getColor(isDark: boolean, color: string | undefined, isBg: boolean = fa
       :class="{
         'bg-rui-primary text-white': isSelected,
         'bg-rui-primary-lighter text-rui-light-text': isToday && !isSelected,
-        'hover:bg-rui-grey-100': !isToday && !isSelected,
+        'hover:bg-rui-grey-100 dark:hover:bg-rui-grey-800': !isToday && !isSelected,
       }"
     >
       {{ label }}
@@ -115,7 +114,7 @@ function getColor(isDark: boolean, color: string | undefined, isBg: boolean = fa
     >
       <RuiIcon
         size="14"
-        name="add-line"
+        name="lu-plus"
       />
     </RuiButton>
   </div>

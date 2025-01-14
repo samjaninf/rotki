@@ -10,10 +10,11 @@ from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_1INCH, A_BTC, A_DOGE, A_ETH, A_LINK, A_USDC, A_WETH
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.errors.defi import DefiPoolError
-from rotkehlchen.errors.price import PriceQueryUnsupportedAsset
+from rotkehlchen.errors.price import NoPriceForGivenTimestamp, PriceQueryUnsupportedAsset
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.inquirer import CurrentPriceOracle
+from rotkehlchen.tests.utils.ethereum import INFURA_ETH_NODE
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import ChainID, EvmTokenKind, Price
 
@@ -21,9 +22,9 @@ if TYPE_CHECKING:
     from rotkehlchen.inquirer import Inquirer
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-@pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_uniswap_oracles_asset_to_asset(inquirer_defi, socket_enabled):  # pylint: disable=unused-argument
     """
     Test that the uniswap oracles return a price close to the one reported by
@@ -38,7 +39,7 @@ def test_uniswap_oracles_asset_to_asset(inquirer_defi, socket_enabled):  # pylin
         else:
             price_instance = inquirer_defi._uniswapv3
         inquirer_defi.set_oracles_order(oracles=[oracle])
-        price, _ = price_instance.query_current_price(A_1INCH, A_LINK, False)
+        price = price_instance.query_current_price(A_1INCH, A_LINK)
         assert price != ZERO_PRICE
         assert (inch_price / link_price).is_close(price, max_diff='0.01')
         defi_price = inquirer_defi.find_usd_price(A_LINK, ignore_cache=True)
@@ -47,10 +48,53 @@ def test_uniswap_oracles_asset_to_asset(inquirer_defi, socket_enabled):  # pylin
         # test with ethereum tokens but as assets instead of instance of the EvmToken class
         a1inch = Asset(A_1INCH.identifier)
         alink = Asset(A_LINK.identifier)
-        price_as_assets, _ = price_instance.query_current_price(a1inch, alink, False)
+        price_as_assets = price_instance.query_current_price(a1inch, alink)
         assert price_as_assets.is_close(price, max_diff='0.01')
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+@pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE,)])
+def test_uniswap_oracles_historic_price(inquirer_defi, socket_enabled):  # pylint: disable=unused-argument
+    """Test that the uniswap oracles return correct historical prices."""
+    inquirer_defi.set_oracles_order(oracles=[CurrentPriceOracle.UNISWAPV3])
+    assert inquirer_defi._uniswapv3.query_historical_price(
+        from_asset=A_1INCH,
+        to_asset=A_LINK,
+        timestamp=1653454800,
+    ) == Price(FVal('0.139152791117568194371010708385710558327124437415165328415539849552333178019986'))  # noqa: E501
+
+    with pytest.raises(NoPriceForGivenTimestamp):
+        inquirer_defi._uniswapv3.query_historical_price(
+            from_asset=A_WETH,
+            to_asset=A_USDC,
+            timestamp=1601557200,  # before V3 contract was created
+        )
+
+    inquirer_defi.set_oracles_order(oracles=[CurrentPriceOracle.UNISWAPV2])
+    assert inquirer_defi._uniswapv2.query_historical_price(
+        from_asset=A_WETH,
+        to_asset=A_USDC,
+        timestamp=1610150400,
+    ) == Price(FVal('1218.87080719990345367447708023135690417334776916278271419773639287665690749300'))  # noqa: E501
+
+    with pytest.raises(NoPriceForGivenTimestamp):
+        inquirer_defi._uniswapv2.query_historical_price(
+            from_asset=A_WETH,
+            to_asset=A_USDC,
+            timestamp=1571230800,  # before V2 contract was created
+        )
+
+    with pytest.raises(PriceQueryUnsupportedAsset):
+        inquirer_defi._uniswapv2.query_historical_price(
+            from_asset=A_BTC,  # non eth tokens
+            to_asset=A_DOGE,
+            timestamp=1653454800,
+        )
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_uniswap_oracles_special_cases(inquirer_defi, socket_enabled):  # pylint: disable=unused-argument
@@ -60,14 +104,14 @@ def test_uniswap_oracles_special_cases(inquirer_defi, socket_enabled):  # pylint
     # ETH/WETH is handled correctly
     for oracle in (CurrentPriceOracle.UNISWAPV2, CurrentPriceOracle.UNISWAPV3):
         inquirer_defi.set_oracles_order(oracles=[oracle])
-        inch_weth, _ = inquirer_defi._uniswapv2.query_current_price(A_1INCH, A_WETH, False)
-        inch_eth, _ = inquirer_defi._uniswapv2.query_current_price(A_1INCH, A_ETH, False)
+        inch_weth = inquirer_defi._uniswapv2.query_current_price(A_1INCH, A_WETH)
+        inch_eth = inquirer_defi._uniswapv2.query_current_price(A_1INCH, A_ETH)
         assert inch_eth.is_close(inch_weth)
         # Non eth tokens
         with pytest.raises(PriceQueryUnsupportedAsset):
-            inquirer_defi._uniswapv2.query_current_price(A_BTC, A_DOGE, False)
+            inquirer_defi._uniswapv2.query_current_price(A_BTC, A_DOGE)
         # Same asset
-        assert inquirer_defi._uniswapv2.query_current_price(A_ETH, A_WETH, False)[0] == Price(ONE)
+        assert inquirer_defi._uniswapv2.query_current_price(A_ETH, A_WETH) == Price(ONE)
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -84,7 +128,7 @@ def test_uniswap_no_decimals(inquirer_defi: 'Inquirer'):
 
     def mocked_asset_getter(identifier, **kwargs):
         if identifier == resolved_weth.identifier:
-            fake_weth = EvmToken.initialize(
+            return EvmToken.initialize(
                 address=resolved_weth.evm_address,
                 chain_id=resolved_weth.chain_id,
                 token_kind=resolved_weth.token_kind,
@@ -98,7 +142,6 @@ def test_uniswap_no_decimals(inquirer_defi: 'Inquirer'):
                 cryptocompare=resolved_weth.cryptocompare,
                 protocol=resolved_weth.protocol,
             )
-            return fake_weth
 
         if len(kwargs) == 0:
             return original_getter(identifier, **kwargs)
@@ -113,9 +156,9 @@ def test_uniswap_no_decimals(inquirer_defi: 'Inquirer'):
         assert inquirer_defi._uniswapv2 is not None
         assert inquirer_defi._uniswapv3 is not None
         with pytest.raises(DefiPoolError):
-            inquirer_defi._uniswapv2.query_current_price(weth, resolved_usdc, False)
+            inquirer_defi._uniswapv2.query_current_price(weth, resolved_usdc)
         with pytest.raises(DefiPoolError):
-            inquirer_defi._uniswapv3.query_current_price(weth, resolved_usdc, False)
+            inquirer_defi._uniswapv3.query_current_price(weth, resolved_usdc)
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
@@ -125,7 +168,7 @@ def test_pool_with_no_liquidity(inquirer_defi: 'Inquirer'):
     """
     old_stream = EvmToken('eip155:1/erc20:0x0Cf0Ee63788A0849fE5297F3407f701E122cC023')
 
-    def mock_requests_get(_url, timeout):  # pylint: disable=unused-argument
+    def mock_requests_get(*args, **kwargs):  # pylint: disable=unused-argument
         response = """{"jsonrpc":"2.0","id":1,"result":"0x0000000000000000000000000000000000000000000000000000000000f2aa4700000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"}"""  # noqa: E501
         return MockResponse(200, response)
 
@@ -165,5 +208,4 @@ def test_invalid_token_kind_price_query(inquirer_defi: 'Inquirer'):
         inquirer_defi._uniswapv3.query_current_price(
             from_asset=nft_token,
             to_asset=A_USDC.resolve_to_evm_token(),
-            match_main_currency=False,
         )

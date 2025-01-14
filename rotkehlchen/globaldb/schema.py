@@ -183,7 +183,9 @@ CREATE TABLE IF NOT EXISTS asset_collections(
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     symbol TEXT NOT NULL,
-    UNIQUE (name, symbol)
+    main_asset TEXT NOT NULL UNIQUE,
+    FOREIGN KEY(main_asset) REFERENCES assets(identifier) ON UPDATE CASCADE ON DELETE CASCADE,
+    UNIQUE(name, symbol)
 );
 """
 
@@ -212,6 +214,12 @@ INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('D', 4);
 INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('E', 5);
 /* DEFILLAMA */
 INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('F', 6);
+/* UNISWAPV2 */
+INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('G', 7);
+/* UNISWAPV3 */
+INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('H', 8);
+/* ALCHEMY */
+INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('I', 9);
 """
 
 DB_CREATE_PRICE_HISTORY = """
@@ -242,14 +250,14 @@ CREATE TABLE IF NOT EXISTS binance_pairs (
 DB_CREATE_ADDRESS_BOOK = """
 CREATE TABLE IF NOT EXISTS address_book (
     address TEXT NOT NULL,
-    blockchain TEXT,
+    blockchain TEXT NOT NULL,
     name TEXT NOT NULL,
     PRIMARY KEY(address, blockchain)
 );
 """
 
 # Similar to the common_asset_details table this table is used for custom assets that the user
-# wants to to track. Also we use the asset identifier to relate this table with the assets table
+# wants to track. Also we use the asset identifier to relate this table with the assets table
 # allowing a cascade on delete. The notes fields allows for adding relevant information about the
 # asset by the user. The type field is a string field that is filled by the user. This allows to
 # createsomething like a label so the user can visually see what kind of assets (s)he has. All the
@@ -288,7 +296,7 @@ CREATE TABLE IF NOT EXISTS unique_cache (
 DB_CREATE_CONTRACT_ABI = """
 CREATE TABLE IF NOT EXISTS contract_abi (
     id INTEGER NOT NULL PRIMARY KEY,
-    value TEXT NOT NULL,
+    value TEXT NOT NULL UNIQUE,
     name TEXT
 );
 """

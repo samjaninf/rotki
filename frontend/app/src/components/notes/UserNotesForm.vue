@@ -1,38 +1,35 @@
 <script setup lang="ts">
 import { helpers, required } from '@vuelidate/validators';
+import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
+import { refOptional, useRefPropVModel } from '@/utils/model';
+import { useFormStateWatcher } from '@/composables/form';
 import type { UserNote } from '@/types/notes';
 
-const props = defineProps<{
-  value: Partial<UserNote>;
-}>();
-
-const emit = defineEmits<{
-  (e: 'input', newInput: Partial<UserNote>): void;
-}>();
+const modelValue = defineModel<Partial<UserNote>>({ required: true });
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
 
 const { t } = useI18n();
-const { value } = toRefs(props);
 
-const title = useSimplePropVModel(props, 'title', emit);
-const content = useSimplePropVModel(props, 'content', emit);
-
-const { setValidation } = useUserNotesForm();
+const title = refOptional(useRefPropVModel(modelValue, 'title'), '');
+const content = refOptional(useRefPropVModel(modelValue, 'content'), '');
 
 const rules = {
   content: {
-    required: helpers.withMessage(
-      t('notes_menu.rules.content.non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('notes_menu.rules.content.non_empty'), required),
   },
+  title: {},
 };
 
-const v$ = setValidation(
-  rules,
-  { content: computed(() => get(value).content) },
-  { $autoDirty: true },
-);
+const states = { content, title };
+
+const v$ = useVuelidate(rules, states, { $autoDirty: true });
+
+useFormStateWatcher(states, stateUpdated);
+
+defineExpose({
+  validate: () => get(v$).$validate(),
+});
 </script>
 
 <template>

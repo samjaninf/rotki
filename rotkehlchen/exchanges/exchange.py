@@ -1,21 +1,20 @@
 import logging
 from abc import abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-import requests
-
 from rotkehlchen.accounting.structures.balance import Balance
-from rotkehlchen.assets.asset import AssetWithOracles
-from rotkehlchen.db.filtering import (
-    AssetMovementsFilterQuery,
-    HistoryEventFilterQuery,
-    TradesFilterQuery,
+from rotkehlchen.api.websockets.typedefs import (
+    HistoryEventsQueryType,
+    HistoryEventsStep,
+    WSMessageType,
 )
+from rotkehlchen.assets.asset import AssetWithOracles
+from rotkehlchen.db.filtering import TradesFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.ranges import DBQueryRanges
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
     ApiKey,
@@ -27,13 +26,15 @@ from rotkehlchen.types import (
     T_ApiSecret,
     Timestamp,
 )
-from rotkehlchen.utils.misc import set_user_agent
+from rotkehlchen.utils.misc import set_user_agent, ts_now
 from rotkehlchen.utils.mixins.cacheable import CacheableMixIn
 from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
+from rotkehlchen.utils.network import create_session
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.history.events.structures.base import HistoryEvent
+    from rotkehlchen.history.events.structures.base import HistoryBaseEntry
+    from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -75,6 +76,7 @@ class ExchangeInterface(CacheableMixIn, LockableQueryMixIn):
             api_key: ApiKey,
             secret: ApiSecret,
             database: 'DBHandler',
+            msg_aggregator: 'MessagesAggregator',
     ):
         assert isinstance(api_key, T_ApiKey), (
             f'api key for {name} should be a string'
@@ -88,8 +90,9 @@ class ExchangeInterface(CacheableMixIn, LockableQueryMixIn):
         self.db = database
         self.api_key = api_key
         self.secret = secret
+        self.msg_aggregator = msg_aggregator
         self.first_connection_made = False
-        self.session = requests.session()
+        self.session = create_session()
         set_user_agent(self.session)
         log.info(f'Initialized {location!s} exchange {name}')
 
@@ -202,40 +205,18 @@ class ExchangeInterface(CacheableMixIn, LockableQueryMixIn):
             'query_online_margin_history() should only be implemented by subclasses',
         )
 
-    def query_online_deposits_withdrawals(
+    def query_online_history_events(
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> list[AssetMovement]:
-        """Queries the exchange's API for the asset movements of the user
+    ) -> Sequence['HistoryBaseEntry']:
+        """Queries the exchange's API for history events of the user
 
-        Should be implemented in subclasses.
+        Should be implemented in subclasses, unless query_history_events is reimplemented with
+        custom logic.
+        Returns events based on HistoryBaseEntry, such as HistoryEvent, AssetMovement, etc.
         """
-        raise NotImplementedError(
-            'query_online_deposits_withdrawals should only be implemented by subclasses',
-        )
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
-        """Queries the exchange's API for simple history events of the user
-
-        Should be implemented in subclasses.
-        Has to be implemented by exchanges if they have anything exchange specific
-
-        For example coinbase
-        """
-        raise NotImplementedError(
-            'query_online_income_loss_expense should only be implemented by subclasses',
-        )
-
-    def query_history_events(self) -> None:
-        """Query history events from the current exchange
-        instance and store them in the database
-        """
-        return None
+        return []
 
     @protect_with_lock()
     def query_trade_history(
@@ -295,13 +276,11 @@ class ExchangeInterface(CacheableMixIn, LockableQueryMixIn):
                 to_ts=end_ts,
                 location=self.location,
             )
-            trades = self.db.get_trades(
+            return self.db.get_trades(
                 cursor=cursor,
                 filter_query=filter_query,
                 has_premium=True,  # is okay since the returned trades don't make it to the user
             )
-
-        return trades
 
     def query_margin_history(
             self,
@@ -354,109 +333,65 @@ class ExchangeInterface(CacheableMixIn, LockableQueryMixIn):
 
         return margin_positions
 
-    @protect_with_lock()
-    def query_deposits_withdrawals(
+    def send_history_events_status_msg(
             self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-            only_cache: bool,
-    ) -> list[AssetMovement]:
-        """Queries the local DB and the exchange for the deposits/withdrawal history of the user
-
-        If only_cache is true only what is already cached in the DB is returned without
-        an actual exchange query.
+            step: HistoryEventsStep,
+            period: list[Timestamp] | None = None,
+            name: str | None = None,
+    ) -> None:
+        """Send history events status WS message.
+        Args:
+            step (HistoryEventsStep): Current query step
+            period (list[Timestamp] | None): from/to timestamps of the range being queried
+            name (str | None): Used to identify multiple portfolios on the same exchange, in
+                coinbaseprime for example. Defaults to self.name when None.
         """
-        log.debug(f'Querying deposits/withdrawals history for {self.name} exchange')
-        if only_cache is False:
-            ranges = DBQueryRanges(self.db)
-            location_string = f'{self.location!s}_asset_movements_{self.name}'
-            with self.db.conn.read_ctx() as cursor:
-                ranges_to_query = ranges.get_location_query_ranges(
-                    cursor=cursor,
-                    location_string=location_string,
-                    start_ts=start_ts,
-                    end_ts=end_ts,
-                )
+        data: dict[str, Any] = {
+            'status': str(step),
+            'location': str(self.location),
+            'event_type': str(HistoryEventsQueryType.HISTORY_QUERY),
+            'name': name or self.name,
+        }
+        if period is not None:
+            data['period'] = period
 
-            for query_start_ts, query_end_ts in ranges_to_query:
-                log.debug(
-                    f'Querying online deposits/withdrawals for {self.name} between '
-                    f'{query_start_ts} and {query_end_ts}',
-                )
-                new_movements = self.query_online_deposits_withdrawals(
-                    start_ts=query_start_ts,
-                    end_ts=query_end_ts,
-                )
-                with self.db.user_write() as write_cursor:
-                    if len(new_movements) != 0:
-                        self.db.add_asset_movements(write_cursor, new_movements)
-                    ranges.update_used_query_range(
-                        write_cursor=write_cursor,
-                        location_string=location_string,
-                        queried_ranges=[(query_start_ts, query_end_ts)],
-                    )
-
-        # Read all asset movements from the DB
-        filter_query = AssetMovementsFilterQuery.make(
-            from_ts=start_ts,
-            to_ts=end_ts,
-            location=self.location,
+        self.msg_aggregator.add_message(
+            message_type=WSMessageType.HISTORY_EVENTS_STATUS,
+            data=data,
         )
+
+    @protect_with_lock()
+    def query_history_events(self) -> None:
+        """Queries the exchange for new history events and saves them to the database."""
+        self.send_history_events_status_msg(step=HistoryEventsStep.QUERYING_EVENTS_STARTED)
+        db = DBHistoryEvents(self.db)
+        location_string = f'{self.location!s}_history_events_{self.name}'
         with self.db.conn.read_ctx() as cursor:
-            asset_movements = self.db.get_asset_movements(
+            ranges_to_query = (ranges := DBQueryRanges(self.db)).get_location_query_ranges(
                 cursor=cursor,
-                filter_query=filter_query,
-                has_premium=True,  # is okay since the returned events don't make it to the user
+                location_string=location_string,
+                start_ts=Timestamp(0),
+                end_ts=ts_now(),
             )
 
-        return asset_movements
-
-    @protect_with_lock()
-    def query_income_loss_expense(
-            self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-            only_cache: bool,
-    ) -> list['HistoryEvent']:
-        """Queries the local DB and the exchange for the income/loss/expense history of the user
-
-        If only_cache is true only what is already cached in the DB is returned without
-        an actual exchange query.
-        """
-        db = DBHistoryEvents(self.db)
-        if only_cache is False:
-            ranges = DBQueryRanges(self.db)
-            location_string = f'{self.location!s}_history_events_{self.name}'
-            with self.db.conn.read_ctx() as cursor:
-                ranges_to_query = ranges.get_location_query_ranges(
-                    cursor=cursor,
+        for query_start_ts, query_end_ts in ranges_to_query:
+            self.send_history_events_status_msg(
+                step=HistoryEventsStep.QUERYING_EVENTS_STATUS_UPDATE,
+                period=[query_start_ts, query_end_ts],
+            )
+            new_events = self.query_online_history_events(
+                start_ts=query_start_ts,
+                end_ts=query_end_ts,
+            )
+            with self.db.user_write() as write_cursor:
+                if len(new_events) != 0:
+                    db.add_history_events(write_cursor=write_cursor, history=new_events)
+                ranges.update_used_query_range(
+                    write_cursor=write_cursor,
                     location_string=location_string,
-                    start_ts=start_ts,
-                    end_ts=end_ts,
+                    queried_ranges=[(query_start_ts, query_end_ts)],
                 )
-
-            for query_start_ts, query_end_ts in ranges_to_query:
-                new_events = self.query_online_income_loss_expense(
-                    start_ts=query_start_ts,
-                    end_ts=query_end_ts,
-                )
-                with self.db.user_write() as write_cursor:
-                    if len(new_events) != 0:
-                        db.add_history_events(write_cursor, new_events)
-                    ranges.update_used_query_range(
-                        write_cursor=write_cursor,
-                        location_string=location_string,
-                        queried_ranges=[(query_start_ts, query_end_ts)],
-                    )
-
-        filter_query = HistoryEventFilterQuery.make(
-            from_ts=start_ts,
-            to_ts=end_ts,
-            location=self.location,
-        )
-        with self.db.conn.read_ctx() as cursor:
-            events = db.get_history_events(cursor, filter_query=filter_query, has_premium=True)
-        return events  # type: ignore[return-value]  # HistoryBaseEntry vs HistoryEvent
+        self.send_history_events_status_msg(step=HistoryEventsStep.QUERYING_EVENTS_FINISHED)
 
     def query_history_with_callbacks(
             self,
@@ -471,35 +406,26 @@ class ExchangeInterface(CacheableMixIn, LockableQueryMixIn):
 
         `new_step_data` argument contains callback and exchange name to be used for steps.
         """
+        new_step_callback, exchange_name = None, None
         if new_step_data is not None:
             new_step_callback, exchange_name = new_step_data
             new_step_callback(f'Querying {exchange_name} trades history')
+
         try:
             self.query_trade_history(
                 start_ts=start_ts,
                 end_ts=end_ts,
                 only_cache=False,
             )
-            if new_step_data is not None:
+            if new_step_callback is not None:
                 new_step_callback(f'Querying {exchange_name} margin history')
             self.query_margin_history(
                 start_ts=start_ts,
                 end_ts=end_ts,
             )
-            if new_step_data is not None:
-                new_step_callback(f'Querying {exchange_name} asset movements history')
-            self.query_deposits_withdrawals(
-                start_ts=start_ts,
-                end_ts=end_ts,
-                only_cache=False,
-            )
-            if new_step_data is not None:
+            if new_step_callback is not None:
                 new_step_callback(f'Querying {exchange_name} events history')
-            self.query_income_loss_expense(
-                start_ts=start_ts,
-                end_ts=end_ts,
-                only_cache=False,
-            )
+            self.query_history_events()
             # No new step for exchange_specific_history since it is not used in any exchange atm.
             self.query_exchange_specific_history(
                 start_ts=start_ts,
@@ -507,3 +433,25 @@ class ExchangeInterface(CacheableMixIn, LockableQueryMixIn):
             )
         except RemoteError as e:
             fail_callback(str(e))
+
+    def send_unknown_asset_message(
+            self,
+            asset_identifier: str,
+            details: str,
+    ) -> None:
+        """Log warning and send WS message to notify user of unknown asset found on an exchange.
+        Args:
+            asset_identifier (str): Asset identifier of the unknown asset.
+            details (str): Details about what type of event was being processed
+                when the unknown asset was encountered.
+        """
+        log.warning(f'Found unknown {self.location.serialize()} {self.name} asset {asset_identifier} in {details}.')  # noqa: E501
+        self.msg_aggregator.add_message(
+            message_type=WSMessageType.EXCHANGE_UNKNOWN_ASSET,
+            data={
+                'location': self.location.serialize(),
+                'name': self.name,
+                'identifier': asset_identifier,
+                'details': details,
+            },
+        )

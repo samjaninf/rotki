@@ -1,37 +1,38 @@
 <script setup lang="ts">
-import {
-  EmptyListId,
-  type PrioritizedListId,
-} from '@/types/settings/prioritized-list-id';
-import type { Nullable } from '@/types';
+import { EmptyListId, type PrioritizedListId } from '@/types/settings/prioritized-list-id';
+import ActionStatusIndicator from '@/components/error/ActionStatusIndicator.vue';
+import PrioritizedListEntry from '@/components/helper/PrioritizedListEntry.vue';
+import SimpleTable from '@/components/common/SimpleTable.vue';
+import type { Nullable } from '@rotki/common';
 import type { BaseMessage } from '@/types/messages';
-import type {
-  PrioritizedListData,
-  PrioritizedListItemData,
-} from '@/types/settings/prioritized-list-data';
+import type { PrioritizedListData, PrioritizedListItemData } from '@/types/settings/prioritized-list-data';
 
 const props = withDefaults(
   defineProps<{
-    value: PrioritizedListId[];
+    modelValue: PrioritizedListId[];
     allItems: PrioritizedListData<PrioritizedListId>;
-    itemDataName: string;
+    itemDataName?: string;
     disableAdd?: boolean;
     disableDelete?: boolean;
     status?: BaseMessage;
+    variant?: 'flat' | 'outlined';
   }>(),
   {
     disableAdd: false,
     disableDelete: false,
+    itemDataName: '',
     status: undefined,
+    variant: 'outlined',
   },
 );
 
-const emit = defineEmits<{ (e: 'input', value: PrioritizedListId[]): void }>();
-const { value, allItems, itemDataName } = toRefs(props);
-const slots = useSlots();
+const emit = defineEmits<{
+  (e: 'update:model-value', value: PrioritizedListId[]): void;
+}>();
+const { allItems, itemDataName } = toRefs(props);
 const selection = ref<Nullable<PrioritizedListId>>(null);
 
-const input = (items: PrioritizedListId[]) => emit('input', items);
+const input = (items: PrioritizedListId[]) => emit('update:model-value', items);
 
 const itemNameTr = computed(() => {
   const name = get(itemDataName);
@@ -41,16 +42,14 @@ const itemNameTr = computed(() => {
   };
 });
 
-const missing = computed<string[]>(() =>
-  get(allItems).itemIdsNotIn(get(value)),
-);
+const missing = computed<PrioritizedListId[]>(() => get(allItems).itemIdsNotIn(props.modelValue));
 
-const noResults = computed<boolean>(() => get(value).length === 0);
+const noResults = computed<boolean>(() => props.modelValue.length === 0);
 
-const isFirst = (item: string): boolean => get(value)[0] === item;
+const isFirst = (item: string): boolean => props.modelValue[0] === item;
 
 function isLast(item: string): boolean {
-  const items = get(value);
+  const items = props.modelValue;
   return items.at(-1) === item;
 }
 
@@ -61,14 +60,14 @@ function itemData(identifier: PrioritizedListId): PrioritizedListItemData<Priori
 
 function addItem() {
   assert(get(selection));
-  const items = [...get(value)];
+  const items = [...props.modelValue];
   items.push(get(selection)!);
   input(items);
   set(selection, null);
 }
 
 function move(item: PrioritizedListId, down: boolean) {
-  const items = [...get(value)];
+  const items = [...props.modelValue];
   const itemIndex = items.indexOf(item);
   const nextIndex = itemIndex + (down ? 1 : -1);
   const nextItem = items[nextIndex];
@@ -78,7 +77,7 @@ function move(item: PrioritizedListId, down: boolean) {
 }
 
 function remove(item: PrioritizedListId) {
-  const items = [...get(value)];
+  const items = [...props.modelValue];
   const itemIndex = items.indexOf(item);
   items.splice(itemIndex, 1);
   input(items);
@@ -86,12 +85,12 @@ function remove(item: PrioritizedListId) {
 
 const { t } = useI18n();
 
-const autoCompleteHint: ComputedRef<string> = computed(() => {
+const autoCompleteHint = computed<string>(() => {
   const num = get(missing).length;
   if (num) {
     return t('prioritized_list.disabled_items', {
-      num,
       namePluralized: get(itemNameTr).namePluralized,
+      num,
     });
   }
   return t('prioritized_list.all_added');
@@ -99,14 +98,15 @@ const autoCompleteHint: ComputedRef<string> = computed(() => {
 </script>
 
 <template>
-  <div>
+  <div class="flex flex-col gap-2">
     <RuiCard
       rounded="md"
       no-padding
-      class="overflow-hidden"
+      :variant="variant"
+      class="overflow-hidden [&>div:first-child]:px-6 [&>div:first-child]:pb-2"
     >
       <template
-        v-if="slots.title"
+        v-if="$slots.title"
         #header
       >
         <slot name="title" />
@@ -114,15 +114,16 @@ const autoCompleteHint: ComputedRef<string> = computed(() => {
 
       <div
         v-if="!disableAdd"
-        class="flex px-4 py-2 gap-4 items-start border-b border-default"
+        class="flex px-6 py-2 gap-2 items-start border-b border-default"
       >
         <RuiAutoComplete
           v-model="selection"
+          dense
           variant="outlined"
           :label="t('common.actions.search')"
           :no-data-text="t('prioritized_list.all_added', itemNameTr)"
           :options="missing"
-          :item-height="52"
+          :item-height="36"
           :hint="autoCompleteHint"
         >
           <template #selection="{ item }">
@@ -138,30 +139,25 @@ const autoCompleteHint: ComputedRef<string> = computed(() => {
             />
           </template>
         </RuiAutoComplete>
-        <RuiTooltip :open-delay="400">
-          <template #activator>
-            <RuiButton
-              id="add-item-btn"
-              color="primary"
-              icon
-              variant="text"
-              class="mt-1"
-              :disabled="!selection"
-              @click="addItem()"
-            >
-              <RuiIcon name="add-line" />
-            </RuiButton>
-          </template>
-          <span>
-            {{ t('prioritized_list.add_tooltip', itemNameTr) }}
-          </span>
-        </RuiTooltip>
+        <RuiButton
+          id="add-item-btn"
+          color="primary"
+          variant="outlined"
+          :disabled="!selection"
+          class="h-10"
+          @click="addItem()"
+        >
+          <div class="flex items-center gap-2">
+            <RuiIcon name="lu-plus" />
+            {{ t('common.actions.add') }}
+          </div>
+        </RuiButton>
       </div>
       <SimpleTable variant="default">
         <thead>
           <tr>
-            <th class="w-10" />
-            <th class="w-8 px-0 text-center">
+            <th class="!px-0 w-8" />
+            <th class="w-8 !px-0 text-center">
               {{ t('common.priority') }}
             </th>
             <th class="ps-6">
@@ -185,44 +181,46 @@ const autoCompleteHint: ComputedRef<string> = computed(() => {
           tag="tbody"
         >
           <tr
-            v-for="(identifier, index) in value"
+            v-for="(identifier, index) in modelValue"
             :key="identifier"
-            class="odd:bg-rui-grey-50 odd:dark:bg-rui-grey-900"
+            class="odd:bg-rui-grey-50 odd:dark:bg-rui-grey-900 group"
           >
-            <td>
-              <div class="flex flex-col">
-                <RuiButtonGroup
-                  variant="outlined"
+            <td class="!pr-0 !pl-2">
+              <div class="flex flex-col gap-1 transition-all opacity-0 invisible group-hover:opacity-100 group-hover:visible">
+                <RuiButton
+                  :id="`move-up-${identifier}`"
                   size="sm"
-                  icon
-                  vertical
+                  class="!px-1"
+                  :disabled="isFirst(identifier)"
+                  @click="move(identifier, false)"
                 >
-                  <template #default>
-                    <RuiButton
-                      :id="`move-up-${identifier}`"
-                      class="!px-2"
-                      :disabled="isFirst(identifier)"
-                      @click="move(identifier, false)"
-                    >
-                      <RuiIcon name="arrow-up-s-line" />
-                    </RuiButton>
-                    <RuiButton
-                      :id="`move-down-${identifier}`"
-                      class="!px-2"
-                      :disabled="isLast(identifier)"
-                      @click="move(identifier, true)"
-                    >
-                      <RuiIcon name="arrow-down-s-line" />
-                    </RuiButton>
-                  </template>
-                </RuiButtonGroup>
+                  <RuiIcon
+                    name="lu-arrow-up"
+                    size="16"
+                  />
+                </RuiButton>
+                <RuiButton
+                  :id="`move-down-${identifier}`"
+                  size="sm"
+                  class="!px-1"
+                  :disabled="isLast(identifier)"
+                  @click="move(identifier, true)"
+                >
+                  <RuiIcon
+                    name="lu-arrow-down"
+                    size="16"
+                  />
+                </RuiButton>
               </div>
             </td>
             <td class="text-center px-0">
               {{ index + 1 }}
             </td>
             <td>
-              <PrioritizedListEntry :data="itemData(identifier)" />
+              <PrioritizedListEntry
+                :data="itemData(identifier)"
+                size="28px"
+              />
             </td>
             <td class="text-end">
               <RuiTooltip
@@ -233,11 +231,12 @@ const autoCompleteHint: ComputedRef<string> = computed(() => {
                 <template #activator>
                   <RuiButton
                     :id="`delete-${identifier}`"
+                    class="transition-all opacity-0 invisible group-hover:opacity-100 group-hover:visible"
                     icon
                     variant="text"
                     @click="remove(identifier)"
                   >
-                    <RuiIcon name="close-line" />
+                    <RuiIcon name="lu-x" />
                   </RuiButton>
                 </template>
                 <span>
@@ -250,7 +249,7 @@ const autoCompleteHint: ComputedRef<string> = computed(() => {
       </SimpleTable>
     </RuiCard>
     <ActionStatusIndicator
-      class="my-4"
+      class="mx-[1px]"
       :status="status"
     />
   </div>

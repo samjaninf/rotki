@@ -1,4 +1,7 @@
 <script lang="ts" setup>
+import CreateAccountPremiumForm
+  from '@/components/account-management/create-account/premium/CreateAccountPremiumForm.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
 import type { PremiumSetup } from '@/types/login';
 
 const props = defineProps<{
@@ -14,23 +17,23 @@ const emit = defineEmits<{
   (e: 'update:premium-enabled', enabled: boolean): void;
 }>();
 
-const { premiumEnabled, form } = toRefs(props);
+const { form, premiumEnabled } = toRefs(props);
 
 const { t } = useI18n();
 
-const valid: Ref<boolean> = ref(false);
+const valid = ref<boolean>(false);
 
 const premiumSelectionButtons = computed(() => [
-  { value: false, text: t('common.actions.no') },
-  { value: true, text: t('create_account.premium.button_premium_approve') },
+  { text: t('common.actions.no'), value: false },
+  { text: t('create_account.premium.button_premium_approve'), value: true },
 ]);
 </script>
 
 <template>
   <div class="space-y-6">
-    <i18n
+    <i18n-t
       tag="div"
-      path="create_account.premium.premium_question"
+      keypath="create_account.premium.premium_question"
       class="text-center text-rui-text-secondary whitespace-break-spaces"
     >
       <template #premiumLink>
@@ -39,7 +42,7 @@ const premiumSelectionButtons = computed(() => [
           premium
         />.
       </template>
-    </i18n>
+    </i18n-t>
     <div class="mt-8 flex justify-center gap-5">
       <RuiButton
         v-for="(button, i) in premiumSelectionButtons"
@@ -52,22 +55,18 @@ const premiumSelectionButtons = computed(() => [
         <template #prepend>
           <RuiIcon
             class="-ml-2"
-            :name="
-              button.value === premiumEnabled
-                ? 'radio-button-line'
-                : 'checkbox-blank-circle-line'
-            "
+            :name="button.value === premiumEnabled ? 'lu-radio-button-fill' : 'lu-checkbox-blank-circle'"
           />
         </template>
         {{ button.text }}
       </RuiButton>
     </div>
     <CreateAccountPremiumForm
+      v-model:valid="valid"
       class="mt-8"
       :loading="loading"
       :enabled="premiumEnabled"
       :form="form"
-      :valid.sync="valid"
       @update:form="emit('update:form', $event)"
     />
     <div class="grid grid-cols-2 gap-4">

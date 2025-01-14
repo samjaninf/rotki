@@ -1,9 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, Literal, cast
 
-from eth_typing import BlockNumber
-
 from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
+from rotkehlchen.chain.evm.constants import BALANCE_SCANNER_ADDRESS
 from rotkehlchen.chain.evm.contracts import EvmContracts
 from rotkehlchen.chain.evm.l2_with_l1_fees.node_inquirer import L2WithL1FeesInquirer
 from rotkehlchen.chain.evm.types import string_to_evm_address
@@ -53,17 +52,12 @@ class ScrollInquirer(L2WithL1FeesInquirer):
             contracts=contracts,
             rpc_timeout=rpc_timeout,
             contract_multicall=contracts.contract(string_to_evm_address('0xcA11bde05977b3631167028862bE2a173976CA11')),
-            contract_scan=contracts.contract(string_to_evm_address('0xAB392016859663Ce1267f8f243f9F2C02d93bad8')),
+            contract_scan=contracts.contract(BALANCE_SCANNER_ADDRESS),
             native_token=A_ETH.resolve_to_crypto_asset(),
         )
-        self.etherscan = cast(ScrollEtherscan, self.etherscan)
+        self.etherscan = cast('ScrollEtherscan', self.etherscan)
 
     # -- Implementation of EvmNodeInquirer base methods --
-
-    def query_highest_block(self) -> BlockNumber:
-        block_number = self.etherscan.get_latest_block_number()
-        log.debug('Scroll highest block result', block=block_number)
-        return BlockNumber(block_number)
 
     def _get_pruned_check_tx_hash(self) -> EVMTxHash:
         return PRUNED_NODE_CHECK_TX_HASH

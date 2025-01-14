@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const gasCosts = ref(false);
 const { includeGasCosts } = storeToRefs(useAccountingSettingsStore());
 
@@ -17,12 +20,12 @@ const { t } = useI18n();
   >
     <RuiSwitch
       v-model="gasCosts"
-      class="accounting-settings__include-gas-costs"
+      data-cy="include-gas-costs-switch"
       :label="t('accounting_settings.trade.labels.include_gas_costs')"
       :success-messages="success"
       :error-messages="error"
       color="primary"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

@@ -1,19 +1,9 @@
 <script setup lang="ts">
-const props = withDefaults(
-  defineProps<{
-    value?: string | null;
-    items: string[];
-  }>(),
-  {
-    value: null,
-  },
-);
+const model = defineModel<string | undefined>({ required: true });
 
-const emit = defineEmits<{
-  (e: 'input', value: string | null): void;
+defineProps<{
+  items: string[];
 }>();
-
-const model = useSimpleVModel(props, emit);
 
 const { t } = useI18n();
 </script>

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { Location } from 'vue-router/types/router';
+import type { RouteLocationRaw } from 'vue-router';
 
 defineOptions({
   inheritAttrs: false,
@@ -7,22 +7,19 @@ defineOptions({
 
 const props = withDefaults(
   defineProps<{
-    to: string | Location;
+    to: RouteLocationRaw;
     exact?: boolean;
     activeClass?: string;
     exactActiveClass?: string;
     replace?: boolean;
   }>(),
   {
-    exact: false,
-    replace: false,
     activeClass: '',
+    exact: false,
     exactActiveClass: '',
+    replace: false,
   },
 );
-
-const rootAttrs = useAttrs();
-const css = useCssModule();
 </script>
 
 <template>
@@ -37,7 +34,7 @@ const css = useCssModule();
         [`${exactActiveClass}`]: isExactActive,
       }"
       :href="href"
-      v-bind="rootAttrs"
+      v-bind="$attrs"
       @click.exact="navigate($event)"
       @click.meta.prevent
       @click.ctrl.prevent
@@ -46,7 +43,7 @@ const css = useCssModule();
       <RuiButton
         variant="text"
         color="primary"
-        :class="css.button"
+        :class="$style.button"
       >
         <slot />
       </RuiButton>

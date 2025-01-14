@@ -12,16 +12,12 @@ from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [['0xf264267DCaFC1539900bc96006879701fA053259']])
-def test_gnt_glm_migration(database, ethereum_inquirer, ethereum_accounts):
+def test_gnt_glm_migration(ethereum_inquirer, ethereum_accounts):
     tx_hex = deserialize_evm_tx_hash('0x86baa45e4ab48d1db26df82da1a6f654fe96f1254ace5883b6397d7f55eb11a4')  # noqa: E501
     evmhash = deserialize_evm_tx_hash(tx_hex)
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hex,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hex)
     timestamp = TimestampMS(1646777828000)
     gas_str = '0.00560851737819982'
     amount_str = '5920'
@@ -36,7 +32,7 @@ def test_gnt_glm_migration(database, ethereum_inquirer, ethereum_accounts):
             asset=A_ETH,
             balance=Balance(amount=FVal(gas_str)),
             location_label=ethereum_accounts[0],
-            notes=f'Burned {gas_str} ETH for gas',
+            notes=f'Burn {gas_str} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=evmhash,

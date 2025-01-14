@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { toMessages } from '@/utils/validation';
+import { useHistoryEventMappings } from '@/composables/history/events/mapping';
+import HistoryEventTypeCombination from '@/components/history/events/HistoryEventTypeCombination.vue';
 import type { Validation } from '@vuelidate/core';
 import type { ActionDataEntry } from '@/types/action';
 
@@ -8,12 +10,14 @@ const props = withDefaults(
     eventType: string;
     eventSubtype: string;
     counterparty?: string | null;
+    location?: string | null;
     v$: Validation;
     disableWarning?: boolean;
   }>(),
   {
-    disableWarning: false,
     counterparty: null,
+    disableWarning: false,
+    location: null,
   },
 );
 
@@ -22,7 +26,7 @@ const emit = defineEmits<{
   (e: 'update:event-subtype', eventSubtype: string): void;
 }>();
 
-const { eventType, eventSubtype, counterparty, v$ } = toRefs(props);
+const { counterparty, eventSubtype, eventType, location, v$ } = toRefs(props);
 
 const eventTypeModel = computed({
   get() {
@@ -41,20 +45,17 @@ const eventSubtypeModel = computed({
     emit('update:event-subtype', newValue || '');
   },
 });
-const {
-  getEventTypeData,
-  historyEventTypesData,
-  historyEventSubTypesData,
-  historyEventTypeGlobalMapping,
-} = useHistoryEventMappings();
+const { getEventTypeData, historyEventSubTypesData, historyEventTypeGlobalMapping, historyEventTypesData }
+  = useHistoryEventMappings();
 
 const historyTypeCombination = computed(() =>
   get(
     getEventTypeData(
       {
-        eventType: get(eventType),
-        eventSubtype: get(eventSubtype),
         counterparty: get(counterparty),
+        eventSubtype: get(eventSubtype),
+        eventType: get(eventType),
+        location: get(location),
       },
       false,
     ),
@@ -69,25 +70,22 @@ const showHistoryEventTypeCombinationWarning = computed(() => {
   return !get(historyTypeCombination).identifier;
 });
 
-const historyEventSubTypeFilteredData: ComputedRef<ActionDataEntry[]>
-  = computed(() => {
-    const eventTypeVal = get(eventType);
-    const allData = get(historyEventSubTypesData);
-    const globalMapping = get(historyEventTypeGlobalMapping);
+const historyEventSubTypeFilteredData = computed<ActionDataEntry[]>(() => {
+  const eventTypeVal = get(eventType);
+  const allData = get(historyEventSubTypesData);
+  const globalMapping = get(historyEventTypeGlobalMapping);
 
-    if (!eventTypeVal)
-      return allData;
+  if (!eventTypeVal)
+    return allData;
 
-    let globalMappingKeys: string[] = [];
+  let globalMappingKeys: string[] = [];
 
-    const globalMappingFound = globalMapping[eventTypeVal];
-    if (globalMappingFound)
-      globalMappingKeys = Object.keys(globalMappingFound);
+  const globalMappingFound = globalMapping[eventTypeVal];
+  if (globalMappingFound)
+    globalMappingKeys = Object.keys(globalMappingFound);
 
-    return allData.filter((data: ActionDataEntry) =>
-      globalMappingKeys.includes(data.identifier),
-    );
-  });
+  return allData.filter((data: ActionDataEntry) => globalMappingKeys.includes(data.identifier));
+});
 
 const { t } = useI18n();
 </script>

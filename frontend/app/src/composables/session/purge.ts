@@ -1,10 +1,22 @@
 import { Purgeable } from '@/types/session/purge';
 import { Section } from '@/types/status';
 import { TaskType } from '@/types/task-type';
+import { isTaskCancelled } from '@/utils';
+import { useNotificationsStore } from '@/store/notifications';
+import { useHistoryStore } from '@/store/history';
+import { useTaskStore } from '@/store/tasks';
+import { useStatusStore } from '@/store/status';
+import { useDefiStore } from '@/store/defi';
+import { useSessionApi } from '@/composables/api/session';
 import type { Module } from '@/types/modules';
 import type { TaskMeta } from '@/types/task';
 
-export function useSessionPurge() {
+interface UseSessionPurge {
+  purgeCache: (purgeable: Purgeable, value: string) => void;
+  refreshGeneralCache: () => Promise<void>;
+}
+
+export function useSessionPurge(): UseSessionPurge {
   const { resetState } = useDefiStore();
   const { refreshGeneralCacheTask } = useSessionApi();
   const { resetStatus } = useStatusStore();
@@ -18,10 +30,7 @@ export function useSessionPurge() {
     resetStatus(Section.HISTORY_EVENT);
   };
 
-  const purgeCache = (
-    purgeable: Purgeable,
-    value: string,
-  ): void => {
+  const purgeCache = (purgeable: Purgeable, value: string): void => {
     if (purgeable === Purgeable.CENTRALIZED_EXCHANGES) {
       if (!value)
         purgeExchange();
@@ -41,7 +50,9 @@ export function useSessionPurge() {
   const { t } = useI18n();
   const { notify } = useNotificationsStore();
 
-  const refreshGeneralCache = async () => {
+  const { resetProtocolCacheUpdatesStatus } = useHistoryStore();
+  const refreshGeneralCache = async (): Promise<void> => {
+    resetProtocolCacheUpdatesStatus();
     const taskType = TaskType.REFRESH_GENERAL_CACHE;
     const { taskId } = await refreshGeneralCacheTask();
     try {
@@ -52,11 +63,11 @@ export function useSessionPurge() {
     catch (error: any) {
       if (!isTaskCancelled(error)) {
         notify({
-          title: t('actions.session.refresh_general_cache.task.title'),
+          display: true,
           message: t('actions.session.refresh_general_cache.error.message', {
             message: error.message,
           }),
-          display: true,
+          title: t('actions.session.refresh_general_cache.task.title'),
         });
       }
     }

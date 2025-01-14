@@ -13,6 +13,7 @@ from rotkehlchen.types import Price, Timestamp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     from more_itertools import peekable
 
     from rotkehlchen.accounting.mixins.event import AccountingEventMixin
@@ -101,11 +102,11 @@ class EventsAccountant:
                     f'event for {event} is not there',
                 )
                 return 1
-            in_event = cast(HistoryBaseEntry, next(events_iterator))  # guaranteed by the if check
 
+            in_event = cast('HistoryBaseEntry', next(events_iterator))  # guaranteed by the if check  # noqa: E501
             next_event = events_iterator.peek(None)
             if next_event and isinstance(next_event, HistoryBaseEntry) and next_event.event_identifier == event.event_identifier and next_event.event_subtype == HistoryEventSubType.FEE:  # noqa: E501
-                fee_event = cast(HistoryBaseEntry, next(events_iterator))  # guaranteed by if check
+                fee_event = cast('HistoryBaseEntry', next(events_iterator))  # guaranteed by if check  # noqa: E501
 
             return self._process_swap(
                 timestamp=timestamp,
@@ -169,6 +170,7 @@ class EventsAccountant:
         group_id = out_event.event_identifier + str(out_event.sequence_index) + str(in_event.sequence_index)  # noqa: E501
         extra_data = general_extra_data | {'group_id': group_id}
         _, trade_taxable_amount = self.pot.add_out_event(
+            originating_event_id=out_event.identifier,
             event_type=AccountingEventType.TRANSACTION_EVENT,
             notes=out_event.notes or '',
             location=out_event.location,
@@ -214,6 +216,7 @@ class EventsAccountant:
             events_to_add_queue.extend([
                 (self.pot.add_in_event, add_in_event_kwargs),
                 (self.pot.add_out_event, {
+                    'originating_event_id': fee_event.identifier,
                     'event_type': AccountingEventType.FEE,
                     'notes': fee_event.notes,
                     'location': fee_event.location,

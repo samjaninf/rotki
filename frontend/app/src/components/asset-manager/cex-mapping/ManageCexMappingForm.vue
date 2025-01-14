@@ -1,131 +1,99 @@
 <script setup lang="ts">
 import { helpers, required, requiredIf } from '@vuelidate/validators';
+import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
+import ExchangeInput from '@/components/inputs/ExchangeInput.vue';
+import { useFormStateWatcher } from '@/composables/form';
+import { nullDefined, useRefPropVModel } from '@/utils/model';
 import type { CexMapping } from '@/types/asset';
+import type { ValidationErrors } from '@/types/api/errors';
 
-const props = withDefaults(
+const modelValue = defineModel<CexMapping>({ required: true });
+const forAllExchanges = defineModel<boolean>('forAllExchanges', { required: true });
+const errors = defineModel<ValidationErrors>('errorMessages', { required: true });
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+
+withDefaults(
   defineProps<{
-    editableItem?: CexMapping | null;
-    selectedLocation?: string;
+    editMode?: boolean;
   }>(),
   {
-    editableItem: null,
-    selectedLocation: undefined,
+    editMode: false,
   },
 );
 
-const { selectedLocation, editableItem } = toRefs(props);
+const { t } = useI18n();
 
-const emptyMapping: () => CexMapping = () => ({
-  location: get(selectedLocation) || '',
-  locationSymbol: '',
-  asset: '',
-});
+const asset = useRefPropVModel(modelValue, 'asset');
+const locationSymbol = useRefPropVModel(modelValue, 'locationSymbol');
+const location = useRefPropVModel(modelValue, 'location');
+const locationModel = nullDefined(location);
 
-const formData = ref<CexMapping>(emptyMapping());
-const location = useRefPropVModel(formData, 'location');
-const asset = useRefPropVModel(formData, 'asset');
-const locationSymbol = useRefPropVModel(formData, 'locationSymbol');
-
-const forAllExchanges: Ref<boolean> = ref(false);
-
-function checkEditableItem() {
-  const form = get(editableItem);
-  if (form) {
-    set(forAllExchanges, !form.location);
-    set(formData, form);
+function checkPassedForm() {
+  const data = get(modelValue);
+  if (data) {
+    set(forAllExchanges, !data.location);
   }
-
   else {
     set(forAllExchanges, false);
-    set(formData, emptyMapping());
   }
 }
 
-watchImmediate(editableItem, checkEditableItem);
-
-const { t } = useI18n();
-
-const { setValidation, setSubmitFunc } = useCexMappingForm();
-
 const rules = {
+  asset: {
+    required: helpers.withMessage(t('asset_management.cex_mapping.form.asset_non_empty'), required),
+  },
   location: {
     required: helpers.withMessage(
-      t('asset_management.cex_mapping.form.location_non_empty').toString(),
+      t('asset_management.cex_mapping.form.location_non_empty'),
       requiredIf(logicNot(forAllExchanges)),
     ),
   },
   locationSymbol: {
     required: helpers.withMessage(
-      t('asset_management.cex_mapping.form.location_symbol_non_empty').toString(),
-      required,
-    ),
-  },
-  asset: {
-    required: helpers.withMessage(
-      t('asset_management.cex_mapping.form.asset_non_empty').toString(),
+      t('asset_management.cex_mapping.form.location_symbol_non_empty'),
       required,
     ),
   },
 };
 
-const v$ = setValidation(
+const states = {
+  asset,
+  location,
+  locationSymbol,
+};
+
+const v$ = useVuelidate(
   rules,
-  {
-    location,
-    locationSymbol,
-    asset,
-  },
-  { $autoDirty: true },
+  states,
+  { $autoDirty: true, $externalResults: errors },
 );
 
-const { setMessage } = useMessageStore();
-const { addCexMapping, editCexMapping } = useAssetCexMappingApi();
+useFormStateWatcher(states, stateUpdated);
 
-async function save(): Promise<boolean> {
-  const data = get(formData);
-  let success = false;
-  const editMode = get(editableItem);
-  const payload = {
-    ...data,
-    location: get(forAllExchanges) ? null : data.location,
-  };
+onBeforeMount(() => {
+  checkPassedForm();
+});
 
-  try {
-    if (editMode)
-      success = await editCexMapping(payload);
-
-    else
-      success = await addCexMapping(payload);
-  }
-  catch (error: any) {
-    const obj = { message: error.message };
-    setMessage({
-      description: editMode
-        ? t('asset_management.cex_mapping.add_error', obj)
-        : t('asset_management.cex_mapping.edit_error', obj),
-    });
-  }
-
-  return success;
-}
-
-setSubmitFunc(save);
+defineExpose({
+  validate: () => get(v$).$validate(),
+});
 </script>
 
 <template>
   <div class="flex flex-col gap-2">
     <RuiSwitch
       v-model="forAllExchanges"
-      :disabled="!!editableItem"
+      :disabled="editMode"
       color="primary"
     >
       {{ t('asset_management.cex_mapping.save_for_all') }}
     </RuiSwitch>
     <ExchangeInput
-      v-model="location"
+      v-model="locationModel"
       :label="t('asset_management.cex_mapping.exchange')"
-      :disabled="!!editableItem || forAllExchanges"
+      :disabled="editMode || forAllExchanges"
       clearable
       :error-messages="toMessages(v$.location)"
     />
@@ -134,7 +102,7 @@ setSubmitFunc(save);
       data-cy="locationSymbol"
       variant="outlined"
       color="primary"
-      :disabled="!!editableItem"
+      :disabled="editMode"
       clearable
       :label="t('asset_management.cex_mapping.location_symbol')"
       :error-messages="toMessages(v$.locationSymbol)"

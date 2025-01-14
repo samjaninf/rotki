@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useReportsStore } from '@/store/reports';
+import ReportActionableCard from '@/components/profitloss/ReportActionableCard.vue';
 import type { SelectedReport } from '@/types/reports';
 
 const props = withDefaults(
@@ -48,10 +50,10 @@ const { t } = useI18n();
       v-model="mainDialogOpen"
       max-width="1000"
     >
-      <template #activator="{ on }">
+      <template #activator="{ attrs }">
         <RuiButton
           color="error"
-          v-on="on"
+          v-bind="attrs"
         >
           <span class="pr-2">
             {{ t('profit_loss_report.actionable.show_issues') }}

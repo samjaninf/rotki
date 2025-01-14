@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type { Tag } from '@/types/tags';
 
+defineOptions({
+  inheritAttrs: false,
+});
+
 withDefaults(
   defineProps<{
     tag: Tag;
@@ -8,8 +12,8 @@ withDefaults(
     showDescription?: boolean;
   }>(),
   {
-    small: false,
     showDescription: false,
+    small: false,
   },
 );
 </script>
@@ -17,19 +21,13 @@ withDefaults(
 <template>
   <div class="flex items-center">
     <RuiChip
-      class="tag font-medium [&>span]:flex shrink-0"
+      class="tag font-medium [&>span]:flex !rounded-md [&>span]:font-mono shrink-0"
       tile
       :size="small ? 'sm' : 'md'"
       :bg-color="`#${tag.backgroundColor}`"
       :text-color="`#${tag.foregroundColor}`"
+      v-bind="$attrs"
     >
-      <AppImage
-        v-if="tag.icon"
-        class="mr-2"
-        :width="1.25"
-        :height="1.25"
-        :src="tag.icon"
-      />
       {{ tag.name }}
     </RuiChip>
     <span

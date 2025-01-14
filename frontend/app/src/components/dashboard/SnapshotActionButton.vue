@@ -1,12 +1,23 @@
 <script setup lang="ts">
+import { startPromise } from '@shared/utils';
 import SnapshotImportDialog from '@/components/dashboard/SnapshotImportDialog.vue';
-import type { Writeable } from '@/types';
+import { useMessageStore } from '@/store/message';
+import { useStatisticsStore } from '@/store/statistics';
+import { usePeriodicStore } from '@/store/session/periodic';
+import { useSessionStore } from '@/store/session';
+import { useInterop } from '@/composables/electron-interop';
+import { useSnapshotApi } from '@/composables/api/settings/snapshot-api';
+import { useBalances } from '@/composables/balances';
+import { usePremium } from '@/composables/premium';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+import type { Writeable } from '@rotki/common';
 import type { AllBalancePayload } from '@/types/blockchain/accounts';
 
 const ignoreErrors = ref<boolean>(false);
 const visible = ref<boolean>(false);
-const balanceSnapshotFile = ref<File | null>(null);
-const locationDataSnapshotFile = ref<File | null>(null);
+const balanceSnapshotFile = ref<File>();
+const locationDataSnapshotFile = ref<File>();
 const importSnapshotLoading = ref<boolean>(false);
 const importSnapshotDialog = ref<boolean>(false);
 
@@ -15,11 +26,11 @@ const premium = usePremium();
 const { logout } = useSessionStore();
 const { lastBalanceSave } = storeToRefs(usePeriodicStore());
 const { fetchBalances } = useBalances();
-const { appSession } = useInterop();
+const { getPath } = useInterop();
 const { fetchNetValue } = useStatisticsStore();
 const { setMessage } = useMessageStore();
 const { importBalancesSnapshot, uploadBalancesSnapshot } = useSnapshotApi();
-const { dark } = useTheme();
+const { isDark } = useRotkiTheme();
 
 async function refreshAllAndSave() {
   set(visible, false);
@@ -35,23 +46,24 @@ async function refreshAllAndSave() {
 }
 
 async function importSnapshot() {
+  if (!(isDefined(balanceSnapshotFile) && isDefined(locationDataSnapshotFile)))
+    return;
+
   set(importSnapshotLoading, true);
+
+  const balanceFile = get(balanceSnapshotFile);
+  const locationFile = get(locationDataSnapshotFile);
 
   let success = false;
   let message = '';
   try {
-    if (appSession) {
-      await importBalancesSnapshot(
-        get(balanceSnapshotFile)!.path,
-        get(locationDataSnapshotFile)!.path,
-      );
-    }
-    else {
-      await uploadBalancesSnapshot(
-        get(balanceSnapshotFile)!,
-        get(locationDataSnapshotFile)!,
-      );
-    }
+    const balanceFilePath = getPath(balanceFile);
+    const locationFilePath = getPath(locationFile);
+    if (balanceFilePath && locationFilePath)
+      await importBalancesSnapshot(balanceFilePath, locationFilePath);
+    else
+      await uploadBalancesSnapshot(balanceFile, locationFile);
+
     success = true;
   }
   catch (error: any) {
@@ -60,19 +72,19 @@ async function importSnapshot() {
 
   if (!success) {
     setMessage({
-      title: t('snapshot_action_button.messages.title'),
       description: t('snapshot_action_button.messages.failed_description', {
         message,
       }),
+      title: t('snapshot_action_button.messages.title'),
     });
   }
   else {
     setMessage({
-      title: t('snapshot_action_button.messages.title'),
       description: t('snapshot_action_button.messages.success_description', {
         message,
       }),
       success: true,
+      title: t('snapshot_action_button.messages.title'),
     });
 
     setTimeout(() => {
@@ -93,17 +105,15 @@ async function importSnapshot() {
     :popper="{ placement: 'bottom-end' }"
     :persistent="importSnapshotDialog"
   >
-    <template #activator="{ on }">
+    <template #activator="{ attrs }">
       <MenuTooltipButton
         :tooltip="t('snapshot_action_button.menu_tooltip', premium ? 2 : 1)"
-        :variant="!dark ? 'default' : 'text'"
+        :variant="!isDark ? 'default' : 'text'"
         size="sm"
         custom-color
-        v-on="on"
+        v-bind="attrs"
       >
-        <slot name="button-icon">
-          <RuiIcon name="screenshot-2-line" />
-        </slot>
+        <RuiIcon name="lu-chevron-down" />
       </MenuTooltipButton>
     </template>
     <div class="p-4 md:w-[16rem] w-full">
@@ -131,7 +141,7 @@ async function importSnapshot() {
           @click="refreshAllAndSave()"
         >
           <template #prepend>
-            <RuiIcon name="save-line" />
+            <RuiIcon name="lu-save" />
           </template>
           {{ t('snapshot_action_button.force_save') }}
         </RuiButton>
@@ -142,7 +152,7 @@ async function importSnapshot() {
         >
           <template #activator>
             <RuiIcon
-              name="information-line"
+              name="lu-info"
               color="primary"
             />
           </template>

@@ -5,8 +5,8 @@ from sqlite3 import OperationalError
 from typing import TYPE_CHECKING, Any
 
 import requests
-
 from packaging import version as pversion
+
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.spam_assets import update_spam_assets
@@ -329,7 +329,7 @@ class RotkiDataUpdater:
                 continue
 
         with GlobalDBHandler().conn.write_ctx() as write_cursor:
-            db_addressbook.add_addressbook_entries(
+            db_addressbook.add_or_update_addressbook_entries(
                 write_cursor=write_cursor,
                 entries=entries_to_add,
             )
@@ -351,11 +351,11 @@ class RotkiDataUpdater:
                         raw_entry['asset'] = Asset(asset_id)
                     if (raw_location := raw_entry.get('location')) is not None:
                         raw_entry['location'] = Location.deserialize(raw_location)
-                    entries.append(entry_type.deserialize(raw_entry))  # type: ignore[attr-defined]  # deserialize is defined in both
+                    entries.append(entry_type.deserialize(raw_entry))
                 except DeserializationError as e:
                     log.error(f'Could not deserialize {entry_type.__name__} {raw_entry!s}: {e!s}')
 
-            update_function(entries=entries, skip_errors=True)  # type: ignore[operator]  # update_function is known
+            update_function(entries=entries, skip_errors=True)  # type: ignore  # entries/update function type varies
 
     def update_location_unsupported_assets(self, data: dict[str, dict[str, list[str]]], version: int) -> None:  # noqa: E501
         """Applies location unsupported assets updates in the global DB"""

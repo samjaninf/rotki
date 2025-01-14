@@ -1,5 +1,11 @@
 import { BigNumber } from '@rotki/common';
 
+interface BnFormat {
+  groupSize: number;
+  groupSeparator: string;
+  decimalSeparator: string;
+}
+
 export const abbreviationList: [number, string][] = [
   [12, 'T'],
   [9, 'B'],
@@ -15,18 +21,15 @@ export class AmountFormatter {
     decimalSeparator: string,
     roundingMode?: BigNumber.RoundingMode,
     abbreviateNumber?: boolean,
-  ) {
-    const usedRoundingMode
-      = roundingMode === undefined ? BigNumber.ROUND_DOWN : roundingMode;
+  ): string {
+    const usedRoundingMode = roundingMode === undefined ? BigNumber.ROUND_DOWN : roundingMode;
 
     if (abbreviateNumber) {
-      const usedAbbreviation = abbreviationList.find(([digitNum, _]) =>
-        amount.abs().gte((10 ** digitNum)),
-      );
+      const usedAbbreviation = abbreviationList.find(([digitNum, _]) => amount.abs().gte(10 ** digitNum));
 
       if (usedAbbreviation) {
         return `${amount
-          .dividedBy((10 ** usedAbbreviation[0]))
+          .dividedBy(10 ** usedAbbreviation[0])
           .toFormat(
             precision,
             usedRoundingMode,
@@ -35,20 +38,16 @@ export class AmountFormatter {
       }
     }
 
-    return amount.toFormat(
-      precision,
-      usedRoundingMode,
-      getBnFormat(thousandSeparator, decimalSeparator),
-    );
+    return amount.toFormat(precision, usedRoundingMode, getBnFormat(thousandSeparator, decimalSeparator));
   }
 }
 
 export const displayAmountFormatter = new AmountFormatter();
 
-export function getBnFormat(thousandSeparator: string, decimalSeparator: string) {
+export function getBnFormat(thousandSeparator: string, decimalSeparator: string): BnFormat {
   return {
-    groupSize: 3,
-    groupSeparator: thousandSeparator,
     decimalSeparator,
+    groupSeparator: thousandSeparator,
+    groupSize: 3,
   };
 }

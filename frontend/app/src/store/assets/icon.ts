@@ -1,9 +1,10 @@
 import { isBlockchain } from '@/types/blockchain/chains';
+import { useAssetIconApi } from '@/composables/api/assets/icon';
 
 export const useAssetIconStore = defineStore('assets/icon', () => {
-  const lastRefreshedAssetIcon: Ref<number> = ref(0);
+  const lastRefreshedAssetIcon = ref<number>(0);
 
-  const setLastRefreshedAssetIcon = () => {
+  const setLastRefreshedAssetIcon = (): void => {
     set(lastRefreshedAssetIcon, Date.now());
   };
 

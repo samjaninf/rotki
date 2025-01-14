@@ -1,33 +1,30 @@
 <script setup lang="ts">
 import { DialogType, themes } from '@/types/dialogs';
 
-const props = withDefaults(
-  defineProps<{
-    title: string;
-    message: string;
-    display: boolean;
-    primaryAction?: string | null;
-    secondaryAction?: string | null;
-    confirmType?: DialogType;
-    disabled?: boolean;
-    singleAction?: boolean;
-    loading?: boolean;
-    maxWidth?: string;
-  }>(),
-  {
-    primaryAction: null,
-    secondaryAction: null,
-    confirmType: DialogType.INFO,
-    disabled: false,
-    singleAction: false,
-    loading: false,
-    maxWidth: '500',
-  },
-);
+const props = withDefaults(defineProps<{
+  title: string;
+  message: string;
+  display: boolean;
+  primaryAction?: string | null;
+  secondaryAction?: string | null;
+  confirmType?: DialogType;
+  disabled?: boolean;
+  singleAction?: boolean;
+  loading?: boolean;
+  maxWidth?: string;
+}>(), {
+  confirmType: DialogType.INFO,
+  disabled: false,
+  loading: false,
+  maxWidth: '500',
+  primaryAction: null,
+  secondaryAction: null,
+  singleAction: false,
+});
 
 const emit = defineEmits<{
-  (e: 'confirm'): void;
-  (e: 'cancel'): void;
+  confirm: [];
+  cancel: [];
 }>();
 
 const { confirmType, primaryAction, secondaryAction } = toRefs(props);
@@ -36,22 +33,18 @@ const { t } = useI18n();
 
 const color = computed(() => themes[get(confirmType)].color);
 const icon = computed(() => themes[get(confirmType)].icon);
-
-const primaryText = computed(
-  () => get(primaryAction) || t('common.actions.confirm'),
-);
-
-const secondaryText = computed(
-  () => get(secondaryAction) || t('common.actions.cancel'),
-);
+const primaryText = computed<string>(() => get(primaryAction) || t('common.actions.confirm'));
+const secondaryText = computed<string>(() => get(secondaryAction) || t('common.actions.cancel'));
 </script>
 
 <template>
   <RuiDialog
-    :value="display"
+    :model-value="display"
     persistent
+    z-index="10000"
     :max-width="maxWidth"
     @keydown.esc.stop="emit('cancel')"
+    @keydown.enter.stop="emit('confirm')"
   >
     <RuiCard data-cy="confirm-dialog">
       <template #header>
@@ -71,7 +64,7 @@ const secondaryText = computed(
             :name="icon"
           />
         </div>
-        <div class="text-body-1 pt-1 w-full break-words">
+        <div class="text-body-1 pt-1 w-full break-words whitespace-pre-line">
           {{ message }}
           <slot />
         </div>

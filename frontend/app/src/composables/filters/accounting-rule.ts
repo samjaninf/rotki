@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import type {
-  MatchedKeywordWithBehaviour,
-  SearchMatcher,
-} from '@/types/filtering';
+import { arrayify } from '@/utils/array';
+import { useHistoryEventCounterpartyMappings } from '@/composables/history/events/mapping/counterparty';
+import { useHistoryEventMappings } from '@/composables/history/events/mapping';
+import type { FilterSchema } from '@/composables/use-pagination-filter/types';
+import type { MatchedKeywordWithBehaviour, SearchMatcher } from '@/types/filtering';
 
 enum AccountingRuleFilterKeys {
   EVENT_TYPE = 'event_type',
@@ -16,71 +17,58 @@ enum AccountingRuleFilterValueKeys {
   COUNTERPARTY = 'counterparties',
 }
 
-export type Matcher = SearchMatcher<
-  AccountingRuleFilterKeys,
-  AccountingRuleFilterValueKeys
->;
+export type Matcher = SearchMatcher<AccountingRuleFilterKeys, AccountingRuleFilterValueKeys>;
 
-export type Filters =
-  MatchedKeywordWithBehaviour<AccountingRuleFilterValueKeys>;
+export type Filters = MatchedKeywordWithBehaviour<AccountingRuleFilterValueKeys>;
 
-export function useAccountingRuleFilter() {
-  const filters: Ref<Filters> = ref({});
+export function useAccountingRuleFilter(): FilterSchema<Filters, Matcher> {
+  const filters = ref<Filters>({});
 
-  const { historyEventTypes, historyEventSubTypes } = useHistoryEventMappings();
+  const { historyEventSubTypes, historyEventTypes } = useHistoryEventMappings();
   const { counterparties } = useHistoryEventCounterpartyMappings();
   const { t } = useI18n();
 
-  const matchers: ComputedRef<Matcher[]> = computed(() => [
-    {
-      key: AccountingRuleFilterKeys.EVENT_TYPE,
-      keyValue: AccountingRuleFilterValueKeys.EVENT_TYPE,
-      description: t('accounting_settings.rule.filter.event_type'),
-      multiple: true,
-      string: true,
-      suggestions: () => get(historyEventTypes),
-      validate: (type: string) => !!type,
-    },
-    {
-      key: AccountingRuleFilterKeys.EVENT_SUBTYPE,
-      keyValue: AccountingRuleFilterValueKeys.EVENT_SUBTYPE,
-      description: t('accounting_settings.rule.filter.event_subtype'),
-      multiple: true,
-      string: true,
-      suggestions: () => get(historyEventSubTypes),
-      validate: (type: string) => !!type,
-    },
-    {
-      key: AccountingRuleFilterKeys.COUNTERPARTY,
-      keyValue: AccountingRuleFilterValueKeys.COUNTERPARTY,
-      description: t('accounting_settings.rule.filter.counterparty'),
-      multiple: true,
-      string: true,
-      suggestions: () => get(counterparties),
-      validate: (protocol: string) => !!protocol,
-    },
-  ]);
-
-  const updateFilter = (newFilters: Filters) => {
-    set(filters, newFilters);
-  };
+  const matchers = computed<Matcher[]>(() => [{
+    description: t('accounting_settings.rule.filter.event_type'),
+    key: AccountingRuleFilterKeys.EVENT_TYPE,
+    keyValue: AccountingRuleFilterValueKeys.EVENT_TYPE,
+    multiple: true,
+    string: true,
+    suggestions: (): string[] => get(historyEventTypes),
+    validate: (type: string): boolean => !!type,
+  }, {
+    description: t('accounting_settings.rule.filter.event_subtype'),
+    key: AccountingRuleFilterKeys.EVENT_SUBTYPE,
+    keyValue: AccountingRuleFilterValueKeys.EVENT_SUBTYPE,
+    multiple: true,
+    string: true,
+    suggestions: (): string[] => get(historyEventSubTypes),
+    validate: (type: string): boolean => !!type,
+  }, {
+    description: t('accounting_settings.rule.filter.counterparty'),
+    key: AccountingRuleFilterKeys.COUNTERPARTY,
+    keyValue: AccountingRuleFilterValueKeys.COUNTERPARTY,
+    multiple: true,
+    string: true,
+    suggestions: (): string[] => get(counterparties),
+    validate: (protocol: string): boolean => !!protocol,
+  }]);
 
   const OptionalMultipleString = z
     .array(z.string())
     .or(z.string())
-    .transform(val => (Array.isArray(val) ? val : [val]))
+    .transform(arrayify)
     .optional();
 
   const RouteFilterSchema = z.object({
     [AccountingRuleFilterValueKeys.COUNTERPARTY]: OptionalMultipleString,
-    [AccountingRuleFilterValueKeys.EVENT_TYPE]: OptionalMultipleString,
     [AccountingRuleFilterValueKeys.EVENT_SUBTYPE]: OptionalMultipleString,
+    [AccountingRuleFilterValueKeys.EVENT_TYPE]: OptionalMultipleString,
   });
 
   return {
-    matchers,
     filters,
-    updateFilter,
+    matchers,
     RouteFilterSchema,
   };
 }

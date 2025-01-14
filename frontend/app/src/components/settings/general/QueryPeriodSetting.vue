@@ -2,6 +2,10 @@
 import useVuelidate from '@vuelidate/core';
 import { between, helpers, required } from '@vuelidate/validators';
 import { toMessages } from '@/utils/validation';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useMonitorStore } from '@/store/monitor';
+import { useValidation } from '@/composables/validation';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
 const queryPeriod = ref<string>('5');
 const minQueryPeriod = 5;
@@ -11,17 +15,14 @@ const { t } = useI18n();
 
 const rules = {
   queryPeriod: {
-    required: helpers.withMessage(
-      t('frontend_settings.validation.periodic_query.non_empty').toString(),
-      required,
-    ),
     between: helpers.withMessage(
-      t('frontend_settings.validation.periodic_query.invalid_period', {
-        start: minQueryPeriod,
+      t('frontend_settings.periodic_query.validation.invalid_period', {
         end: maxQueryPeriod,
-      }).toString(),
+        start: minQueryPeriod,
+      }),
       between(minQueryPeriod, maxQueryPeriod),
     ),
+    required: helpers.withMessage(t('frontend_settings.periodic_query.validation.non_empty'), required),
   },
 };
 
@@ -44,34 +45,32 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="mt-8">
-    <div class="text-h6 mb-3">
-      {{ t('frontend_settings.subtitle.query') }}
-    </div>
-    <SettingsOption
-      #default="{ error, success, update }"
-      class="mt-1"
-      setting="queryPeriod"
-      frontend-setting
-      :transform="transform"
-      :error-message="t('frontend_settings.validation.periodic_query.error')"
-      @updated="restart()"
-      @finished="resetQueryPeriod()"
-    >
+  <SettingsOption
+    class="mt-1"
+    setting="queryPeriod"
+    frontend-setting
+    :transform="transform"
+    :error-message="t('frontend_settings.periodic_query.validation.error')"
+    @updated="restart()"
+    @finished="resetQueryPeriod()"
+  >
+    <template #title>
+      {{ t('frontend_settings.periodic_query.title') }}
+    </template>
+    <template #default="{ error, success, update }">
       <RuiTextField
         v-model="queryPeriod"
         variant="outlined"
         color="primary"
-        class="general-settings__fields__periodic-client-query-period"
-        :label="t('frontend_settings.label.query_period')"
-        :hint="t('frontend_settings.label.query_period_hint')"
+        :label="t('frontend_settings.periodic_query.label')"
+        :hint="t('frontend_settings.periodic_query.hint')"
         type="number"
         :min="minQueryPeriod"
         :max="maxQueryPeriod"
         :success-messages="success"
         :error-messages="error || toMessages(v$.queryPeriod)"
-        @input="callIfValid($event, update)"
+        @update:model-value="callIfValid($event, update)"
       />
-    </SettingsOption>
-  </div>
+    </template>
+  </SettingsOption>
 </template>

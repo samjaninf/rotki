@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
-def test_icons_and_avatars_cache_deletion(rotkehlchen_api_server):
+def test_icons_and_avatars_cache_deletion(rotkehlchen_api_server: 'APIServer') -> None:
     """Checks that clearing the cache for avatars and icons work as expected."""
     icons_dir = rotkehlchen_api_server.rest_api.rotkehlchen.icon_manager.icons_dir
     data_dir = rotkehlchen_api_server.rest_api.rotkehlchen.data_dir
@@ -113,8 +113,8 @@ def test_icons_and_avatars_cache_deletion(rotkehlchen_api_server):
     assert response.headers['Content-Type'] == 'image/png'
 
 
-@pytest.mark.vcr()
-def test_general_cache_refresh(rotkehlchen_api_server: 'APIServer'):
+@pytest.mark.vcr
+def test_general_cache_refresh(rotkehlchen_api_server: 'APIServer') -> None:
     """Tests that refreshing the general cache works as expected"""
     with ExitStack() as stack:
         stack.enter_context(patch(
@@ -133,6 +133,10 @@ def test_general_cache_refresh(rotkehlchen_api_server: 'APIServer'):
             'rotkehlchen.api.rest.query_velodrome_like_data',
             new=MagicMock(),
         ))
+        patched_gearbox_query = stack.enter_context(patch(
+            'rotkehlchen.api.rest.query_gearbox_data',
+            new=MagicMock(),
+        ))
         patched_query_yearn_vaults = stack.enter_context(patch(
             'rotkehlchen.api.rest.query_yearn_vaults',
             new=MagicMock(),
@@ -148,7 +152,8 @@ def test_general_cache_refresh(rotkehlchen_api_server: 'APIServer'):
         ))
         assert_proper_response(response)
         assert patched_convex_query.call_count == 1, 'Convex pools should have been queried despite should_update_protocol_cache being False'  # noqa: E501
-        assert patched_curve_query.call_count == 1, 'Curve pools should have been queried despite should_update_protocol_cache being False'  # noqa: E501
+        assert patched_curve_query.call_count == 6, 'Curve pools should have been queried despite should_update_protocol_cache being False'  # noqa: E501
+        assert patched_gearbox_query.call_count == 1, 'Gearbox pools should have been queried despite should_update_protocol_cache being False'  # noqa: E501
         # we query query_velodrome_like_data twice. First for velodrome and then for aerodrome
         assert patched_velodrome_query.call_count == 2, 'Velodrome pools should have been queried despite should_update_protocol_cache being False'  # noqa: E501
         assert patched_query_yearn_vaults.call_count == 1, 'Yearn vaults refresh should have been triggered'  # noqa: E501

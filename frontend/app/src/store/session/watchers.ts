@@ -1,4 +1,7 @@
 import { type Watcher, WatcherType } from '@/types/session';
+import { useNotificationsStore } from '@/store/notifications';
+import { useWatchersApi } from '@/composables/api/session/watchers';
+import { usePremium } from '@/composables/premium';
 
 export const useWatchersStore = defineStore('session/watchers', () => {
   const watchers = ref<Watcher[]>([]);
@@ -8,12 +11,10 @@ export const useWatchersStore = defineStore('session/watchers', () => {
   const loanWatchers = computed(() => {
     const loanWatcherTypes = [WatcherType];
 
-    return get(watchers).filter(watcher =>
-      loanWatcherTypes.includes(watcher.type),
-    );
+    return get(watchers).filter(watcher => loanWatcherTypes.includes(watcher.type));
   });
 
-  const { premium } = storeToRefs(usePremiumStore());
+  const premium = usePremium();
   const { notify } = useNotificationsStore();
   const api = useWatchersApi();
 
@@ -26,18 +27,16 @@ export const useWatchersStore = defineStore('session/watchers', () => {
     }
     catch (error: any) {
       notify({
-        title: t('actions.session.fetch_watchers.error.title').toString(),
+        display: true,
         message: t('actions.session.fetch_watchers.error.message', {
           message: error.message,
-        }).toString(),
-        display: true,
+        }),
+        title: t('actions.session.fetch_watchers.error.title'),
       });
     }
   };
 
-  const addWatchers = async (
-    newWatchers: Omit<Watcher, 'identifier'>[],
-  ): Promise<void> => {
+  const addWatchers = async (newWatchers: Omit<Watcher, 'identifier'>[]): Promise<void> => {
     set(watchers, await api.addWatcher(newWatchers));
   };
 
@@ -50,12 +49,12 @@ export const useWatchersStore = defineStore('session/watchers', () => {
   };
 
   return {
-    watchers,
-    loanWatchers,
-    fetchWatchers,
     addWatchers,
-    editWatchers,
     deleteWatchers,
+    editWatchers,
+    fetchWatchers,
+    loanWatchers,
+    watchers,
   };
 });
 

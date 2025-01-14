@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
 import { Quarter } from '@/types/settings/frontend-settings';
-import type {
-  PeriodChangedEvent,
-  SelectionChangedEvent,
-} from '@/types/reports';
+import type { PeriodChangedEvent, SelectionChangedEvent } from '@/types/reports';
 
 const props = withDefaults(
   defineProps<{
@@ -30,11 +27,11 @@ const QUARTER_STARTS: { [quarter in Quarter]: string } = {
 };
 
 const QUARTER_ENDS: { [quarter in Quarter]: string } = {
+  [Quarter.ALL]: '31/12',
   [Quarter.Q1]: '31/03',
   [Quarter.Q2]: '30/06',
   [Quarter.Q3]: '30/09',
   [Quarter.Q4]: '31/12',
-  [Quarter.ALL]: '31/12',
 };
 
 const { quarter, year } = toRefs(props);
@@ -67,8 +64,8 @@ const end = computed(() => {
 });
 
 const periodEventPayload = computed<PeriodChangedEvent>(() => ({
-  start: get(start),
   end: get(end),
+  start: get(start),
 }));
 
 onMounted(() => {
@@ -82,8 +79,7 @@ watch([year, quarter], () => {
 const periods = computed(() => {
   const periods: string[] = [];
   const fullYear = new Date().getFullYear();
-  for (let year = fullYear; year > fullYear - 5; year--)
-    periods.push(year.toString());
+  for (let year = fullYear; year > fullYear - 5; year--) periods.push(year.toString());
 
   return periods;
 });
@@ -91,7 +87,7 @@ const periods = computed(() => {
 const subPeriods = [
   {
     id: Quarter.ALL,
-    name: t('generate.sub_period.all').toString(),
+    name: t('generate.sub_period.all'),
   },
   {
     id: Quarter.Q1,
@@ -115,8 +111,8 @@ function onChange(change: { year?: string; quarter?: Quarter }) {
   const yearVal = get(year);
   const quarterVal = get(quarter);
   updateSelection({
-    year: change?.year ?? yearVal,
     quarter: change?.quarter ?? quarterVal,
+    year: change?.year ?? yearVal,
   });
   updatePeriod(yearVal !== 'custom' ? get(periodEventPayload) : null);
 }
@@ -153,24 +149,22 @@ const quarterModel = computed({
         class="flex-wrap justify-center"
         active-color="primary"
       >
-        <template #default>
-          <RuiButton
-            v-for="period in periods"
-            :key="period"
-            :color="year === period ? 'primary' : undefined"
-            class="px-4"
-            :value="period"
-          >
-            {{ period }}
-          </RuiButton>
-          <RuiButton
-            value="custom"
-            class="px-4"
-            :color="isCustom ? 'primary' : undefined"
-          >
-            {{ t('generate.custom_selection') }}
-          </RuiButton>
-        </template>
+        <RuiButton
+          v-for="period in periods"
+          :key="period"
+          :color="year === period ? 'primary' : undefined"
+          class="px-4"
+          :model-value="period"
+        >
+          {{ period }}
+        </RuiButton>
+        <RuiButton
+          model-value="custom"
+          class="px-4"
+          :color="isCustom ? 'primary' : undefined"
+        >
+          {{ t('generate.custom_selection') }}
+        </RuiButton>
       </RuiButtonGroup>
     </div>
     <div
@@ -187,17 +181,15 @@ const quarterModel = computed({
         class="flex-wrap justify-center"
         active-color="primary"
       >
-        <template #default>
-          <RuiButton
-            v-for="subPeriod in subPeriods"
-            :key="subPeriod.id"
-            :color="quarter === subPeriod.id ? 'primary' : undefined"
-            :value="subPeriod.id"
-            :disabled="isStartAfterNow(subPeriod.id)"
-          >
-            {{ subPeriod.name }}
-          </RuiButton>
-        </template>
+        <RuiButton
+          v-for="subPeriod in subPeriods"
+          :key="subPeriod.id"
+          :color="quarter === subPeriod.id ? 'primary' : undefined"
+          :model-value="subPeriod.id"
+          :disabled="isStartAfterNow(subPeriod.id)"
+        >
+          {{ subPeriod.name }}
+        </RuiButton>
       </RuiButtonGroup>
     </div>
   </div>

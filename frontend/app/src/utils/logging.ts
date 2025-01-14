@@ -1,7 +1,8 @@
-import logger, { type LogLevelNames, type LogLevelNumbers, type LoggingMethod,
-} from 'loglevel';
+import consola, { type LogLevel as ConsolaLogLevel, LogLevels, type LogObject } from 'consola';
+import { LogLevel } from '@shared/log-level';
+import { checkIfDevelopment, startPromise } from '@shared/utils';
 import { IndexedDb } from '@/utils/indexed-db';
-import { LogLevel } from '@/utils/log-level';
+import { useInterop } from '@/composables/electron-interop';
 
 const isDevelopment = checkIfDevelopment();
 
@@ -9,69 +10,62 @@ export function getDefaultLogLevel(): LogLevel {
   return isDevelopment ? LogLevel.DEBUG : LogLevel.CRITICAL;
 }
 
-export function getDefaultFrontendLogLevel(): LogLevelNumbers {
-  return isDevelopment ? logger.levels.DEBUG : logger.levels.SILENT;
+export function getDefaultFrontendLogLevel(): ConsolaLogLevel {
+  return isDevelopment ? LogLevels.debug : LogLevels.silent;
 }
 
 const mapping = {
-  [LogLevel.CRITICAL]: logger.levels.SILENT,
-  [LogLevel.ERROR]: logger.levels.ERROR,
-  [LogLevel.WARNING]: logger.levels.WARN,
-  [LogLevel.INFO]: logger.levels.INFO,
-  [LogLevel.DEBUG]: logger.levels.DEBUG,
-  [LogLevel.TRACE]: logger.levels.TRACE,
+  [LogLevel.CRITICAL]: LogLevels.silent,
+  [LogLevel.DEBUG]: LogLevels.debug,
+  [LogLevel.ERROR]: LogLevels.error,
+  [LogLevel.INFO]: LogLevels.info,
+  [LogLevel.TRACE]: LogLevels.trace,
+  [LogLevel.WARNING]: LogLevels.warn,
 };
 
-export function mapToFrontendLogLevel(logLevel?: LogLevel): LogLevelNumbers {
+export function mapToFrontendLogLevel(logLevel?: LogLevel): ConsolaLogLevel {
   if (!logLevel)
     return getDefaultFrontendLogLevel();
 
   return mapping[logLevel] ?? getDefaultLogLevel();
 }
-logger.setDefaultLevel(getDefaultFrontendLogLevel());
+
+consola.level = getDefaultFrontendLogLevel();
+
+function getMessage(logObj: LogObject): string {
+  const type = logObj.type === 'log' ? '' : logObj.type;
+  const tag = logObj.tag || '';
+  const badge = tag ? `${type}: ${tag}` : type;
+
+  return `${logObj.date.toLocaleString()} :: ${badge} :: ${logObj.args.join(' ')}`;
+}
 
 // We only need the indexed db in production.
 // In development the plugin messes the line number from where the logs originated
 if (!isDevelopment) {
-  const loggerDb = new IndexedDb('db', 1, 'logs');
+  const { isPackaged, logToFile } = useInterop();
 
-  // write log in log file everytime logger called
-  const originalFactory = logger.methodFactory;
-  logger.methodFactory = function (
-    methodName: LogLevelNames,
-    logLevel: LogLevelNumbers,
-    loggerName: string | symbol,
-  ): LoggingMethod {
-    const rawMethod = originalFactory(methodName, logLevel, loggerName);
-
-    const { isPackaged, logToFile } = useInterop();
-
-    return (...message: any[]): void => {
-      rawMethod(...message);
-
-      if (
-        loggerName !== 'console-only'
-        && Object.values(LogLevel).indexOf(methodName as LogLevel) >= logLevel
-      ) {
-        if (isPackaged) {
-          logToFile(`(${methodName}): ${message.join('')}`);
-        }
-        else {
-          loggerDb.add({
-            message: `${new Date(Date.now()).toISOString()}: ${message.join(
-              '',
-            )}`,
-          });
-        }
-      }
-    };
-  };
+  if (isPackaged) {
+    consola.addReporter({
+      log(logObj) {
+        logToFile(getMessage(logObj));
+      },
+    });
+  }
+  else {
+    const loggerDb = new IndexedDb('db', 1, 'logs');
+    consola.addReporter({
+      log(logObj): void {
+        startPromise(loggerDb.add({
+          message: getMessage(logObj),
+        }));
+      },
+    });
+  }
 }
 
-logger.setLevel(logger.getLevel());
-
-function setLevel(loglevel?: LogLevel, persist = true): void {
-  logger.setLevel(mapToFrontendLogLevel(loglevel), persist);
+function setLevel(level?: LogLevel): void {
+  consola.level = mapToFrontendLogLevel(level);
 }
 
-export { logger, setLevel };
+export { consola as logger, setLevel };

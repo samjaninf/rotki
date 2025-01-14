@@ -14,7 +14,7 @@ from rotkehlchen.constants.assets import A_ETH, A_STETH
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import from_wei, hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address, from_wei
 
 from .constants import CPT_LIDO, LIDO_STETH_SUBMITTED, STETH_MAX_ROUND_ERROR_WEI
 
@@ -44,7 +44,7 @@ class LidoDecoder(DecoderInterface):
 
     def _decode_lido_staking_in_steth(self, context: DecoderContext, sender: ChecksumEvmAddress) -> DecodingOutput:  # noqa: E501
         """Decode the submit of eth to lido contract for obtaining steth in return"""
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        amount_raw = int.from_bytes(context.tx_log.data[:32])
         collateral_amount = token_normalized_value_decimals(
             token_amount=amount_raw,
             token_decimals=18,
@@ -92,7 +92,7 @@ class LidoDecoder(DecoderInterface):
                 to_event_subtype=action_to_event_subtype,
                 to_notes=action_to_notes,
                 to_counterparty=CPT_LIDO,
-                paired_event_data=(paired_event, True),
+                paired_events_data=((paired_event,), True),
                 extra_data={'staked_eth': str(collateral_amount)},
             ))
 
@@ -102,7 +102,7 @@ class LidoDecoder(DecoderInterface):
         """Decode interactions with stETH ans wstETH contracts"""
         if (
             context.tx_log.topics[0] == LIDO_STETH_SUBMITTED and
-            self.base.is_tracked(sender := hex_or_bytes_to_address(context.tx_log.topics[1]))
+            self.base.is_tracked(sender := bytes_to_address(context.tx_log.topics[1]))
         ):
             return self._decode_lido_staking_in_steth(context=context, sender=sender)
         else:

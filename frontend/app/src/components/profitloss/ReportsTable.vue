@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { Routes } from '@/router/routes';
 import { calculateTotalProfitLoss } from '@/utils/report';
-import type { DataTableColumn, DataTableSortColumn } from '@rotki/ui-library-compat';
+import { useReportsStore } from '@/store/reports';
+import ProfitLossOverview from '@/components/profitloss/ProfitLossOverview.vue';
+import ReportsTableMoreAction from '@/components/profitloss/ReportsTableMoreAction.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import UpgradeRow from '@/components/history/UpgradeRow.vue';
+import type { RouteLocationRaw } from 'vue-router';
 import type { Report } from '@/types/reports';
+import type { DataTableColumn, DataTableSortColumn } from '@rotki/ui-library';
 
-const expanded: Ref<Report[]> = ref([]);
+const expanded = ref<Report[]>([]);
 const reportStore = useReportsStore();
-const { fetchReports, deleteReport, isLatestReport } = reportStore;
+const { deleteReport, fetchReports, isLatestReport } = reportStore;
 const { reports } = storeToRefs(reportStore);
 const { t } = useI18n();
 
@@ -18,38 +24,38 @@ const items = computed(() =>
 );
 
 const limits = computed(() => ({
-  total: get(reports).entriesFound,
   limit: get(reports).entriesLimit,
+  total: get(reports).entriesFound,
 }));
 
-const tableHeaders: ComputedRef<DataTableColumn[]> = computed(() => [
+const tableHeaders = computed<DataTableColumn<Report>[]>(() => [
   {
-    label: t('profit_loss_reports.columns.start'),
     key: 'startTs',
+    label: t('profit_loss_reports.columns.start'),
   },
   {
-    label: t('profit_loss_reports.columns.end'),
     key: 'endTs',
+    label: t('profit_loss_reports.columns.end'),
   },
   {
-    label: t('profit_loss_reports.columns.taxfree_profit_loss'),
+    align: 'end',
     key: 'free',
-    align: 'end',
+    label: t('profit_loss_reports.columns.taxfree_profit_loss'),
   },
   {
-    label: t('profit_loss_reports.columns.taxable_profit_loss'),
+    align: 'end',
     key: 'taxable',
-    align: 'end',
+    label: t('profit_loss_reports.columns.taxable_profit_loss'),
   },
   {
-    label: t('profit_loss_reports.columns.created'),
+    align: 'end',
     key: 'timestamp',
-    align: 'end',
+    label: t('profit_loss_reports.columns.created'),
   },
   {
-    label: t('common.actions_text'),
-    key: 'actions',
     align: 'end',
+    key: 'actions',
+    label: t('common.actions_text'),
     width: 140,
   },
 ]);
@@ -57,19 +63,21 @@ const tableHeaders: ComputedRef<DataTableColumn[]> = computed(() => [
 onBeforeMount(async () => await fetchReports());
 
 const showUpgradeMessage = computed(
-  () =>
-    get(reports).entriesLimit > 0
-    && get(reports).entriesLimit < get(reports).entriesFound,
+  () => get(reports).entriesLimit > 0 && get(reports).entriesLimit < get(reports).entriesFound,
 );
 
-function getReportUrl(identifier: number) {
-  const url = Routes.PROFIT_LOSS_REPORT;
-  return url.replace(':id', identifier.toString());
+function getReportUrl(identifier: number): RouteLocationRaw {
+  return {
+    name: '/reports/[id]',
+    params: {
+      id: identifier.toString(),
+    },
+  };
 }
 
 const latestReport = (reportId: number) => get(isLatestReport(reportId));
 
-const sort = ref<DataTableSortColumn>({
+const sort = ref<DataTableSortColumn<Report>>({
   column: 'timestamp',
   direction: 'desc',
 });
@@ -81,13 +89,13 @@ const sort = ref<DataTableSortColumn>({
       {{ t('profit_loss_reports.title') }}
     </template>
     <RuiDataTable
+      v-model:expanded="expanded"
       :cols="tableHeaders"
       :rows="items"
       single-expand
       :sort="sort"
-      :expanded.sync="expanded"
       outlined
-      row-attr="id"
+      row-attr="identifier"
     >
       <template
         v-if="showUpgradeMessage"
@@ -144,7 +152,7 @@ const sort = ref<DataTableSortColumn>({
               <template #prepend>
                 <RuiIcon
                   size="20"
-                  name="file-text-line"
+                  name="lu-file-text"
                 />
               </template>
               {{ t('reports_table.load') }}

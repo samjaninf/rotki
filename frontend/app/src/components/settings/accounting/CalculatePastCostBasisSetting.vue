@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const calculatePastCostBasis = ref(false);
-const { calculatePastCostBasis: enabled } = storeToRefs(
-  useAccountingSettingsStore(),
-);
+const { calculatePastCostBasis: enabled } = storeToRefs(useAccountingSettingsStore());
 const { t } = useI18n();
 
 function switchSuccessMessage(enabled: boolean) {
@@ -25,12 +26,11 @@ onMounted(() => {
   >
     <RuiSwitch
       v-model="calculatePastCostBasis"
-      class="accounting-settings__past-cost-basis"
       :success-messages="success"
       :error-messages="error"
       :label="t('accounting_settings.trade.labels.calculate_past_cost_basis')"
       color="primary"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { PurgeableImageCache } from '@/types/session/purge';
+import { useAssetIconStore } from '@/store/assets/icon';
+import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
+import { useAddressesNamesApi } from '@/composables/api/blockchain/addresses-names';
+import { useCacheClear } from '@/composables/session/cache-clear';
+import { useAssetIconApi } from '@/composables/api/assets/icon';
+import ActionStatusIndicator from '@/components/error/ActionStatusIndicator.vue';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
 
 const { t } = useI18n();
 
-const purgable = [
+const purgeable = [
   {
     id: PurgeableImageCache.ASSET_ICONS,
     text: t('data_management.purge_images_cache.label.asset_icons'),
@@ -14,14 +22,14 @@ const purgable = [
   },
 ];
 
-const source: Ref<PurgeableImageCache> = ref(PurgeableImageCache.ASSET_ICONS);
+const source = ref<PurgeableImageCache>(PurgeableImageCache.ASSET_ICONS);
 
-const assetToClear: Ref<string> = ref('');
-const ensToClear: Ref<string[]> = ref([]);
+const assetToClear = ref<string>('');
+const ensToClear = ref<string[]>([]);
 
 const { ensNames } = storeToRefs(useAddressesNamesStore());
 
-const ensNamesList: ComputedRef<string[]> = computed(
+const ensNamesList = computed<string[]>(
   () => Object.values(get(ensNames)).filter(value => !!value) as string[],
 );
 
@@ -45,112 +53,84 @@ async function purgeSource(source: PurgeableImageCache) {
   }
 }
 
-const { status, pending, showConfirmation }
-  = useCacheClear<PurgeableImageCache>(
-    purgable,
-    purgeSource,
-    (source: string) => ({
-      success: t('data_management.purge_images_cache.success', {
-        source,
-      }),
-      error: t('data_management.purge_images_cache.error', {
-        source,
-      }),
+const { pending, showConfirmation, status } = useCacheClear<PurgeableImageCache>(
+  purgeable,
+  purgeSource,
+  (source: string) => ({
+    error: t('data_management.purge_images_cache.error', {
+      source,
     }),
-    (source: string) => ({
-      title: t('data_management.purge_images_cache.confirm.title'),
-      message: t('data_management.purge_images_cache.confirm.message', {
-        source,
-      }),
+    success: t('data_management.purge_images_cache.success', {
+      source,
     }),
-  );
-
-const css = useCssModule();
+  }),
+  (source: string) => ({
+    message: t('data_management.purge_images_cache.confirm.message', {
+      source,
+    }),
+    title: t('data_management.purge_images_cache.confirm.title'),
+  }),
+);
 </script>
 
 <template>
-  <div>
-    <RuiCardHeader class="p-0 mb-4">
-      <template #header>
-        {{ t('data_management.purge_images_cache.title') }}
-      </template>
-      <template #subheader>
-        {{ t('data_management.purge_images_cache.subtitle') }}
-      </template>
-    </RuiCardHeader>
+  <SettingsItem>
+    <template #title>
+      {{ t('data_management.purge_images_cache.title') }}
+    </template>
+    <template #subtitle>
+      {{ t('data_management.purge_images_cache.subtitle') }}
+    </template>
+    <div class="flex flex-col gap-4">
+      <RuiAutoComplete
+        v-model="source"
+        variant="outlined"
+        :label="t('data_management.purge_images_cache.select_image_source')"
+        :options="purgeable"
+        text-attr="text"
+        key-attr="id"
+        hide-details
+        :disabled="pending"
+      />
+      <AssetSelect
+        v-if="source === PurgeableImageCache.ASSET_ICONS"
+        v-model="assetToClear"
+        outlined
+        :label="t('data_management.purge_images_cache.label.asset_to_clear')"
+        :hint="t('data_management.purge_images_cache.hint')"
+      />
+      <RuiAutoComplete
+        v-else
+        v-model="ensToClear"
+        :options="ensNamesList"
+        variant="outlined"
+        chips
+        clearable
+        custom-value
+        :label="t('data_management.purge_images_cache.label.ens_to_clear')"
+        :hint="t('data_management.purge_images_cache.hint')"
+      />
+      <ActionStatusIndicator
+        v-if="status"
+        :status="status"
+      />
 
-    <div class="flex items-center gap-4">
-      <div class="flex flex-col md:flex-row md:gap-4 flex-1">
-        <RuiAutoComplete
-          v-model="source"
-          class="flex-1"
-          variant="outlined"
-          :label="t('data_management.purge_images_cache.select_image_source')"
-          :options="purgable"
-          text-attr="text"
-          key-attr="id"
-          :disabled="pending"
-        />
-        <AssetSelect
-          v-if="source === PurgeableImageCache.ASSET_ICONS"
-          v-model="assetToClear"
-          class="flex-1"
-          outlined
-          :label="t('data_management.purge_images_cache.label.asset_to_clear')"
-          :hint="t('data_management.purge_images_cache.hint')"
-        />
-        <VCombobox
-          v-else
-          v-model="ensToClear"
-          class="flex-1"
-          :items="ensNamesList"
-          outlined
-          :class="css['ens-input']"
-          chips
-          deletable-chips
-          clearable
-          :label="t('data_management.purge_images_cache.label.ens_to_clear')"
-          :hint="t('data_management.purge_images_cache.hint')"
-          multiple
-          persistent-hint
-        />
+      <div class="flex justify-end">
+        <RuiButton
+          :disabled="!source || pending"
+          :loading="pending"
+          color="error"
+          @click="showConfirmation(source)"
+        >
+          <template #prepend>
+            <RuiIcon
+              name="lu-trash-2"
+              size="16"
+            />
+          </template>
+          {{ t('purge_selector.tooltip') }}
+        </RuiButton>
       </div>
-
-      <RuiTooltip
-        :popper="{ placement: 'top' }"
-        :open-delay="400"
-        class="-mt-8"
-      >
-        <template #activator>
-          <RuiButton
-            variant="text"
-            icon
-            :disabled="!source || pending"
-            :loading="pending"
-            @click="showConfirmation(source)"
-          >
-            <RuiIcon name="delete-bin-line" />
-          </RuiButton>
-        </template>
-        <span> {{ t('data_management.purge_images_cache.tooltip') }} </span>
-      </RuiTooltip>
     </div>
-
-    <ActionStatusIndicator
-      v-if="status"
-      :status="status"
-    />
-  </div>
+  </SettingsItem>
 </template>
-
-<style module lang="scss">
-.ens-input {
-  :global {
-    .v-select {
-      &__selections {
-        min-height: auto !important;
-      }
-    }
-  }
-}
-</style>

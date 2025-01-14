@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import Fragment from '@/components/helper/Fragment';
 import { isBtcChain } from '@/types/blockchain/chains';
+import { useAccountLoading } from '@/composables/accounts/loading';
+import InputModeSelect from '@/components/accounts/management/inputs/InputModeSelect.vue';
+import ChainSelect from '@/components/accounts/blockchain/ChainSelect.vue';
 import type { InputMode } from '@/types/input-mode';
 
 const props = defineProps<{
   chain: string;
   inputMode: InputMode;
   editMode: boolean;
+  chainIds: string[];
 }>();
 
 const emit = defineEmits<{
@@ -17,16 +20,12 @@ const emit = defineEmits<{
 const chain = toRef(props, 'chain');
 
 const { loading } = useAccountLoading();
-const { isEvm } = useSupportedChains();
-
-const isEvmChain = isEvm(chain);
 
 const showInputModeSelector = logicOr(
   computed(() => isBtcChain(get(chain))),
-  isEvmChain,
 );
 
-function updateModelValue(value: string | null) {
+function updateModelValue(value?: string) {
   if (!value)
     return;
 
@@ -35,18 +34,17 @@ function updateModelValue(value: string | null) {
 </script>
 
 <template>
-  <Fragment>
-    <ChainSelect
-      :disabled="loading || editMode"
-      :model-value="chain"
-      @update:model-value="updateModelValue($event)"
-    />
+  <ChainSelect
+    :disabled="loading || editMode"
+    :model-value="chain"
+    :items="chainIds"
+    @update:model-value="updateModelValue($event)"
+  />
 
-    <InputModeSelect
-      v-if="!editMode && showInputModeSelector"
-      :input-mode="inputMode"
-      :blockchain="chain"
-      @update:input-mode="emit('update:input-mode', $event)"
-    />
-  </Fragment>
+  <InputModeSelect
+    v-if="!editMode && showInputModeSelector"
+    :input-mode="inputMode"
+    :blockchain="chain"
+    @update:input-mode="emit('update:input-mode', $event)"
+  />
 </template>

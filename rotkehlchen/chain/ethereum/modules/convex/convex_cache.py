@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Literal
 
 from rotkehlchen.chain.ethereum.modules.convex.constants import BOOSTER
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
@@ -11,25 +11,20 @@ from rotkehlchen.globaldb.cache import (
     globaldb_get_unique_cache_value,
     globaldb_set_general_cache_values,
     globaldb_set_unique_cache_value,
+    globaldb_update_cache_last_ts,
 )
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CacheType, ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
+    from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
-
-
-class ConvexPoolData(NamedTuple):
-    """Mapping of convex pool rewards address to underlying pool name"""
-    pool_address: ChecksumEvmAddress
-    pool_name: str
 
 
 def get_existing_pools(
@@ -43,25 +38,6 @@ def get_existing_pools(
             key_parts=(cache_type,),
         )
     }
-
-
-def save_convex_data_to_cache(
-        write_cursor: 'DBCursor',
-        database: Optional['DBHandler'],  # pylint: disable=unused-argument
-        new_data: list[ConvexPoolData],
-) -> None:
-    """Stores data about convex pools and their names in the global db cache tables."""
-    for pool in new_data:
-        globaldb_set_general_cache_values(
-            write_cursor=write_cursor,
-            key_parts=(CacheType.CONVEX_POOL_ADDRESS,),
-            values=[pool.pool_address],
-        )
-        globaldb_set_unique_cache_value(
-            write_cursor=write_cursor,
-            key_parts=(CacheType.CONVEX_POOL_NAME, pool.pool_address),
-            value=pool.pool_name,
-        )
 
 
 def read_convex_data_from_cache() -> tuple[dict[ChecksumEvmAddress, str]]:
@@ -107,8 +83,8 @@ def query_convex_data_from_chain(
     convex_rewards_addrs: list[ChecksumEvmAddress] = []
     convex_lp_tokens_addrs = []
     for single_booster_result in booster_result:
-        crv_rewards = hex_or_bytes_to_address(single_booster_result[96:128])
-        lp_token_addr = hex_or_bytes_to_address(single_booster_result[0:32])
+        crv_rewards = bytes_to_address(single_booster_result[96:128])
+        lp_token_addr = bytes_to_address(single_booster_result[0:32])
         convex_rewards_addrs.append(crv_rewards)
         convex_lp_tokens_addrs.append(lp_token_addr)
 
@@ -131,7 +107,8 @@ def query_convex_data_from_chain(
 def query_convex_data(
         inquirer: 'EthereumInquirer',
         cache_type: Literal[CacheType.CONVEX_POOL_ADDRESS],
-) -> list[ConvexPoolData] | None:
+        msg_aggregator: 'MessagesAggregator',  # pylint: disable=unused-argument  # argument is unused to keep the interface consistent with the other functions because they all are called similarly in ensure_cache_data_is_updated and refresh_general_cache
+) -> dict[ChecksumEvmAddress, str] | None:
     """
     Queries chain for all convex rewards pools and returns a list of the mappings not cached
 
@@ -150,9 +127,23 @@ def query_convex_data(
         log.error(f'Could not query chain for convex pools due to: {err}')
         return None
 
-    return [
-        ConvexPoolData(
-            pool_address=address,
-            pool_name=name,
-        ) for address, name in convex_pools.items()
-    ]
+    with GlobalDBHandler().conn.write_ctx() as write_cursor:
+        for pool_address, pool_name in convex_pools.items():
+            globaldb_set_general_cache_values(
+                write_cursor=write_cursor,
+                key_parts=(CacheType.CONVEX_POOL_ADDRESS,),
+                values=[pool_address],
+            )
+            globaldb_set_unique_cache_value(
+                write_cursor=write_cursor,
+                key_parts=(CacheType.CONVEX_POOL_NAME, pool_address),
+                value=pool_name,
+            )
+
+        globaldb_update_cache_last_ts(  # update the last_queried_ts of db entries
+            write_cursor=write_cursor,
+            cache_type=cache_type,
+            key_parts=None,
+        )
+
+    return convex_pools

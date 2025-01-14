@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { Section } from '@/types/status';
 import { TaskType } from '@/types/task-type';
+import { useStatusStore } from '@/store/status';
+import { useTaskStore } from '@/store/tasks';
+import { useBalances } from '@/composables/balances';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
 
 const emit = defineEmits<{
   (e: 'click'): void;
@@ -28,9 +32,7 @@ async function refresh() {
   await refreshPrices(true, get(assets()));
 }
 
-const disabled: ComputedRef<boolean> = computed(
-  () => get(refreshing) || get(loadingData),
-);
+const disabled = computed<boolean>(() => get(refreshing) || get(loadingData));
 </script>
 
 <template>
@@ -38,11 +40,12 @@ const disabled: ComputedRef<boolean> = computed(
     variant="outlined"
     color="primary"
     :loading="refreshing"
+    data-cy="price-refresh"
     :disabled="disabled"
     @click="refresh()"
   >
     <template #prepend>
-      <RuiIcon name="refresh-line" />
+      <RuiIcon name="lu-refresh-ccw" />
     </template>
     {{ t('price_refresh.button') }}
   </RuiButton>

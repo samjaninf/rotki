@@ -1,18 +1,20 @@
 import { builtinModules } from 'node:module';
-import { join, resolve } from 'node:path';
+import path, { join, resolve } from 'node:path';
 import process from 'node:process';
-import vue from '@vitejs/plugin-vue2';
+import vue from '@vitejs/plugin-vue';
 import AutoImport from 'unplugin-auto-import/vite';
-import DefineOptions from 'unplugin-vue-define-options/vite';
-import { VuetifyResolver } from 'unplugin-vue-components/resolvers';
 import Components from 'unplugin-vue-components/vite';
 import { defineConfig } from 'vitest/config';
+import checker from 'vite-plugin-checker';
 import { splitVendorChunkPlugin } from 'vite';
-import { checker } from 'vite-plugin-checker';
+import VueRouter from 'unplugin-vue-router/vite';
+import { VueRouterAutoImports } from 'unplugin-vue-router';
 import istanbul from 'vite-plugin-istanbul';
 import { VitePWA } from 'vite-plugin-pwa';
+import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite';
 import Layouts from 'vite-plugin-vue-layouts';
-import { RuiComponentResolver } from './src/plugins/rui/component-resolver';
+import vueDevTools from 'vite-plugin-vue-devtools';
+import type { ComponentResolver } from 'unplugin-vue-components';
 
 const PACKAGE_ROOT = __dirname;
 const envPath = process.env.VITE_PUBLIC_PATH;
@@ -20,6 +22,21 @@ const publicPath = envPath || '/';
 const isDevelopment = process.env.NODE_ENV === 'development';
 const isTest = !!process.env.VITE_TEST;
 const hmrEnabled = isDevelopment && !(process.env.CI && isTest);
+
+function RuiComponentResolver(): ComponentResolver {
+  return {
+    type: 'component',
+    resolve: (name: string) => {
+      const prefix = 'Rui';
+      if (name.startsWith(prefix)) {
+        return {
+          name,
+          from: '@rotki/ui-library/components',
+        };
+      }
+    },
+  };
+}
 
 if (isTest)
   console.log('Running in test mode. Enabling Coverage');
@@ -30,37 +47,16 @@ if (envPath)
 if (!hmrEnabled)
   console.info('HMR is disabled');
 
+const enableChecker = !(process.env.CI || process.env.VITE_TEST || process.env.VITEST);
+
 export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(PACKAGE_ROOT, 'src'),
       '~@': resolve(PACKAGE_ROOT, 'src'),
+      '@shared': `${join(PACKAGE_ROOT, 'shared')}/`,
     },
     dedupe: ['vue'],
-  },
-  test: {
-    globals: true,
-    environment: 'jsdom',
-    server: {
-      deps: {
-        inline: ['@rotki/ui-library-compat'],
-      },
-    },
-    deps: {
-      optimizer: {
-        web: {
-          include: ['vuetify'],
-        },
-      },
-    },
-    setupFiles: ['tests/unit/setup-files/setup.ts'],
-    coverage: {
-      provider: 'v8',
-      reportsDirectory: 'tests/unit/coverage',
-      reporter: ['json'],
-      include: ['src/*'],
-      exclude: ['node_modules', 'tests/', '**/*.d.ts'],
-    },
   },
   base: publicPath,
   define: {
@@ -71,11 +67,19 @@ export default defineConfig({
   },
   plugins: [
     splitVendorChunkPlugin(),
-    vue(),
-    checker({
-      vueTsc: !(process.env.CI || process.env.VITE_TEST || process.env.VITEST),
+    VueRouter({
+      importMode: 'async',
     }),
+    vue(),
+    checker(enableChecker
+      ? {
+          vueTsc: {
+            tsconfigPath: 'tsconfig.app.json',
+          },
+        }
+      : {}),
     AutoImport({
+      packagePresets: ['@rotki/common'],
       include: [
         /\.[jt]sx?$/, // .ts, .tsx, .js, .jsx
         /\.vue$/,
@@ -84,35 +88,27 @@ export default defineConfig({
       ],
       imports: [
         'vue',
-        'vue/macros',
         '@vueuse/core',
         '@vueuse/math',
         'pinia',
         { '@vueuse/shared': ['get', 'set'] },
+        VueRouterAutoImports,
         {
-          'vue-router/composables': [
-            'useRoute',
-            'useRouter',
-            'useLink',
-            'onBeforeRouteUpdate',
-            'onBeforeRouteLeave',
-          ],
+          'vue-i18n': ['useI18n'],
+        },
+        {
+          '@rotki/ui-library': ['useRotkiTheme', 'useBreakpoint', 'contextColors'],
         },
       ],
-      dts: 'src/auto-imports.d.ts',
-      dirs: [
-        'src/composables/**',
-        'src/api/**',
-        'src/store/**',
-        'src/utils/**',
-      ],
+      dts: './auto-imports.d.ts',
       vueTemplate: true,
       injectAtEnd: true,
     }),
     Components({
       dts: true,
-      include: [/\.vue$/, /\.vue\?vue/],
-      resolvers: [VuetifyResolver(), RuiComponentResolver()],
+      include: [],
+      dirs: [],
+      resolvers: [RuiComponentResolver()],
       types: [
         {
           from: 'vue-router',
@@ -120,11 +116,14 @@ export default defineConfig({
         },
       ],
     }),
-    DefineOptions(),
     Layouts({
       layoutsDirs: ['src/layouts'],
       defaultLayout: 'default',
     }),
+    VueI18nPlugin({
+      include: [path.resolve(__dirname, './src/locales/**')],
+    }),
+    ...(!isTest && process.env.ENABLE_DEV_TOOLS ? [vueDevTools()] : []),
     ...(isTest
       ? [
           istanbul({
@@ -139,6 +138,7 @@ export default defineConfig({
       base: publicPath,
       registerType: 'prompt',
       manifest: false,
+      disable: isTest,
     }),
   ],
   server: {
@@ -154,13 +154,16 @@ export default defineConfig({
     assetsDir: '.',
     minify: true,
     rollupOptions: {
-      external: [
-        'electron',
-        'electron-devtools-installer',
-        ...builtinModules.flatMap(p => [p, `node:${p}`]),
-      ],
+      external: ['electron', ...builtinModules.flatMap(p => [p, `node:${p}`])],
       input: join(PACKAGE_ROOT, 'index.html'),
     },
     emptyOutDir: false,
+  },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        api: 'modern',
+      },
+    },
   },
 });

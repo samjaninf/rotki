@@ -1,3 +1,12 @@
+import { ApiValidationError } from '@/types/api/errors';
+import { uniqueStrings } from '@/utils/data';
+import { logger } from '@/utils/logging';
+import { usePremiumStore } from '@/store/session/premium';
+import { useQueriedAddressesStore } from '@/store/session/queried-addresses';
+import { useMessageStore } from '@/store/message';
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useSettingsApi } from '@/composables/api/settings/settings-api';
 import type { KrakenAccountType } from '@/types/exchanges';
 import type { Module } from '@/types/modules';
 import type { SettingsUpdate } from '@/types/user';
@@ -13,29 +22,40 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const api = useSettingsApi();
 
-  const setKrakenAccountType = async (
-    krakenAccountType: KrakenAccountType,
-  ): Promise<void> => {
+  const setKrakenAccountType = async (krakenAccountType: KrakenAccountType): Promise<void> => {
     try {
       const { general } = await api.setSettings({
         krakenAccountType,
       });
       generalStore.update(general);
       setMessage({
-        title: t('actions.session.kraken_account.success.title').toString(),
-        description: t(
-          'actions.session.kraken_account.success.message',
-        ).toString(),
+        description: t('actions.session.kraken_account.success.message'),
         success: true,
+        title: t('actions.session.kraken_account.success.title'),
       });
     }
     catch (error: any) {
       setMessage({
-        title: t('actions.session.kraken_account.error.title').toString(),
         description: error.message,
+        title: t('actions.session.kraken_account.error.title'),
       });
     }
   };
+
+  function handleErrors(error: any, keys: string[]): string {
+    if (!(error instanceof ApiValidationError)) {
+      return error.message;
+    }
+
+    const settingsErrors = error.errors.settings as unknown as Record<string, string | string[]>;
+
+    if (settingsErrors && keys.length === 1 && settingsErrors[keys[0]]) {
+      const errorValues = settingsErrors[keys[0]];
+      return Array.isArray(errorValues) ? errorValues.join(', ') : errorValues;
+    }
+
+    return error.message;
+  }
 
   const update = async (update: SettingsUpdate): Promise<ActionStatus> => {
     let success = false;
@@ -54,34 +74,28 @@ export const useSettingsStore = defineStore('settings', () => {
     }
     catch (error: any) {
       logger.error(error);
-      message = error.message;
+      message = handleErrors(error, Object.keys(update));
     }
     return {
-      success,
       message,
+      success,
     };
   };
 
-  const enableModule = async (payload: {
-    readonly enable: Module[];
-    readonly addresses: string[];
-  }): Promise<void> => {
+  const enableModule = async (payload: { readonly enable: Module[]; readonly addresses: string[] }): Promise<void> => {
     const activeModules = generalStore.activeModules;
-    const modules: Module[] = [...activeModules, ...payload.enable].filter(
-      uniqueStrings,
-    );
+    const modules: Module[] = [...activeModules, ...payload.enable].filter(uniqueStrings);
 
     await update({ activeModules: modules });
 
     for (const module of payload.enable) {
-      for (const address of payload.addresses)
-        await addQueriedAddress({ module, address });
+      for (const address of payload.addresses) await addQueriedAddress({ address, module });
     }
   };
 
   return {
-    setKrakenAccountType,
     enableModule,
+    setKrakenAccountType,
     update,
   };
 });

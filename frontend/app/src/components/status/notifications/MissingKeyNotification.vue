@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { I18nParam } from '@rotki/common/lib/messages';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import type { I18nParam } from '@rotki/common';
 
 defineProps<{
   params: I18nParam;
@@ -9,8 +10,8 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <i18n
-    :path="params.message"
+  <i18n-t
+    :keypath="params.message"
     :plural="params.choice"
     tag="div"
   >
@@ -30,5 +31,5 @@ const { t } = useI18n();
         {{ t('common.here') }}
       </ExternalLink>
     </template>
-  </i18n>
+  </i18n-t>
 </template>

@@ -34,26 +34,21 @@ export class RotkiApp {
     cy.get('[data-cy=account-management-forms]').scrollIntoView();
     cy.get('[data-cy=account-management-forms]').should('be.visible');
 
-    cy.get('[data-cy="create-account__introduction__continue"]').click();
-    cy.get('[data-cy="create-account__premium__button__continue"]').click();
-    cy.get('[data-cy="create-account__fields__username"]').type(username);
-    cy.get('[data-cy="create-account__fields__password"]').type(password);
-    cy.get('[data-cy="create-account__fields__password-repeat"]').type(
-      password,
-    );
-    cy.get('[data-cy="create-account__boxes__user-prompted"] > label').click();
-    cy.get('[data-cy="create-account__credentials__button__continue"]').click();
-    cy.get(
-      '[data-cy="create-account__submit-analytics__button__continue"]',
-    ).click();
+    cy.get('[data-cy=create-account__introduction__continue]').click();
+    cy.get('[data-cy=create-account__premium__button__continue]').click();
+    cy.get('[data-cy=create-account__fields__username]').type(username);
+    cy.get('[data-cy=create-account__fields__password]').type(password);
+    cy.get('[data-cy=create-account__fields__password-repeat]').type(password);
+    cy.get('[data-cy=create-account__boxes__user-prompted] > label').click();
+    cy.get('[data-cy=create-account__credentials__button__continue]').click();
+    cy.get('[data-cy=create-account__submit-analytics__button__continue]').click();
     cy.get('[data-cy=account-management-forms]').should('not.exist');
     cy.updateAssets();
     this.loadEnv();
   }
 
   clear() {
-    cy.logout();
-    this.visit();
+    this.logout();
   }
 
   fasterLogin(username: string, password = '1234', disableModules = false) {
@@ -63,12 +58,7 @@ export class RotkiApp {
       cy.disableModules();
 
     this.loadEnv();
-    cy.visit({
-      url: '/',
-      qs: {
-        skip_update: '1',
-      },
-    });
+    this.visit();
     this.login(username, password);
   }
 
@@ -97,44 +87,46 @@ export class RotkiApp {
   }
 
   logout() {
-    cy.get('.user-dropdown').click();
+    cy.get('[data-cy=user-menu-button]').click();
     cy.get('[data-cy=user-dropdown]').should('be.visible');
-    cy.get('.user-dropdown__logout').click();
+    cy.get('[data-cy=logout-button]').click();
     cy.get('[data-cy=confirm-dialog]').find('[data-cy=button-confirm]').click();
     cy.get('[data-cy=username-input] input').should('be.visible');
   }
 
   changeCurrency(currency: string) {
-    cy.get('.currency-dropdown').click();
-    cy.get(`#change-to-${currency.toLocaleLowerCase()}`).click();
+    cy.get('[data-cy=currency-dropdown]').click();
+    cy.get(`#change-to-${currency.toLowerCase()}`).click();
   }
 
   togglePrivacyMenu(show?: boolean) {
     cy.get('[data-cy=privacy-menu]').as('menu');
+
     if (show) {
-      cy.get('@menu').trigger('click');
-      cy.get('.privacy-menu-content').should('exist');
+      cy.get('@menu').click();
+      cy.get('[data-cy=privacy-menu-content]').should('exist');
+      cy.get('[data-cy=privacy-menu-content]').should('be.visible');
     }
     else {
-      cy.get('@menu').trigger('click');
-      cy.get('.privacy-menu-content').should('not.exist');
+      cy.get('@menu').then(($menu) => {
+        if ($menu.find('[data-cy=privacy-menu-content]').is(':visible')) {
+          cy.get('@menu').click();
+          cy.get('[data-cy=privacy-menu-content]').should('not.exist');
+        }
+      });
     }
   }
 
   changePrivacyMode(mode: number) {
     this.togglePrivacyMenu(true);
-    cy.get(
-      `[data-cy="privacy-mode-dropdown__input"] + div > div:nth-child(${mode + 1})`,
-    ).as('label');
+    cy.get(`[data-cy=privacy-mode-dropdown__input] + div > div:nth-child(${mode + 1})`).as('label');
 
     cy.get('@label').click();
     this.togglePrivacyMenu();
   }
 
   toggleScrambler(enable: boolean) {
-    cy.get(
-      '[data-cy="privacy-mode-scramble__toggle"] input[type="checkbox"]',
-    ).as('input');
+    cy.get('[data-cy=privacy-mode-scramble__toggle] input[type=checkbox]').as('input');
 
     if (enable) {
       cy.get('@input').should('not.be.checked');
@@ -150,15 +142,15 @@ export class RotkiApp {
 
   changeScrambleValue(multiplier: string) {
     this.toggleScrambler(true);
-    cy.get('[data-cy="privacy-mode-scramble__multiplier"]').as('input');
+    cy.get('[data-cy=privacy-mode-scramble__multiplier]').as('input');
 
     cy.get('@input').type(multiplier);
   }
 
   changeRandomScrambleValue() {
     this.toggleScrambler(true);
-    cy.get('[data-cy="privacy-mode-scramble__multiplier"]').as('input');
-    cy.get('[data-cy="privacy-mode-scramble__random-multiplier"]').as('button');
+    cy.get('[data-cy=privacy-mode-scramble__multiplier]').as('input');
+    cy.get('[data-cy=privacy-mode-scramble__random-multiplier]').as('button');
 
     cy.get('@button').click();
   }
@@ -171,19 +163,21 @@ export class RotkiApp {
   shouldHaveQueryParam(key: string, value: string) {
     cy.location().should((loc) => {
       const query = new URLSearchParams(loc.href);
-      expect(query.get(key)).to.equal(value);
+      expect(query.get(key), `query key ${key}`).to.equal(value);
     });
   }
 
   /**
-   * to get array query param values from route
-   * @param {string} key
-   * @param {string[]} values
+   * Asserts that the current URL does not have the specified query parameter.
+   *
+   * @param {string} key - The query parameter key to check.
+   * @return {void}
    */
-  shouldHaveQueryParams(key: string, values: string[]) {
+  shouldNotHaveQueryParam(key: string): void {
     cy.location().should((loc) => {
       const query = new URLSearchParams(loc.href);
-      expect(query.getAll(key)).to.deep.equal(values);
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      expect(query.get(key), `query key ${key}`).to.be.null;
     });
   }
 

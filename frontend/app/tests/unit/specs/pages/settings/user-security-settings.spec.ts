@@ -1,32 +1,32 @@
-import { type Wrapper, mount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
-import UserSecuritySettings from '@/pages/settings/data-security/index.vue';
+import { type VueWrapper, mount } from '@vue/test-utils';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import AccountSettings from '@/pages/settings/account/index.vue';
+import { usePremiumStore } from '@/store/session/premium';
 import { libraryDefaults } from '../../../utils/provide-defaults';
 
-vi.mock('@/services/backup', () => ({
-  useBackupApi: () => ({
-    info: vi.fn(),
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn().mockImplementation(() => ref({})),
+  useRouter: vi.fn().mockReturnValue({
+    push: vi.fn(),
   }),
+  createRouter: vi.fn().mockImplementation(() => ({
+    beforeEach: vi.fn(),
+  })),
+  createWebHashHistory: vi.fn(),
 }));
 
 describe('userSecuritySettings.vue', () => {
-  let wrapper: Wrapper<any>;
+  let wrapper: VueWrapper<InstanceType<typeof AccountSettings>>;
 
   function createWrapper() {
-    const vuetify = new Vuetify();
     const pinia = createPinia();
     setActivePinia(pinia);
-    return mount(UserSecuritySettings, {
-      pinia,
-      vuetify,
-      stubs: [
-        'card-title',
-        'asset-select',
-        'asset-update',
-        'confirm-dialog',
-        'data-table',
-      ],
-      provide: libraryDefaults,
+    return mount(AccountSettings, {
+      global: {
+        plugins: [pinia],
+        stubs: ['card-title', 'asset-select', 'asset-update', 'confirm-dialog', 'data-table', 'RouterLink'],
+        provide: libraryDefaults,
+      },
     });
   }
 

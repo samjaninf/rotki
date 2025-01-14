@@ -1,7 +1,6 @@
 import logging
 import os
-import random
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 import gevent
 from eth_typing import ChecksumAddress
@@ -10,10 +9,11 @@ from rotkehlchen.chain.arbitrum_one.decoding.decoder import ArbitrumOneTransacti
 from rotkehlchen.chain.arbitrum_one.transactions import ArbitrumOneTransactions
 from rotkehlchen.chain.base.decoding.decoder import BaseTransactionDecoder
 from rotkehlchen.chain.base.transactions import BaseTransactions
+from rotkehlchen.chain.binance_sc.decoding.decoder import BinanceSCTransactionDecoder
+from rotkehlchen.chain.binance_sc.transactions import BinanceSCTransactions
 from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE
 from rotkehlchen.chain.ethereum.decoding.decoder import EthereumTransactionDecoder
 from rotkehlchen.chain.ethereum.transactions import EthereumTransactions
-from rotkehlchen.chain.evm.decoding.decoder import EVMTransactionDecoder
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
 from rotkehlchen.chain.evm.transactions import EvmTransactions
 from rotkehlchen.chain.evm.types import NodeName, WeightedNode, string_to_evm_address
@@ -42,7 +42,16 @@ from rotkehlchen.types import (
 from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
+    from rotkehlchen.chain.base.node_inquirer import BaseInquirer
+    from rotkehlchen.chain.binance_sc.node_inquirer import BinanceSCInquirer
+    from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
+    from rotkehlchen.chain.evm.decoding.decoder import EVMTransactionDecoder
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
+    from rotkehlchen.chain.gnosis.node_inquirer import GnosisInquirer
+    from rotkehlchen.chain.optimism.node_inquirer import OptimismInquirer
+    from rotkehlchen.chain.polygon_pos.node_inquirer import PolygonPOSInquirer
+    from rotkehlchen.chain.scroll.node_inquirer import ScrollInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
 
 NODE_CONNECTION_TIMEOUT = 10
@@ -50,14 +59,7 @@ NODE_CONNECTION_TIMEOUT = 10
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-# TODO: improve this. Switch between them and find one that has requests.
-# Also use Alchemy too
-INFURA_TEST = random.choice([
-    'https://mainnet.infura.io/v3/a6b269b6e5ad44ed943e9fff244dfe25',
-    'https://mainnet.infura.io/v3/b921613a39d14c2386aca87c6c5054a6',
-    'https://mainnet.infura.io/v3/edeb337c7f41425e933ec619f3c5b940',
-    'https://mainnet.infura.io/v3/66302b8fb9874614905a3cbe903a0dbb',
-])
+INFURA_TEST = 'https://mainnet.infura.io/v3/a6b269b6e5ad44ed943e9fff244dfe25'
 ALCHEMY_TEST = 'https://eth-mainnet.alchemyapi.io/v2/ga1GtB7R26UgzjextaVpbaWZ49nSi2zt'
 
 PRUNED_AND_NOT_ARCHIVED_NODE = WeightedNode(
@@ -204,7 +206,6 @@ def txreceipt_to_data(receipt: EvmTxReceipt) -> dict[str, Any]:
         log_data = {
             'logIndex': log_entry.log_index,
             'address': log_entry.address,
-            'removed': log_entry.removed,
             'data': '0x' + log_entry.data.hex(),
             'topics': [],
         }
@@ -220,7 +221,7 @@ def setup_ethereum_transactions_test(
         one_receipt_in_db: bool = False,
         second_receipt_in_db: bool = False,
 ) -> tuple[list[EvmTransaction], list[EvmTxReceipt]]:
-    """This setup assummes that TEST_ADDR1 and TEST_ADDR2 are already present in the db"""
+    """This setup assumes that TEST_ADDR1 and TEST_ADDR2 are already present in the db"""
     dbevmtx = DBEvmTx(database)
     tx_hash1 = deserialize_evm_tx_hash('0x692f9a6083e905bdeca4f0293f3473d7a287260547f8cbccc38c5cb01591fcda')  # noqa: E501
     transaction1 = EvmTransaction(
@@ -230,7 +231,7 @@ def setup_ethereum_transactions_test(
         block_number=13142218,
         from_address=TEST_ADDR1,
         to_address=string_to_evm_address('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
-        value=int(10 * 10**18),
+        value=10 * 10**18,
         gas=194928,
         gas_price=int(0.000000204 * 10**18),
         gas_used=136675,
@@ -271,7 +272,6 @@ def setup_ethereum_transactions_test(
                 log_index=295,
                 data=hexstring_to_bytes('0x0000000000000000000000000000000000000000000000008ac7230489e80000'),
                 address=string_to_evm_address('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c'),
                     hexstring_to_bytes('0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d'),
@@ -280,7 +280,6 @@ def setup_ethereum_transactions_test(
                 log_index=296,
                 data=hexstring_to_bytes('0x0000000000000000000000000000000000000000000000008ac7230489e80000'),
                 address=string_to_evm_address('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),
                     hexstring_to_bytes('0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d'),
@@ -290,7 +289,6 @@ def setup_ethereum_transactions_test(
                 log_index=297,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000036ba1d53baeeda5ed20'),
                 address=string_to_evm_address('0x2a3bFF78B79A009976EeA096a51A948a3dC00e34'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),
                     hexstring_to_bytes('0x000000000000000000000000caa004418eb42cdf00cb057b7c9e28f0ffd840a5'),
@@ -300,13 +298,11 @@ def setup_ethereum_transactions_test(
                 log_index=298,
                 data=hexstring_to_bytes('0x000000000000000000000000000000000000000000007b6ea033189ba7d047e30000000000000000000000000000000000000000000000140bc8194dd0f5e4be'),
                 address=string_to_evm_address('0xcaA004418eB42cdf00cB057b7C9E28f0FfD840a5'),
-                removed=False,
                 topics=[hexstring_to_bytes('0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1')],
             ), EvmTxReceiptLog(
                 log_index=299,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e8000000000000000000000000000000000000000000000000036ba1d53baeeda5ed200000000000000000000000000000000000000000000000000000000000000000'),
                 address=string_to_evm_address('0xcaA004418eB42cdf00cB057b7C9E28f0FfD840a5'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822'),
                     hexstring_to_bytes('0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d'),
@@ -326,7 +322,6 @@ def setup_ethereum_transactions_test(
                 log_index=438,
                 data=hexstring_to_bytes('0x000000000000000000000000000000000000000000000000000000003b9deec6'),
                 address=string_to_evm_address('0xEaDD9B69F96140283F9fF75DA5FD33bcF54E6296'),
-                removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),
                     hexstring_to_bytes('0x000000000000000000000000442068f934be670adab81242c87144a851d56d16'),
@@ -345,17 +340,107 @@ def setup_ethereum_transactions_test(
     return transactions, [expected_receipt1, expected_receipt2]
 
 
+@overload
 def get_decoded_events_of_transaction(
-        evm_inquirer: 'EvmNodeInquirer',
-        database: DBHandler,
+        evm_inquirer: 'EthereumInquirer',
         tx_hash: EVMTxHash,
         transactions: EvmTransactions | None = None,
         relevant_address: ChecksumAddress | None = None,
-) -> tuple[list['EvmEvent'], EVMTransactionDecoder]:
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], EthereumTransactionDecoder]:
+    ...
+
+
+@overload
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'OptimismInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], OptimismTransactionDecoder]:
+    ...
+
+
+@overload
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'ArbitrumOneInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], ArbitrumOneTransactionDecoder]:
+    ...
+
+
+@overload
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'BaseInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], BaseTransactionDecoder]:
+    ...
+
+
+@overload
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'GnosisInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], GnosisTransactionDecoder]:
+    ...
+
+
+@overload
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'PolygonPOSInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], PolygonPOSTransactionDecoder]:
+    ...
+
+
+@overload
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'ScrollInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], ScrollTransactionDecoder]:
+    ...
+
+
+@overload
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'BinanceSCInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+) -> tuple[list['EvmEvent'], BinanceSCTransactionDecoder]:
+    ...
+
+
+def get_decoded_events_of_transaction(
+        evm_inquirer: 'EvmNodeInquirer',
+        tx_hash: EVMTxHash,
+        transactions: EvmTransactions | None = None,
+        relevant_address: ChecksumAddress | None = None,
+        load_global_caches: list[str] | None = None,
+        evm_decoder: 'EVMTransactionDecoder|None' = None,
+) -> tuple[list['EvmEvent'], 'EVMTransactionDecoder']:
     """A convenience function to ask get transaction, receipt and decoded event for a tx_hash
 
-    It also accepts `transactions` in case the caller whants to apply some mocks (like call_count)
-    on that object.
+    It also accepts `transactions` in case the caller wants to apply some mocks (like call_count)
+    on that object. Same thing for evm_decoder if the callers want to use it before
+    for any reason.
 
     If relevant_address is provided then the added transactions are added linked to
     the provided address.
@@ -370,12 +455,17 @@ def get_decoded_events_of_transaction(
         ChainID.BASE: (BaseTransactions, BaseTransactionDecoder),
         ChainID.GNOSIS: (GnosisTransactions, GnosisTransactionDecoder),
         ChainID.SCROLL: (ScrollTransactions, ScrollTransactionDecoder),
+        ChainID.BINANCE_SC: (BinanceSCTransactions, BinanceSCTransactionDecoder),
     }
     mappings_result = chain_mappings.get(evm_inquirer.chain_id)
     if mappings_result is not None:
         if transactions is None:
-            transactions = mappings_result[0](evm_inquirer, database)
-        decoder = mappings_result[1](database, evm_inquirer, transactions)
+            transactions = mappings_result[0](evm_inquirer, evm_inquirer.database)
+        if evm_decoder is None:
+            decoder: EVMTransactionDecoder = mappings_result[1](evm_inquirer.database, evm_inquirer, transactions)  # noqa: E501
+        else:
+            decoder = evm_decoder
+
     else:
         raise AssertionError('Unsupported chainID at tests')
 
@@ -388,6 +478,6 @@ def get_decoded_events_of_transaction(
             )
 
     transactions.get_or_query_transaction_receipt(tx_hash=tx_hash)
-    with patch_decoder_reload_data():
-        result = decoder.decode_transaction_hashes(ignore_cache=True, tx_hashes=[tx_hash])
+    with patch_decoder_reload_data(load_global_caches):
+        result = decoder.decode_and_get_transaction_hashes(ignore_cache=True, tx_hashes=[tx_hash])
     return result, decoder

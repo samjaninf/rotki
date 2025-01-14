@@ -1,95 +1,123 @@
 <script setup lang="ts">
 import IMask, { type InputMask } from 'imask';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+
+defineOptions({
+  inheritAttrs: false,
+});
+
+const model = defineModel<string>({ required: true });
 
 const props = withDefaults(
   defineProps<{
     integer?: boolean;
-    value?: string;
     hideDetails?: boolean;
   }>(),
   {
-    integer: false,
-    value: '',
     hideDetails: false,
+    integer: false,
   },
 );
 
-const emit = defineEmits<{
-  (e: 'input', value: string): void;
-}>();
+const { integer } = toRefs(props);
+const { decimalSeparator, thousandSeparator } = storeToRefs(useFrontendSettingsStore());
 
-const attrs = useAttrs();
-const slots = useSlots();
+const textInput = ref<any>(null);
+const imask = ref<InputMask<any> | null>(null);
+const currentValue = ref<string>('');
 
-function filteredListeners(listeners: any) {
-  return {
-    ...listeners,
-    input: () => {},
-  };
+function removeLeadingZeros(
+  value?: string,
+  decimalSep: string = '.',
+): string {
+  if (!value)
+    return '';
+
+  // Special case: single "0" should stay as "0"
+  if (value === '0')
+    return value;
+
+  // Split the number into parts before and after decimal separator
+  const parts = value.split(decimalSep);
+
+  if (parts.length === 0)
+    return value;
+
+  if (parts.length === 1) {
+    // Check if there are leading zeros
+    if (!/^0+/.test(parts[0])) {
+      // No leading zeros, return the original value
+      return parts[0];
+    }
+
+    // Has leading zeros - only remove the leading zeros
+    return parts[0].replace(/^0+/, '') || '0'; // Return '0' if all zeros
+  }
+
+  // For numbers with decimal parts
+  if (!/^0+/.test(parts[0])) {
+    // No leading zeros before decimal, return original format
+    return value;
+  }
+
+  // Has leading zeros before decimal - only remove the leading zeros
+  return (parts[0].replace(/^0+/, '') || '0') + decimalSep + parts[1];
 }
-
-const { integer, value } = toRefs(props);
-const { thousandSeparator, decimalSeparator } = storeToRefs(
-  useFrontendSettingsStore(),
-);
-
-const textInput: Ref<any> = ref(null);
-const imask: Ref<InputMask<any> | null> = ref(null);
-const currentValue: Ref<string> = ref('');
 
 onMounted(() => {
   const inputWrapper = get(textInput)!;
   const input = inputWrapper.$el.querySelector('input') as HTMLInputElement;
 
+  const decimal = get(decimalSeparator);
+  const thousand = get(thousandSeparator);
+
   const newImask = IMask(input, {
     mask: Number,
-    thousandsSeparator: get(thousandSeparator),
-    radix: get(decimalSeparator),
+    radix: decimal,
     scale: get(integer) ? 0 : 100,
+    thousandsSeparator: thousand,
   });
 
-  const propValue = get(value);
+  newImask.on('accept', () => {
+    const mask = get(imask);
+    if (mask) {
+      set(model, mask?.unmaskedValue || '');
+      setCurrentValue(mask.value);
+    }
+  });
+
+  const propValue = get(model);
   if (propValue) {
     newImask.unmaskedValue = propValue;
-    set(currentValue, newImask.value);
+    setCurrentValue(newImask.value);
   }
 
   set(imask, newImask);
 });
 
-watch(value, (value) => {
+function setCurrentValue(value?: string) {
+  const formattedValue = removeLeadingZeros(value, get(decimalSeparator));
+  set(currentValue, formattedValue);
+  const imaskVal = get(imask);
+  if (formattedValue !== value && imaskVal) {
+    imaskVal.value = formattedValue;
+    get(imask)?.updateValue();
+  }
+}
+
+watch(model, (value) => {
   const imaskVal = get(imask);
   if (imaskVal) {
     imaskVal.unmaskedValue = value;
-    set(currentValue, imaskVal.value);
+    setCurrentValue(imaskVal.value);
   }
 });
-
-watch(
-  () => get(imask)?.unmaskedValue,
-  (unmasked) => {
-    const value = get(imask)?.value || '';
-    set(currentValue, value);
-    emit('input', unmasked || '');
-  },
-);
-
-watch(
-  () => get(imask)?.value,
-  (value) => {
-    set(currentValue, value);
-  },
-);
 
 function focus() {
   const inputWrapper = get(textInput) as any;
   if (inputWrapper)
     inputWrapper.focus();
 }
-
-defineExpose({
-  focus,
-});
 
 function onFocus() {
   const inputWrapper = get(textInput)!;
@@ -99,36 +127,35 @@ function onFocus() {
     input.value = get(currentValue);
   });
 }
+
+function update(value: string) {
+  if (!value) {
+    set(model, '');
+  }
+}
+
+defineExpose({
+  focus,
+});
 </script>
 
 <template>
   <RuiTextField
     ref="textInput"
     color="primary"
-    :value="currentValue"
-    v-bind="attrs"
+    :model-value="currentValue"
+    v-bind="$attrs"
     :hide-details="hideDetails"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      filteredListeners($listeners)
-    "
     @focus="onFocus()"
+    @update:model-value="update($event)"
   >
-    <!-- Pass on all named slots -->
-    <slot
-      v-for="slot in Object.keys(slots)"
-      :slot="slot"
-      :name="slot"
-    />
-
-    <!-- Pass on all scoped slots -->
     <template
-      v-for="slot in Object.keys($scopedSlots)"
-      #[slot]="scope"
+      v-for="(_, name) in $slots"
+      #[name]="scope"
     >
       <slot
         v-bind="scope"
-        :name="slot"
+        :name="name"
       />
     </template>
   </RuiTextField>

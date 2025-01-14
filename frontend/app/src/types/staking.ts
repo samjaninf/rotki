@@ -11,11 +11,11 @@ export enum KrakenStakingEventType {
 export const KrakenStakingEventTypeEnum = z.nativeEnum(KrakenStakingEventType);
 
 const KrakenStakingEvent = z.object({
-  eventType: KrakenStakingEventTypeEnum,
-  asset: z.string(),
-  timestamp: z.number().nonnegative(),
-  location: z.literal('kraken'),
   amount: NumericString,
+  asset: z.string(),
+  eventType: KrakenStakingEventTypeEnum,
+  location: z.literal('kraken'),
+  timestamp: z.number().nonnegative(),
   usdValue: NumericString,
 });
 
@@ -23,8 +23,8 @@ export type KrakenStakingEvent = z.infer<typeof KrakenStakingEvent>;
 
 const ReceivedAmount = z.object({
   amount: NumericString,
-  usdValue: NumericString,
   asset: z.string(),
+  usdValue: NumericString,
 });
 
 export type ReceivedAmount = z.infer<typeof ReceivedAmount>;
@@ -45,18 +45,20 @@ export interface KrakenStakingPagination {
   offset: number;
   orderByAttributes: (keyof KrakenStakingEvent)[];
   ascending: boolean[];
-  fromTimestamp?: string;
-  toTimestamp?: string;
+  fromTimestamp?: number;
+  toTimestamp?: number;
   asset?: string;
   eventSubtypes?: string[];
   onlyCache?: boolean;
 }
 
+export type KrakenStakingDateFilter = Pick<KrakenStakingPagination, 'fromTimestamp' | 'toTimestamp'>;
+
 export function emptyPagination(): KrakenStakingPagination {
   return {
-    offset: 0,
-    limit: 0,
     ascending: [false],
+    limit: 0,
+    offset: 0,
     orderByAttributes: ['timestamp'],
   };
 }

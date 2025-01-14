@@ -1,11 +1,10 @@
 import { BigNumber } from '@rotki/common';
-import { isString, isUndefined } from 'lodash-es';
+import { isString, isUndefined } from 'es-toolkit';
 
 export function chunkArray<T>(myArray: T[], size: number): T[][] {
   const results: T[][] = [];
 
-  while (myArray.length > 0)
-    results.push(myArray.splice(0, size));
+  while (myArray.length > 0) results.push(myArray.splice(0, size));
 
   return results;
 }
@@ -14,7 +13,7 @@ export function uniqueStrings<T = string>(value: T, index: number, array: T[]): 
   return array.indexOf(value) === index;
 }
 
-export function uniqueObjects<T>(arr: T[], getUniqueId: (item: T) => string) {
+export function uniqueObjects<T>(arr: T[], getUniqueId: (item: T) => string): T[] {
   return [...new Map(arr.map(item => [getUniqueId(item), item])).values()];
 }
 
@@ -66,8 +65,7 @@ export function nonEmptyProperties<T extends object>(object: T, removeEmptyStrin
 export function size(bytes: number): string {
   let i = 0;
 
-  for (i; bytes > 1024; i++)
-    bytes /= 1024;
+  for (i; bytes > 1024; i++) bytes /= 1024;
 
   const symbol = 'KMGTPEZY'[i - 1] || '';
   return `${bytes.toFixed(2)}  ${symbol}B`;
@@ -91,4 +89,15 @@ export function toRem(value?: number | string): string | undefined {
   }
 
   return `${value}rem`;
+}
+
+/**
+ * Returns a copy of the record without the key in it.
+ * @param record The record
+ * @param key The key to remove
+ */
+export function removeKey<K extends string | number | symbol, V>(record: Record<K, V>, key: K): Record<K, V> {
+  const copy = { ...record };
+  delete copy[key];
+  return copy;
 }

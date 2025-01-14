@@ -1,7 +1,18 @@
 <script lang="ts" setup>
 import { TaskType } from '@/types/task-type';
-import type { EvmUnDecodedTransactionsData } from '@/types/websocket-messages';
-import type { DataTableColumn } from '@rotki/ui-library-compat';
+import { useHistoryStore } from '@/store/history';
+import { useTaskStore } from '@/store/tasks';
+import { useHistoryTransactionDecoding } from '@/composables/history/events/tx/decoding';
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import type { EvmUnDecodedTransactionsData, ProtocolCacheUpdatesData } from '@/types/websocket-messages';
+import type { DataTableColumn } from '@rotki/ui-library';
+
+interface LocationData {
+  evmChain: string;
+  processed: number;
+  total: number;
+}
 
 const props = defineProps<{
   refreshing: boolean;
@@ -13,14 +24,16 @@ const emit = defineEmits<{
   (e: 'reset-undecoded-transactions'): void;
 }>();
 
-const css = useCssModule();
 const { isTaskRunning } = useTaskStore();
 const fetching = isTaskRunning(TaskType.FETCH_UNDECODED_TXS);
-const eventTaskLoading = isTaskRunning(TaskType.TRANSACTIONS_DECODING);
-const partialEventTaskLoading = isTaskRunning(TaskType.TRANSACTIONS_DECODING, {
+const isDecoding = isTaskRunning(TaskType.TRANSACTIONS_DECODING);
+const debouncedIsDecoding = refDebounced(isDecoding, 500);
+const usedIsDecoding = logicOr(isDecoding, debouncedIsDecoding);
+const isTransactionsLoading = isTaskRunning(TaskType.TX);
+const isPartiallyDecoding = isTaskRunning(TaskType.TRANSACTIONS_DECODING, {
   all: false,
 });
-const allEventTaskLoading = isTaskRunning(TaskType.TRANSACTIONS_DECODING, {
+const isFullyDecoding = isTaskRunning(TaskType.TRANSACTIONS_DECODING, {
   all: true,
 });
 
@@ -32,29 +45,31 @@ const { t } = useI18n();
 
 const { checkMissingEventsAndRedecode } = useHistoryTransactionDecoding();
 
+const { protocolCacheStatus, receivingProtocolCacheStatus } = storeToRefs(useHistoryStore());
+
 function refresh() {
   if (props.decodingStatus.length === 0)
     emit('reset-undecoded-transactions');
 }
 
-const headers: DataTableColumn[] = [
+const headers: DataTableColumn<LocationData>[] = [
   {
-    label: t('common.location'),
-    key: 'chain',
     align: 'center',
     cellClass: 'py-3',
+    key: 'chain',
+    label: t('common.location'),
   },
   {
-    label: t('transactions.events_decoding.undecoded_transactions'),
-    key: 'number',
     align: 'end',
     cellClass: '!pr-12',
     class: '!pr-12',
+    key: 'number',
+    label: t('transactions.events_decoding.undecoded_transactions'),
   },
   {
-    label: t('transactions.events_decoding.progress'),
-    key: 'progress',
     align: 'center',
+    key: 'progress',
+    label: t('transactions.events_decoding.progress'),
   },
 ];
 
@@ -63,18 +78,37 @@ const total = computed<number>(() =>
 );
 
 const [DefineProgress, ReuseProgress] = createReusableTemplate<{
-  data: {
-    evmChain: string;
-    total: number;
-    processed: number;
+  data: EvmUnDecodedTransactionsData & {
+    protocolCacheRefreshStatus?: ProtocolCacheUpdatesData;
   };
 }>();
 
-watch(allEventTaskLoading, (loading) => {
+watch(isFullyDecoding, (loading) => {
   if (!loading) {
     refresh();
     emit('reset-undecoded-transactions');
   }
+});
+
+const combinedDecodingStatus = computed(() => {
+  const data = [...props.decodingStatus].reverse();
+  if (!get(receivingProtocolCacheStatus))
+    return data;
+
+  const last = get(protocolCacheStatus)[0];
+
+  if (!last)
+    return data;
+
+  return [
+    {
+      chain: last.chain,
+      processed: 0,
+      protocolCacheRefreshStatus: last,
+      total: 0,
+    },
+    ...data,
+  ];
 });
 
 onMounted(() => refresh());
@@ -92,8 +126,8 @@ onMounted(() => refresh());
     </template>
 
     <div
-      v-if="decodingStatus.length > 0"
-      :class="css.content"
+      v-if="combinedDecodingStatus.length > 0"
+      :class="$style.content"
     >
       <div class="mb-4">
         {{ t('transactions.events_decoding.decoded.false') }}
@@ -101,7 +135,7 @@ onMounted(() => refresh());
 
       <DefineProgress #default="{ data }">
         <div
-          v-if="refreshing || eventTaskLoading"
+          v-if="refreshing || usedIsDecoding"
           class="flex flex-col justify-center gap-3"
         >
           <RuiProgress
@@ -109,11 +143,16 @@ onMounted(() => refresh());
             thickness="2"
             size="20"
             color="primary"
-            :value="(data.processed / data.total) * 100"
+            :value="
+              data.protocolCacheRefreshStatus
+                ? (data.protocolCacheRefreshStatus.processed / (data.protocolCacheRefreshStatus.total || 1)) * 100
+                : (data.processed / (data.total || 1)) * 100
+            "
           />
-          <i18n
+          <i18n-t
+            v-if="!data.protocolCacheRefreshStatus"
             tag="span"
-            path="transactions.events_decoding.transactions_processed"
+            keypath="transactions.events_decoding.transactions_processed"
           >
             <template #processed>
               {{ data.processed }}
@@ -121,7 +160,22 @@ onMounted(() => refresh());
             <template #total>
               {{ data.total }}
             </template>
-          </i18n>
+          </i18n-t>
+          <i18n-t
+            v-else
+            tag="span"
+            keypath="transactions.protocol_cache_updates.protocol_pools_refreshed"
+          >
+            <template #protocol>
+              {{ toSentenceCase(data.protocolCacheRefreshStatus.protocol) }}
+            </template>
+            <template #processed>
+              {{ data.protocolCacheRefreshStatus.processed }}
+            </template>
+            <template #total>
+              {{ data.protocolCacheRefreshStatus.total }}
+            </template>
+          </i18n-t>
         </div>
         <div v-else>
           -
@@ -130,9 +184,9 @@ onMounted(() => refresh());
 
       <RuiDataTable
         :cols="headers"
-        :rows="decodingStatus"
+        :rows="combinedDecodingStatus"
         dense
-        row-attr="evmChain"
+        row-attr="chain"
         striped
         outlined
       >
@@ -160,7 +214,7 @@ onMounted(() => refresh());
       class="mb-4 flex items-center gap-4"
     >
       <RuiProgress
-        v-if="fetching || eventTaskLoading"
+        v-if="fetching || usedIsDecoding || isTransactionsLoading"
         color="primary"
         variant="indeterminate"
         circular
@@ -175,8 +229,11 @@ onMounted(() => refresh());
       <template v-if="fetching">
         {{ t('transactions.events_decoding.fetching') }}
       </template>
-      <template v-else-if="eventTaskLoading">
+      <template v-else-if="usedIsDecoding">
         {{ t('transactions.events_decoding.preparing') }}
+      </template>
+      <template v-else-if="isTransactionsLoading">
+        {{ t('transactions.events_decoding.decoded.not_started') }}
       </template>
       <template v-else>
         {{ t('transactions.events_decoding.decoded.true') }}
@@ -188,19 +245,19 @@ onMounted(() => refresh());
       <RuiButton
         v-if="total"
         color="primary"
-        :disabled="refreshing || eventTaskLoading"
+        :disabled="refreshing || isDecoding"
         @click="checkMissingEventsAndRedecode()"
       >
         <template #prepend>
           <RuiIcon
-            v-if="!partialEventTaskLoading"
-            name="list-check-2"
+            v-if="!isPartiallyDecoding"
+            name="lu-layout-list"
           />
           <RuiProgress
             v-else
             circular
             variant="indeterminate"
-            size="24"
+            size="18"
             thickness="2"
           />
         </template>
@@ -208,13 +265,13 @@ onMounted(() => refresh());
       </RuiButton>
       <RuiButton
         color="error"
-        :disabled="refreshing || eventTaskLoading"
+        :disabled="refreshing || isDecoding"
         @click="redecodeAllEvents()"
       >
         <template #prepend>
           <RuiIcon
-            v-if="!allEventTaskLoading"
-            name="restart-line"
+            v-if="!isFullyDecoding"
+            name="lu-rotate-ccw"
           />
           <RuiProgress
             v-else

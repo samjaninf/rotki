@@ -1,33 +1,26 @@
 <script setup lang="ts">
-import type { Eth2ValidatorEntry } from '@rotki/common/lib/staking/eth2';
+import ValidatorDisplay from '@/components/display/ValidatorDisplay.vue';
+import type { Eth2ValidatorEntry } from '@rotki/common';
 
-const props = withDefaults(
-  defineProps<{
-    value: Eth2ValidatorEntry[];
-    items: Eth2ValidatorEntry[];
-    loading?: boolean;
-  }>(),
-  {
-    loading: false,
-  },
-);
+defineOptions({
+  inheritAttrs: false,
+});
 
-const emit = defineEmits<{
-  (e: 'input', value: Eth2ValidatorEntry[]): void;
-}>();
+const model = defineModel<Eth2ValidatorEntry[]>({ required: true });
 
-const { value } = toRefs(props);
-
-function input(value: Eth2ValidatorEntry[]) {
-  emit('input', value);
-}
+withDefaults(defineProps<{
+  items: Eth2ValidatorEntry[];
+  loading?: boolean;
+}>(), {
+  loading: false,
+});
 
 const { t } = useI18n();
 </script>
 
 <template>
   <RuiAutoComplete
-    :value="value"
+    v-model="model"
     :options="items"
     :loading="loading"
     :disabled="loading"
@@ -44,7 +37,6 @@ const { t } = useI18n();
     :item-height="68"
     variant="outlined"
     :label="t('validator_filter_input.label')"
-    @input="input($event)"
   >
     <template #item="{ item }">
       <ValidatorDisplay

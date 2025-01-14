@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ImportSource from '@/components/import/ImportSource.vue';
+
 const { t } = useI18n();
 </script>
 
@@ -6,12 +8,12 @@ const { t } = useI18n();
   <div>
     <ImportSource source="bittrex">
       <template #upload-title>
-        <i18n
+        <i18n-t
           tag="span"
-          path="import_data.bittrex.import"
+          keypath="import_data.bittrex.import"
         >
           <strong>{{ t('import_data.bittrex.import_types') }}</strong>
-        </i18n>
+        </i18n-t>
       </template>
       <div class="text-rui-text-secondary">
         {{ t('import_data.bittrex.warning') }}

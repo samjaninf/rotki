@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Optional
 
@@ -21,15 +22,22 @@ class ActionItem:
     asset: 'Asset'
     amount: Optional['FVal'] = None
     location_label: str | None = None
+    address: ChecksumEvmAddress | None = None
     to_event_type: Optional['HistoryEventType'] = None
     to_event_subtype: Optional['HistoryEventSubType'] = None
     to_notes: str | None = None
     to_counterparty: str | None = None
     to_address: ChecksumEvmAddress | None = None
+    to_location_label: str | None = None
     extra_data: dict | None = None
-    # Optional event data that pairs it with the event of the action item
+    # Optional events data that pairs them with the event of the action item
     # Contains a tuple with the paired event and whether it's an out event (True) or in event
-    paired_event_data: tuple['EvmEvent', bool] | None = None
+    # This is a way to control the order of the action item generated event relative
+    # to the paired events.
+    paired_events_data: tuple[Sequence['EvmEvent'], bool] | None = None
+    # if true adds the resulting transfer of the current action item to the next
+    # action items paired event data. This is a way to guarantee order only via action items.
+    pair_with_next_action_item: bool = False
     # Error tolerance that can be used for protocols having rounding errors. Such as with stETH (https://github.com/lidofinance/lido-dao/issues/442)
     # In those cases the notes should also be formatted to have an amount as format string since at
     # action item matching this format will populate the note with the actual amount
@@ -63,7 +71,7 @@ class DecodingOutput:
     """
     Output of decoding functions
 
-    - event can be returned if the decodeing method has generated a new event and it needs to be
+    - event can be returned if the decoding method has generated a new event and it needs to be
     added to the list of other decoded events.
     - action_items is a list of actions to be performed later automatically or to be passed
     in further decoding methods.
@@ -71,11 +79,13 @@ class DecodingOutput:
     and is used in post-decoding rules like in the case of balancer
     - refresh_balances may be set to True if the user's on-chain balances in some protocols has
     changed (for example if the user has deposited / withdrawn funds from a curve gauge).
-    """
+    - reload_decoders can be None in which case nothing happens. Or a set of decoders names for which to reload data. The decoder's name is the class name without the Decoder suffix. For example Eigenlayer for EigenlayerDecoder
+    """  # noqa: E501
     event: Optional['EvmEvent'] = None
     action_items: list[ActionItem] = field(default_factory=list)
     matched_counterparty: str | None = None
     refresh_balances: bool = False
+    reload_decoders: set[str] | None = None
 
 
 class TransferEnrichmentOutput(NamedTuple):

@@ -1,9 +1,10 @@
-const { spawn } = require('node:child_process');
-const process = require('node:process');
-const fs = require('node:fs');
-const { platform } = require('node:os');
-const path = require('node:path');
-const { exit } = require('node:process');
+import { spawn } from 'node:child_process';
+import process, { exit } from 'node:process';
+import fs from 'node:fs';
+import { platform } from 'node:os';
+import path from 'node:path';
+import { config } from 'dotenv';
+import consola from 'consola';
 
 const PROXY = 'proxy';
 const COMMON = '@rotki/common';
@@ -35,11 +36,7 @@ const colors = {
   cyan: msg => `\u001B[36m${msg}\u001B[0m`,
 };
 
-const logger = {
-  info: msg => console.info(colors.cyan('dev'), `${msg}`),
-  error: (prefix, msg) => console.error(prefix, msg.replace(/\n$/, '')),
-  debug: (prefix, msg) => console.log(prefix, msg.replace(/\n$/, '')),
-};
+const logger = consola.withTag(colors.cyan('dev'));
 
 if (!process.env.VIRTUAL_ENV) {
   logger.info('No python virtual environment detected');
@@ -49,7 +46,7 @@ if (!process.env.VIRTUAL_ENV) {
 let startDevProxy = false;
 const devEnvExists = fs.existsSync('app/.env.development.local');
 if (devEnvExists) {
-  require('dotenv').config({ path: 'app/.env.development.local' });
+  config({ path: 'app/.env.development.local' });
   startDevProxy = !!process.env.VITE_BACKEND_URL;
 }
 
@@ -58,12 +55,13 @@ const listeners = {};
 const subprocesses = [];
 
 function startProcess(cmd, tag, name, args, opts = undefined) {
-  const createListeners = tag => ({
+  const logger = consola.withTag(tag);
+  const createListeners = () => ({
     out: (buffer) => {
-      logger.debug(tag, buffer.toLocaleString());
+      logger.log(buffer.toString().replace(/\n$/, ''));
     },
     err: (buffer) => {
-      logger.error(tag, buffer.toLocaleString());
+      logger.log(buffer.toString().replace(/\n$/, ''));
     },
   });
 
@@ -71,6 +69,10 @@ function startProcess(cmd, tag, name, args, opts = undefined) {
     ...opts,
     shell: true,
     stdio: [process.stdin],
+    env: {
+      ...{ FORCE_COLOR: 1 },
+      ...process.env,
+    },
   });
 
   subprocesses.push(child);
@@ -111,20 +113,12 @@ process.on('SIGINT', () => {
 
 if (startDevProxy) {
   logger.info('Starting dev-proxy');
-  startProcess(
-    'pnpm run --filter @rotki/dev-proxy serve',
-    colors.green(PROXY),
-    PROXY,
-  );
+  startProcess('pnpm run --filter @rotki/dev-proxy serve', colors.green(PROXY), PROXY);
 }
 
 logger.info('Starting @rotki/common watch');
 
-startProcess(
-  'pnpm run --filter @rotki/common watch',
-  colors.blue(COMMON),
-  COMMON,
-);
+startProcess('pnpm run --filter @rotki/common watch', colors.blue(COMMON), COMMON);
 
 if (noElectron) {
   logger.info('Starting python backend');
@@ -157,9 +151,7 @@ function getDebuggerPort() {
     const debuggerPort = process.env.DEBUGGER_PORT;
     if (debuggerPort) {
       const portNum = Number.parseInt(debuggerPort);
-      return isFinite(portNum) && (portNum > 0 || portNum < 65535)
-        ? portNum
-        : null;
+      return isFinite(portNum) && (portNum > 0 || portNum < 65535) ? portNum : null;
     }
     return null;
   }
@@ -172,16 +164,10 @@ const args = debuggerPort ? ` --remote-debugging-port=${debuggerPort}` : '';
 if (args)
   logger.info(`starting rotki with args: ${args}`);
 
-const serveCmd = noElectron
-  ? 'pnpm run --filter rotki serve'
-  : 'pnpm run --filter rotki electron:serve';
+const serveCmd = noElectron ? 'pnpm run --filter rotki serve' : 'pnpm run --filter rotki electron:serve';
 const cmd = platform() === 'win32' ? serveCmd : `sleep 20 && ${serveCmd}`;
 
-const devRotkiProcess = startProcess(
-  `${cmd} ${args}`,
-  colors.magenta(ROTKI),
-  ROTKI,
-);
+const devRotkiProcess = startProcess(`${cmd} ${args}`, colors.magenta(ROTKI), ROTKI);
 
 devRotkiProcess.on('exit', () => {
   terminateSubprocesses();

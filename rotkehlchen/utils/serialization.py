@@ -62,16 +62,6 @@ def rlk_jsondumps(data: dict | list) -> str:
     return json.dumps(data, cls=RKLEncoder)
 
 
-def pretty_json_dumps(data: dict) -> str:
-    return json.dumps(
-        data,
-        sort_keys=True,
-        indent=4,
-        separators=(',', ': '),
-        cls=RKLEncoder,
-    )
-
-
 def deserialize_asset_with_oracles_from_db(
         asset_type: AssetType,
         asset_data: list[Any],
@@ -134,7 +124,7 @@ def deserialize_generic_asset_from_db(
     """
     From a db tuple containing information about any asset deserialize to the correct Asset class
     according to type in the database. Is a wrapper around deserialize_asset_with_oracles_from_db
-    And extends it by allowing the deserialization of CustomAsset objets.
+    And extends it by allowing the deserialization of CustomAsset objects.
     May raise:
     - DeserializationError
     - WrongAssetType

@@ -117,13 +117,12 @@ def fixture_makerdao_vaults(
         premium = Premium(credentials=rotki_premium_credentials, username=username)
 
     with web3_patch:
-        makerdao_vaults = MakerdaoVaults(
+        return MakerdaoVaults(
             ethereum_inquirer=ethereum_inquirer,
             database=database,
             premium=premium,
             msg_aggregator=function_scope_messages_aggregator,
         )
-    return makerdao_vaults
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [2])
@@ -168,7 +167,7 @@ def test_get_vault_balance(
     assert vault.get_balance() == expected_result
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('globaldb_upgrades', [[]])
 @pytest.mark.parametrize('run_globaldb_migrations', [False])
 @pytest.mark.parametrize('custom_globaldb', ['v4_global_before_migration1.db'])

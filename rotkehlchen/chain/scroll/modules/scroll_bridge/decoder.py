@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
+
 from eth_abi import decode as decode_abi
 
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
@@ -21,7 +22,7 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChainID, ChecksumEvmAddress
-from rotkehlchen.utils.misc import from_wei, hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address, from_wei
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
@@ -69,12 +70,12 @@ class ScrollBridgeDecoder(DecoderInterface):
         raw_amount = decode_abi(['uint256'], context.tx_log.data[:32])[0]
         amount = from_wei(FVal(raw_amount))
         if context.tx_log.topics[0] == FINALIZE_DEPOSIT_ETH:
-            user_address = hex_or_bytes_to_address(context.tx_log.topics[2])  # To address
+            user_address = bytes_to_address(context.tx_log.topics[2])  # To address
             expected_event_type = HistoryEventType.RECEIVE
             new_event_type = HistoryEventType.WITHDRAWAL
             from_chain, to_chain = ChainID.ETHEREUM, ChainID.SCROLL
         elif context.tx_log.topics[0] == WITHDRAW_ETH:
-            user_address = hex_or_bytes_to_address(context.tx_log.topics[1])  # From address
+            user_address = bytes_to_address(context.tx_log.topics[1])  # From address
             expected_event_type = HistoryEventType.SPEND
             new_event_type = HistoryEventType.DEPOSIT
             from_chain, to_chain = ChainID.SCROLL, ChainID.ETHEREUM
@@ -110,16 +111,16 @@ class ScrollBridgeDecoder(DecoderInterface):
         if (tx_log := context.tx_log).topics[0] not in (FINALIZE_DEPOSIT_ERC20, WITHDRAW_ERC20):
             return DEFAULT_DECODING_OUTPUT
 
-        from_address = hex_or_bytes_to_address(tx_log.topics[3])
-        to_address = hex_or_bytes_to_address(tx_log.data[:32])
+        from_address = bytes_to_address(tx_log.topics[3])
+        to_address = bytes_to_address(tx_log.data[:32])
 
         if not self.base.any_tracked([from_address, to_address]):
             return DEFAULT_DECODING_OUTPUT
 
-        ethereum_token_address = hex_or_bytes_to_address(tx_log.topics[1])
-        l2_token_address = hex_or_bytes_to_address(tx_log.topics[2])
+        ethereum_token_address = bytes_to_address(tx_log.topics[1])
+        l2_token_address = bytes_to_address(tx_log.topics[2])
         asset = self.base.get_or_create_evm_token(l2_token_address)
-        raw_amount = hex_or_bytes_to_int(tx_log.data[32:64])
+        raw_amount = int.from_bytes(tx_log.data[32:64])
         amount = asset_normalized_value(raw_amount, asset)
         expected_event_type, new_event_type, from_chain, to_chain, _ = bridge_prepare_data(
             tx_log=tx_log,

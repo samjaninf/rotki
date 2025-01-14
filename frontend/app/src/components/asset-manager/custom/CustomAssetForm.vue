@@ -1,137 +1,66 @@
 <script setup lang="ts">
 import { helpers, required } from '@vuelidate/validators';
-import { omit } from 'lodash-es';
+import useVuelidate from '@vuelidate/core';
 import AssetIconForm from '@/components/asset-manager/AssetIconForm.vue';
 import { toMessages } from '@/utils/validation';
+import { refOptional, useRefPropVModel } from '@/utils/model';
+import AutoCompleteWithSearchSync from '@/components/inputs/AutoCompleteWithSearchSync.vue';
+import { useFormStateWatcher } from '@/composables/form';
 import type { CustomAsset } from '@/types/asset';
+import type { ValidationErrors } from '@/types/api/errors';
 
-const props = withDefaults(
+const modelValue = defineModel<CustomAsset>({ required: true });
+const errors = defineModel<ValidationErrors>('errorMessages', { required: true });
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+
+withDefaults(
   defineProps<{
-    editableItem?: CustomAsset | null;
+    editMode?: boolean;
     types?: string[];
   }>(),
-  { editableItem: null, types: () => [] },
+  { editMode: false, types: () => [] },
 );
 
-const { editableItem } = toRefs(props);
+const customAssetType = useRefPropVModel(modelValue, 'customAssetType');
+const name = useRefPropVModel(modelValue, 'name');
+const notes = refOptional(useRefPropVModel(modelValue, 'notes'), '');
 
-const search = ref<string | null>('');
-
-const emptyCustomAsset: () => CustomAsset = () => ({
-  identifier: '',
-  name: '',
-  customAssetType: '',
-  notes: '',
-});
-
-const formData = ref<CustomAsset>(emptyCustomAsset());
-
-function checkEditableItem() {
-  const form = get(editableItem);
-  if (form) {
-    set(search, form.customAssetType);
-    set(formData, form);
-  }
-  else {
-    set(search, '');
-    set(formData, emptyCustomAsset());
-  }
-}
-
-watchImmediate(editableItem, checkEditableItem);
-
-function input(asset: Partial<CustomAsset>) {
-  set(formData, { ...get(formData), ...asset });
-}
-
-const assetIconFormRef: Ref<InstanceType<typeof AssetIconForm> | null>
-  = ref(null);
+const assetIconFormRef = ref<InstanceType<typeof AssetIconForm> | null>(null);
 
 const { t } = useI18n();
 
-const name = useRefPropVModel(formData, 'name');
-const customAssetType = useRefPropVModel(formData, 'customAssetType');
-
-const note = computed({
-  get() {
-    return get(formData).notes ?? undefined;
-  },
-  set(value?: string) {
-    input({ notes: value ?? null });
-  },
-});
-
-watch(search, (type) => {
-  if (type === null)
-    type = get(formData).customAssetType;
-
-  set(customAssetType, type);
-});
-
 const rules = {
   name: {
-    required: helpers.withMessage(
-      t('asset_form.name_non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('asset_form.name_non_empty'), required),
   },
+  notes: { externalServerValidation: () => true },
   type: {
-    required: helpers.withMessage(
-      t('asset_form.type_non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('asset_form.type_non_empty'), required),
   },
 };
 
-const { setValidation, setSubmitFunc } = useCustomAssetForm();
+const states = {
+  name,
+  notes,
+  type: customAssetType,
+};
 
-const v$ = setValidation(
+const v$ = useVuelidate(
   rules,
-  {
-    name,
-    type: customAssetType,
-  },
-  { $autoDirty: true },
+  states,
+  { $autoDirty: true, $externalResults: errors },
 );
+
+useFormStateWatcher(states, stateUpdated);
 
 function saveIcon(identifier: string) {
   get(assetIconFormRef)?.saveIcon(identifier);
 }
 
-const { setMessage } = useMessageStore();
-const { editCustomAsset, addCustomAsset } = useAssetManagementApi();
-
-async function save(): Promise<string> {
-  const data = get(formData);
-  let success = false;
-  let identifier = data.identifier;
-  const editMode = get(editableItem);
-
-  try {
-    if (editMode) {
-      success = await editCustomAsset(data);
-    }
-    else {
-      identifier = await addCustomAsset(omit(data, 'identifier'));
-      success = !!identifier;
-    }
-
-    if (identifier)
-      saveIcon(identifier);
-  }
-  catch (error: any) {
-    const obj = { message: error.message };
-    setMessage({
-      description: editMode
-        ? t('asset_management.edit_error', obj)
-        : t('asset_management.add_error', obj),
-    });
-  }
-
-  return success ? identifier : '';
-}
-
-setSubmitFunc(save);
+defineExpose({
+  saveIcon,
+  validate: () => get(v$).$validate(),
+});
 </script>
 
 <template>
@@ -146,20 +75,17 @@ setSubmitFunc(save);
         :label="t('common.name')"
         :error-messages="toMessages(v$.name)"
       />
-      <VCombobox
+      <AutoCompleteWithSearchSync
         v-model="customAssetType"
         data-cy="type"
         :items="types"
-        outlined
-        persistent-hint
         clearable
         :label="t('common.type')"
         :error-messages="toMessages(v$.type)"
-        :search-input.sync="search"
       />
     </div>
     <RuiTextArea
-      v-model="note"
+      v-model="notes"
       data-cy="notes"
       variant="outlined"
       color="primary"
@@ -172,7 +98,7 @@ setSubmitFunc(save);
 
     <AssetIconForm
       ref="assetIconFormRef"
-      :identifier="formData.identifier"
+      :identifier="modelValue.identifier"
     />
   </div>
 </template>

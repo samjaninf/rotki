@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useInterop } from '@/composables/electron-interop';
+import ErrorScreen from '@/components/error/ErrorScreen.vue';
+
 const { t } = useI18n();
 const { closeApp } = useInterop();
 </script>

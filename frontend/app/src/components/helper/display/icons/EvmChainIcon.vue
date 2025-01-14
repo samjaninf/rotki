@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppImage from '@/components/common/AppImage.vue';
+
 interface Props {
   size?: string;
   chain: string;
@@ -20,8 +22,8 @@ const chainData = computed(() => {
   const chainProp = get(chain);
 
   return {
-    label: toCapitalCase(chainProp),
     image: getImageUrl(chainProp),
+    label: toCapitalCase(chainProp),
   };
 });
 </script>

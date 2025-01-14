@@ -1,3 +1,7 @@
+import { backoff } from '@shared/utils';
+import { useNotificationsStore } from '@/store/notifications';
+import { useSessionApi } from '@/composables/api/session';
+
 export const usePeriodicStore = defineStore('session/periodic', () => {
   const lastBalanceSave = ref(0);
   const lastDataUpload = ref(0);
@@ -14,17 +18,13 @@ export const usePeriodicStore = defineStore('session/periodic', () => {
 
     set(periodicRunning, true);
     try {
-      const result = await backoff(3, () => fetchPeriodicData(), 10000);
+      const result = await backoff(3, async () => fetchPeriodicData(), 10000);
       if (Object.keys(result).length === 0) {
         // an empty object means user is not logged in yet
         return;
       }
 
-      const {
-        lastBalanceSave: balance,
-        lastDataUploadTs: upload,
-        connectedNodes: connected,
-      } = result;
+      const { connectedNodes: connected, lastBalanceSave: balance, lastDataUploadTs: upload } = result;
 
       if (get(lastBalanceSave) !== balance)
         set(lastBalanceSave, balance);
@@ -36,11 +36,11 @@ export const usePeriodicStore = defineStore('session/periodic', () => {
     }
     catch (error: any) {
       notify({
-        title: t('actions.session.periodic_query.error.title').toString(),
+        display: true,
         message: t('actions.session.periodic_query.error.message', {
           message: error.message,
-        }).toString(),
-        display: true,
+        }),
+        title: t('actions.session.periodic_query.error.title'),
       });
     }
     finally {
@@ -49,10 +49,10 @@ export const usePeriodicStore = defineStore('session/periodic', () => {
   };
 
   return {
+    check,
+    connectedNodes,
     lastBalanceSave,
     lastDataUpload,
-    connectedNodes,
-    check,
   };
 });
 

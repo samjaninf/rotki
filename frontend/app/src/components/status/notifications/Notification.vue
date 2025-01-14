@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { type NotificationAction, type NotificationData, Severity } from '@rotki/common/lib/messages';
+import { type NotificationAction, type NotificationData, Severity } from '@rotki/common';
 import dayjs from 'dayjs';
+import { type RuiIcons, isRuiIcon } from '@rotki/ui-library';
+import { arrayify } from '@/utils/array';
+import MissingKeyNotification from '@/components/status/notifications/MissingKeyNotification.vue';
 
 const props = withDefaults(
   defineProps<{
@@ -12,38 +15,36 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (e: 'dismiss', id: number): void }>();
 
-const css = useCssModule();
 const { t } = useI18n();
 const { copy: copyToClipboard } = useClipboard();
 
 const { notification } = toRefs(props);
 
-const actions: ComputedRef<NotificationAction[]> = computed(() => {
+const actions = computed<NotificationAction[]>(() => {
   const action = get(notification).action;
 
   if (!action)
     return [];
-  if (!Array.isArray(action))
-    return [action];
 
-  return action;
+  return arrayify(action);
 });
 
 function dismiss(id: number) {
   emit('dismiss', id);
 }
 
-const icon = computed(() => {
+const icon = computed<RuiIcons>(() => {
   switch (get(notification).severity) {
     case Severity.ERROR:
     case Severity.INFO:
-      return 'error-warning-line';
+      return 'lu-circle-alert';
     case Severity.WARNING:
-      return 'alarm-warning-line';
+      return 'lu-siren';
     case Severity.REMINDER:
-      return 'alarm-line';
+      return 'lu-alarm-clock';
+    default:
+      return 'lu-circle-alert';
   }
-  return '';
 });
 
 const color = computed(() => {
@@ -82,13 +83,13 @@ const circleBgClass = computed(() => {
 const date = computed(() => dayjs(get(notification).date).format('LLL'));
 
 async function copy() {
-  const { message, i18nParam } = get(notification);
+  const { i18nParam, message } = get(notification);
   let messageText = message;
 
   if (i18nParam) {
     messageText = t(i18nParam.message, {
-      service: i18nParam.props.service,
       location: i18nParam.props.location,
+      service: i18nParam.props.service,
       url: i18nParam.props.url,
     });
   }
@@ -107,7 +108,7 @@ const MAX_HEIGHT = 64;
 const { height } = useElementSize(message);
 
 const showExpandArrow = computed(() => get(height) > MAX_HEIGHT);
-const expanded: Ref<boolean> = ref(false);
+const expanded = ref<boolean>(false);
 
 const messageWrapperStyle = computed(() => {
   if (!get(showExpandArrow))
@@ -129,16 +130,20 @@ function messageClicked() {
 function buttonClicked() {
   set(expanded, !get(expanded));
 }
+
+function getIcon(action: NotificationAction): RuiIcons {
+  return isRuiIcon(action.icon) ? action.icon : 'lu-arrow-right';
+}
 </script>
 
 <template>
   <RuiCard
     :class="[
-      css.notification,
+      $style.notification,
       {
-        [css[`bg_${color}`]]: color,
-        [css.flat]: !color,
-        [css.popup]: popup,
+        [$style[`bg_${color}`]]: color,
+        [$style.flat]: !color,
+        [$style.popup]: popup,
       },
     ]"
     class="!p-2 !pb-1.5"
@@ -167,27 +172,19 @@ function buttonClicked() {
           {{ date }}
         </div>
       </div>
-      <RuiTooltip
-        :popper="{ placement: 'bottom', offsetDistance: 0 }"
-        :open-delay="400"
+      <RuiButton
+        variant="text"
+        icon
+        class="!p-2"
+        @click="dismiss(notification.id)"
       >
-        <template #activator>
-          <RuiButton
-            variant="text"
-            icon
-            class="!p-2"
-            @click="dismiss(notification.id)"
-          >
-            <RuiIcon name="close-line" />
-          </RuiButton>
-        </template>
-        <span>{{ t('notification.dismiss_tooltip') }}</span>
-      </RuiTooltip>
+        <RuiIcon name="lu-x" />
+      </RuiButton>
     </div>
     <div
-      class="mt-1 px-2 break-words text-rui-text-secondary text-body-2 leading-2 group"
+      class="mt-1 px-2 break-words text-rui-text-secondary text-body-2 leading-2 group overflow-hidden"
       :class="[
-        css.message,
+        $style.message,
         {
           'cursor-pointer': showExpandArrow && !expanded,
           'pb-6': showExpandArrow && expanded,
@@ -196,7 +193,12 @@ function buttonClicked() {
       :style="messageWrapperStyle"
       @click="messageClicked()"
     >
-      <div ref="message">
+      <div
+        ref="message"
+        :class="{
+          'max-h-[calc(100vh-15rem)] overflow-auto': popup && expanded,
+        }"
+      >
         <MissingKeyNotification
           v-if="notification.i18nParam"
           :params="notification.i18nParam"
@@ -210,15 +212,15 @@ function buttonClicked() {
       </div>
       <div
         v-if="showExpandArrow"
-        :class="css.expand"
+        :class="$style.expand"
       >
         <RuiButton
           class="!p-0.5"
-          :class="css['expand-button']"
+          :class="$style['expand-button']"
           @click.stop="buttonClicked()"
         >
           <RuiIcon
-            :name="expanded ? 'arrow-up-s-line' : 'arrow-down-s-line'"
+            :name="expanded ? 'lu-chevron-up' : 'lu-chevron-down'"
             :class="{ 'invisible opacity-0 group-hover:translate-y-1': !expanded }"
             class="transition-all group-hover:visible group-hover:opacity-100 group-hover:-translate-y-1 text-rui-text-secondary"
             size="20"
@@ -238,33 +240,26 @@ function buttonClicked() {
         {{ action.label }}
         <template #append>
           <RuiIcon
-            :name="action.icon ?? 'arrow-right-line'"
+            :name="getIcon(action)"
             size="16"
           />
         </template>
       </RuiButton>
-      <RuiTooltip
-        :popper="{ placement: 'bottom', offsetDistance: 0 }"
-        :open-delay="400"
+      <RuiButton
+        v-if="notification.severity === Severity.ERROR"
+        color="primary"
+        variant="text"
+        size="sm"
+        @click="copy()"
       >
-        <template #activator>
-          <RuiButton
-            color="primary"
-            variant="text"
-            size="sm"
-            @click="copy()"
-          >
-            {{ t('notification.copy') }}
-            <template #append>
-              <RuiIcon
-                name="file-copy-line"
-                size="16"
-              />
-            </template>
-          </RuiButton>
+        {{ t('common.actions.copy') }}
+        <template #append>
+          <RuiIcon
+            name="lu-copy"
+            size="16"
+          />
         </template>
-        <span> {{ t('notification.copy_tooltip') }}</span>
-      </RuiTooltip>
+      </RuiButton>
     </div>
   </RuiCard>
 </template>
@@ -281,7 +276,7 @@ function buttonClicked() {
     @apply bg-gradient-to-b from-transparent to-white absolute bottom-0 w-full;
 
     &-button {
-      @apply w-full bg-gradient-to-b from-transparent to-white;
+      @apply w-full bg-gradient-to-b from-transparent to-white rounded-none;
       background-color: transparent !important;
     }
   }
@@ -310,7 +305,7 @@ function buttonClicked() {
         @apply to-[#1E1E1E];
 
         &-button {
-          @apply to-[#1E1E1E]
+          @apply to-[#1E1E1E];
         }
       }
     }
@@ -318,14 +313,6 @@ function buttonClicked() {
     &:not(.flat) {
       .expand {
         @apply to-[#363636];
-      }
-    }
-
-    &.popup {
-      &:not(.flat) {
-        .expand {
-          @apply to-[#333];
-        }
       }
     }
   }

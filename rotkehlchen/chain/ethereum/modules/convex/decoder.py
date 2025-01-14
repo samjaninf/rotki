@@ -20,7 +20,6 @@ from rotkehlchen.chain.ethereum.modules.convex.constants import (
 from rotkehlchen.chain.ethereum.modules.convex.convex_cache import (
     query_convex_data,
     read_convex_data_from_cache,
-    save_convex_data_to_cache,
 )
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
@@ -41,7 +40,7 @@ from rotkehlchen.history.events.structures.base import HistoryEventSubType, Hist
 from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CURVE_POOL_PROTOCOL, CacheType, ChecksumEvmAddress, EvmTransaction
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
@@ -72,7 +71,6 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
             evm_inquirer=ethereum_inquirer,
             cache_type_to_check_for_freshness=CacheType.CONVEX_POOL_ADDRESS,
             query_data_method=query_convex_data,
-            save_data_to_cache_method=save_convex_data_to_cache,
             read_data_from_cache_method=read_convex_data_from_cache,
         )
         self.cvx = A_CVX.resolve_to_evm_token()
@@ -111,8 +109,8 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         - deposits/withdrawals
         - claim rewards
         """
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data[0:32])
-        interacted_address = hex_or_bytes_to_address(context.tx_log.topics[1])
+        amount_raw = int.from_bytes(context.tx_log.data[0:32])
+        interacted_address = bytes_to_address(context.tx_log.topics[1])
         found_event_modifying_balances = False
         # in the case of withdrawing CVX from an expired lock the withdrawn event
         # is emitted before the transfer events and when iterating over the decoded events
@@ -166,8 +164,8 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                     # it during balances queries
                     for log_event in context.all_logs:
                         if log_event.topics[0] == STAKED:
-                            deposit_amount_raw = hex_or_bytes_to_int(context.tx_log.data[0:32])
-                            staking_address = hex_or_bytes_to_address(log_event.topics[1])
+                            deposit_amount_raw = int.from_bytes(context.tx_log.data[0:32])
+                            staking_address = bytes_to_address(log_event.topics[1])
                             if deposit_amount_raw == amount_raw and staking_address == event.location_label:  # noqa: E501
                                 event.extra_data = {'gauge_address': log_event.address}
                                 break
@@ -220,9 +218,9 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         """
         withdrawals_log_entries = filter(lambda x: x.topics[0] == CVX_LOCK_WITHDRAWN, all_logs)
         amounts_withdrawn = [
-            asset_normalized_value(hex_or_bytes_to_int(tx_log.data[0:32]), self.cvx)
+            asset_normalized_value(int.from_bytes(tx_log.data[0:32]), self.cvx)
             for tx_log in withdrawals_log_entries
-            if bool(hex_or_bytes_to_int(tx_log.data[32:64])) is False  # false means not relocked
+            if bool(int.from_bytes(tx_log.data[32:64])) is False  # false means not relocked
         ]
 
         for event in decoded_events:
@@ -279,16 +277,14 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         }
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
-        decoder_mappings: dict[ChecksumEvmAddress, tuple[Callable, ...]] = {
+        decoder_mappings = {
             BOOSTER: (self._decode_pool_events,),
             CVX_LOCKER: (self._decode_pool_events,),
             CVX_LOCKER_V2: (self._decode_pool_events,),
             CVX_REWARDS: (self._decode_pool_events,),
             CVXCRV_REWARDS: (self._decode_pool_events,),
         }
-        pools = dict.fromkeys(self.pools, (self._decode_pool_events,))
         virtual_rewards = dict.fromkeys(CONVEX_VIRTUAL_REWARDS, (self._decode_pool_events,))
-        decoder_mappings.update(pools)
         decoder_mappings.update(virtual_rewards)
         return decoder_mappings
 

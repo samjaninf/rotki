@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { useBreakpoint } from '@rotki/ui-library-compat';
+import { usePremium } from '@/composables/premium';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
 
 const { t } = useI18n();
 const premium = usePremium();
@@ -14,6 +15,7 @@ const { isLgAndDown } = useBreakpoint();
     <RuiTooltip
       :popper="{ placement: 'bottom' }"
       :disabled="!isLgAndDown"
+      :open-delay="400"
     >
       <template #activator>
         <ExternalLink
@@ -21,15 +23,15 @@ const { isLgAndDown } = useBreakpoint();
           premium
         >
           <RuiButton
-            icon
-            class="lg:!py-2"
-            color="secondary"
+            class="lg:!py-2 [&_span]:!hidden lg:[&_span]:!block"
+            :rounded="false"
+            color="primary"
             data-cy="get-premium-button"
           >
-            <span v-if="!isLgAndDown">{{ t('premium_settings.get') }}</span>
-            <template #append>
-              <RuiIcon name="vip-crown-line" />
+            <template #prepend>
+              <RuiIcon name="lu-crown" />
             </template>
+            {{ t('premium_settings.get') }}
           </RuiButton>
         </ExternalLink>
       </template>

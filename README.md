@@ -12,9 +12,8 @@
 [![GitHub commits](https://img.shields.io/github/commits-since/rotki/rotki/latest.svg)](https://GitHub.com/rotki/rotki/commit/)
 [![GitHub contributors](https://img.shields.io/github/contributors/rotki/rotki.svg?style=flat)](https://github.com/rotki/rotki/graphs/contributors)
 ![Visitors](https://api.visitorbadge.io/api/visitors?path=rotki%2Frotki%20&countColor=%23263759&style=flat)
-![GitHub forks](https://img.shields.io/github/forks/rotki/rotki)
-![GitHub Repo stars](https://img.shields.io/github/stars/rotki/rotki)
-![GitHub contributors](https://img.shields.io/github/contributors/rotki/rotki)
+[![GitHub forks](https://img.shields.io/github/forks/rotki/rotki)](https://github.com/rotki/rotki/forks)
+[![GitHub Repo stars](https://img.shields.io/github/stars/rotki/rotki)](https://github.com/rotki/rotki/stargazers)
 ![GitHub last commit](https://img.shields.io/github/last-commit/rotki/rotki)
 [![GitPOAP Badge](https://public-api.gitpoap.io/v1/repo/rotki/rotki/badge)](https://www.gitpoap.io/gh/rotki/rotki)
 [![Github All Releases](https://img.shields.io/github/downloads/rotki/rotki/total.svg)](https://GitHub.com/rotki/rotki/releases/)
@@ -33,13 +32,14 @@
 <p align="center">
   <a href="#overview">Overview</a> •
   <a href="#features-at-a-glance">Features at a Glance</a> •
+  <a href="#requirements">Requirements</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
   <a href="#changelog">Changelog</a> •
   <a href="#contribute">Contributing</a>
   <br/>
-  <a href="https://rotki.readthedocs.io/en/latest/" target="_blank">📖 Docs</a> •
-  <a href="https://rotki.com/checkout/plan" target="_blank">💻 Pro version</a>
+  <a href="https://docs.rotki.com" target="_blank">📖 Docs</a> •
+  <a href="https://rotki.com/products" target="_blank">💻 Pro version</a>
 </p>
 
 ---
@@ -47,7 +47,7 @@
 ## Overview
 [Rotki](https://rotki.com/) is an open source portfolio management tool that protects your privacy. The mission of rotki is to bring transparency into the crypto and financial sectors through the use of open source. Most importantly, unlike virtually every other competing service which consists of a closed source SaaS onto which you are forced to hand over all your financial data, with rotki your data is stored encrypted locally on your computer. It enables you to take ownership of your financial data!
 
-The [Pro Version](https://rotki.com/checkout/plan) of Rotki also supports additional and advanced features. You can find a comprehensive list of them on ☑️ [Feature Coverage Page](https://rotki.com/products/details).
+The [Pro Version](https://rotki.com/products/) of Rotki also supports additional and advanced features. You can find a comprehensive list of them on ☑️ [Feature Coverage Page](https://rotki.com/products/details).
 
 ## Features at a glance
 
@@ -75,16 +75,16 @@ The [Pro Version](https://rotki.com/checkout/plan) of Rotki also supports additi
 Rotki currently supports the following operating systems:- Windows, MacOs, Linux.
 
 The installation of rotki can be simply done via two ways:-
-- [Packaged Binaries](https://rotki.readthedocs.io/en/latest/installation_guide.html#packaged-binaries) (Recommended)
-- [Building from Source](https://rotki.readthedocs.io/en/latest/installation_guide.html#build-from-source)
+- [Packaged Binaries](https://docs.rotki.com/requirement-and-installation/packaged-binaries.html) (Recommended)
+- [Building from Source](https://docs.rotki.com/requirement-and-installation/build-from-source.html)
 
 ## Usage
 
-Read the [documentation](https://rotki.readthedocs.io/en/latest/) for a complete guide, frequently-asked questions, API reference, and more.
+Read the [documentation](https://docs.rotki.com/) for a complete guide, frequently-asked questions, API reference, and more.
 
 Some quick links to useful parts of the documentation follow below for your convenience.
 
-To get started using rotki, check out the [detailed usage guide](https://rotki.readthedocs.io/en/latest/usage_guide.html).
+To get started using rotki, check out the [detailed usage guide](https://docs.rotki.com/usage-guides/).
 
 ## Changelog
 
@@ -96,7 +96,7 @@ Please refer to [Releases](https://rotki.readthedocs.io/en/latest/changelog.html
 If you are interested in contributing to rotki:
 
 - Start by reading our [contributing guide](CONTRIBUTING.md).
-- Check out our [developer guide](https://rotki.readthedocs.io/en/latest/contribute.html).
+- Check out our [developer guide](https://docs.rotki.com/contribution-guides/).
 - Navigate our codebase and [open issues](https://github.com/rotki/rotki/issues).
 
 We are thankful for all the contributions and feedback we receive. You can get a contributor badge (a POAP) for each year in which you have ever contributed even a single commit to our codebase. Go [claim yours](https://www.gitpoap.io/rp/62) now.

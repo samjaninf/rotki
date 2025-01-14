@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import { helpers, required } from '@vuelidate/validators';
+import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
+import { isNft } from '@/utils/nft';
+import BalanceTypeInput from '@/components/inputs/BalanceTypeInput.vue';
+import EditBalancesSnapshotLocationSelector from '@/components/dashboard/edit-snapshot/EditBalancesSnapshotLocationSelector.vue';
+import EditBalancesSnapshotAssetPriceForm from '@/components/dashboard/edit-snapshot/EditBalancesSnapshotAssetPriceForm.vue';
+import { useRefPropVModel } from '@/utils/model';
+import { useFormStateWatcher } from '@/composables/form';
 import type { BigNumber } from '@rotki/common';
 import type { BalanceSnapshotPayload } from '@/types/snapshots';
 
-interface BalanceSnapshotPayloadAndLocation extends BalanceSnapshotPayload {
-  location: string;
-}
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+const model = defineModel<BalanceSnapshotPayloadAndLocation>({ required: true });
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     edit?: boolean;
-    form: BalanceSnapshotPayloadAndLocation;
     locations?: string[];
     previewLocationBalance?: Record<string, BigNumber> | null;
+    timestamp: number;
   }>(),
   {
     edit: false,
@@ -23,113 +29,71 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'update:form', data: BalanceSnapshotPayloadAndLocation): void;
   (e: 'update:asset', asset: string): void;
 }>();
 
+interface BalanceSnapshotPayloadAndLocation extends BalanceSnapshotPayload {
+  location: string;
+}
+
+const category = useRefPropVModel(model, 'category');
+const assetIdentifier = useRefPropVModel(model, 'assetIdentifier');
+const amount = useRefPropVModel(model, 'amount');
+const usdValue = useRefPropVModel(model, 'usdValue');
+const location = useRefPropVModel(model, 'location');
+
 const { t } = useI18n();
-const { form } = toRefs(props);
-const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
-const assetType: Ref<string> = ref('token');
+const assetType = ref<string>('token');
+const assetPriceForm = ref<InstanceType<typeof EditBalancesSnapshotAssetPriceForm>>();
 
-const category = usePropVModel(props, 'form', 'category', emit);
-const assetIdentifier = usePropVModel(props, 'form', 'assetIdentifier', emit);
-const amount = usePropVModel(props, 'form', 'amount', emit);
-const usdValue = usePropVModel(props, 'form', 'usdValue', emit);
-const location = usePropVModel(props, 'form', 'location', emit);
-const price: Ref<string> = ref('1');
+const rules = {
+  category: {
+    required: helpers.withMessage(t('dashboard.snapshot.edit.dialog.balances.rules.category'), required),
+  },
+};
 
-const usdValueInputFocused: Ref<boolean> = ref(false);
+const states = {
+  category,
+};
+
+const v$ = useVuelidate(
+  rules,
+  states,
+  {
+    $autoDirty: true,
+  },
+);
+useFormStateWatcher(states, stateUpdated);
+
+function updateAsset(asset: string) {
+  emit('update:asset', asset);
+}
 
 function checkAssetType() {
-  const formVal = get(form);
-  if (isNft(formVal.assetIdentifier))
+  if (isNft(get(assetIdentifier)))
     set(assetType, 'nft');
 }
 
-function updatePrice(forceUpdate = false) {
-  const value = get(usdValue);
-  const amountVal = get(amount);
-  if (value && amountVal && (get(usdValueInputFocused) || forceUpdate))
-    set(price, bigNumberify(get(usdValue)).div(bigNumberify(get(amount))).toFixed());
+function submitPrice() {
+  const form = get(assetPriceForm);
+  if (form)
+    form.submitPrice();
 }
-
-function calculateValue(forceUpdate = false) {
-  const priceVal = get(price);
-  const amountVal = get(amount);
-  if (priceVal && amountVal && (!get(usdValueInputFocused) || forceUpdate))
-    set(usdValue, bigNumberify(get(price)).multipliedBy(bigNumberify(get(amount))).toFixed());
-}
-
-watchImmediate(form, () => {
-  checkAssetType();
-});
-
-onBeforeMount(() => {
-  updatePrice(true);
-});
-
-watch(amount, () => {
-  updatePrice();
-  calculateValue();
-});
-
-watch(price, () => {
-  calculateValue();
-});
-
-watch(usdValue, () => {
-  updatePrice();
-});
 
 watch(assetType, (assetType) => {
   if (assetType === 'nft')
     set(amount, '1');
 });
 
-const rules = {
-  category: {
-    required: helpers.withMessage(
-      t('dashboard.snapshot.edit.dialog.balances.rules.category').toString(),
-      required,
-    ),
-  },
-  assetIdentifier: {
-    required: helpers.withMessage(
-      t('dashboard.snapshot.edit.dialog.balances.rules.asset').toString(),
-      required,
-    ),
-  },
-  amount: {
-    required: helpers.withMessage(
-      t('dashboard.snapshot.edit.dialog.balances.rules.amount').toString(),
-      required,
-    ),
-  },
-  price: {
-    required: helpers.withMessage(
-      t('dashboard.snapshot.edit.dialog.balances.rules.price').toString(),
-      required,
-    ),
-  },
-  usdValue: {
-    required: helpers.withMessage(
-      t('dashboard.snapshot.edit.dialog.balances.rules.value').toString(),
-      required,
-    ),
-  },
-};
-
-const { setValidation } = useEditBalancesSnapshotForm();
-
-const v$ = setValidation(rules, computed(() => ({ ...get(form), price })), {
-  $autoDirty: true,
+watchImmediate(model, () => {
+  checkAssetType();
 });
 
-function updateAsset(asset: string) {
-  emit('update:asset', asset);
-}
+defineExpose({
+  submitPrice,
+  validate: () => get(v$).$validate(),
+});
 </script>
 
 <template>
@@ -150,65 +114,27 @@ function updateAsset(asset: string) {
           inline
           :disabled="edit"
         >
-          <template #default>
-            <RuiRadio
-              :label="t('dashboard.snapshot.edit.dialog.balances.token')"
-              internal-value="token"
-            />
-            <RuiRadio
-              :label="t('dashboard.snapshot.edit.dialog.balances.nft')"
-              internal-value="nft"
-            />
-          </template>
+          <RuiRadio
+            :label="t('dashboard.snapshot.edit.dialog.balances.token')"
+            value="token"
+          />
+          <RuiRadio
+            :label="t('dashboard.snapshot.edit.dialog.balances.nft')"
+            value="nft"
+          />
         </RuiRadioGroup>
-        <AssetSelect
-          v-if="assetType === 'token'"
-          v-model="assetIdentifier"
-          outlined
-          :disabled="edit"
-          :show-ignored="true"
-          :label="t('common.asset')"
-          :enable-association="false"
-          :error-messages="toMessages(v$.assetIdentifier)"
-          @change="updateAsset($event)"
-        />
-        <RuiTextField
-          v-else-if="assetType === 'nft'"
-          v-model="assetIdentifier"
-          :label="t('common.asset')"
-          variant="outlined"
-          color="primary"
-          :disabled="edit"
-          class="mb-1.5"
-          :error-messages="toMessages(v$.assetIdentifier)"
-          :hint="t('dashboard.snapshot.edit.dialog.balances.nft_hint')"
-          @blur="updateAsset($event.target.value)"
-        />
       </div>
     </div>
-    <AmountInput
-      v-model="amount"
-      :disabled="assetType === 'nft'"
-      variant="outlined"
-      :label="t('common.amount')"
-      :error-messages="toMessages(v$.amount)"
-    />
 
-    <TwoFieldsAmountInput
-      :primary-value.sync="price"
-      :secondary-value.sync="usdValue"
-      data-cy="trade-rate"
-      :label="{
-        primary: t('common.price'),
-        secondary: t('common.value_in_symbol', {
-          symbol: currencySymbol,
-        }),
-      }"
-      :error-messages="{
-        primary: toMessages(v$.price),
-        secondary: toMessages(v$.usdValue),
-      }"
-      @update:reversed="usdValueInputFocused = $event"
+    <EditBalancesSnapshotAssetPriceForm
+      ref="assetPriceForm"
+      v-model:asset="assetIdentifier"
+      v-model:amount="amount"
+      v-model:usd-value="usdValue"
+      :timestamp="timestamp"
+      :disable-asset="edit"
+      :nft="assetType === 'nft'"
+      @update:asset="updateAsset($event)"
     />
 
     <EditBalancesSnapshotLocationSelector

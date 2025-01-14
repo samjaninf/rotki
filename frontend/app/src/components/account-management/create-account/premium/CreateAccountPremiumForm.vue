@@ -53,16 +53,10 @@ watch(enabled, (enabled) => {
 
 const rules = {
   apiKey: {
-    required: helpers.withMessage(
-      t('premium_credentials.validation.non_empty_key').toString(),
-      requiredIf(enabled),
-    ),
+    required: helpers.withMessage(t('premium_credentials.validation.non_empty_key'), requiredIf(enabled)),
   },
   apiSecret: {
-    required: helpers.withMessage(
-      t('premium_credentials.validation.non_empty_secret').toString(),
-      requiredIf(enabled),
-    ),
+    required: helpers.withMessage(t('premium_credentials.validation.non_empty_secret'), requiredIf(enabled)),
   },
 };
 
@@ -92,7 +86,6 @@ function input(newInput: Partial<PremiumSetup>) {
         variant="outlined"
         :disabled="loading"
         color="primary"
-        class="premium-settings__fields__api-key"
         :label="t('premium_credentials.label_api_key')"
         :error-messages="toMessages(v$.apiKey)"
       />
@@ -102,7 +95,6 @@ function input(newInput: Partial<PremiumSetup>) {
         variant="outlined"
         :disabled="loading"
         color="primary"
-        class="premium-settings__fields__api-secret"
         :label="t('premium_credentials.label_api_secret')"
         :error-messages="toMessages(v$.apiSecret)"
       />

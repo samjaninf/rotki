@@ -1,43 +1,53 @@
 <script setup lang="ts">
-import type { DataTableColumn } from '@rotki/ui-library-compat';
-import type { Message } from '@rotki/common/lib/messages';
+import { logger } from '@/utils/logging';
+import { useMessageStore } from '@/store/message';
+import { useInterop } from '@/composables/electron-interop';
+import { useSkippedHistoryEventsApi } from '@/composables/api/history/events/skipped';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
+import type { DataTableColumn } from '@rotki/ui-library';
+import type { Message } from '@rotki/common';
 import type { SkippedHistoryEventsSummary } from '@/types/history/events';
+
+interface Location {
+  location: string;
+  number: number;
+}
 
 const { getSkippedEventsSummary } = useSkippedHistoryEventsApi();
 
-const { state: skippedEvents, execute: refreshSkippedEvents }
-  = useAsyncState<SkippedHistoryEventsSummary>(
-    getSkippedEventsSummary,
-    {
-      locations: {},
-      total: 0,
-    },
-    {
-      immediate: true,
-      resetOnExecute: false,
-      delay: 0,
-    },
-  );
+const { execute: refreshSkippedEvents, state: skippedEvents } = useAsyncState<SkippedHistoryEventsSummary>(
+  getSkippedEventsSummary,
+  {
+    locations: {},
+    total: 0,
+  },
+  {
+    delay: 0,
+    immediate: true,
+    resetOnExecute: false,
+  },
+);
 
 const { t } = useI18n();
 
-const headers: DataTableColumn[] = [
+const headers: DataTableColumn<Location>[] = [
   {
-    label: t('common.location'),
-    key: 'location',
     align: 'center',
     cellClass: 'py-3',
+    key: 'location',
+    label: t('common.location'),
   },
   {
-    label: t('transactions.events.skipped.headers.number'),
-    key: 'number',
     align: 'end',
     cellClass: '!pr-12',
     class: '!pr-12',
+    key: 'number',
+    label: t('transactions.events.skipped.headers.number'),
   },
 ];
 
-const locationsData = computed(() =>
+const locationsData = computed<Location[]>(() =>
   Object.entries(get(skippedEvents).locations).map(([location, number]) => ({
     location,
     number,
@@ -46,16 +56,15 @@ const locationsData = computed(() =>
 
 const { appSession, openDirectory } = useInterop();
 
-const { downloadSkippedEventsCSV, exportSkippedEventsCSV }
-  = useSkippedHistoryEventsApi();
+const { downloadSkippedEventsCSV, exportSkippedEventsCSV } = useSkippedHistoryEventsApi();
 
 const { setMessage } = useMessageStore();
 
 function showExportCSVError(description: string) {
   setMessage({
-    title: t('transactions.events.skipped.csv_export_error').toString(),
     description,
     success: false,
+    title: t('transactions.events.skipped.csv_export_error'),
   });
 }
 
@@ -64,22 +73,18 @@ async function createCsv(path: string): Promise<void> {
   try {
     const success = await exportSkippedEventsCSV(path);
     message = {
-      title: t('actions.online_events.skipped.csv_export.title').toString(),
       description: success
-        ? t(
-          'actions.online_events.skipped.csv_export.message.success',
-        ).toString()
-        : t(
-          'actions.online_events.skipped.csv_export.message.failure',
-        ).toString(),
+        ? t('actions.online_events.skipped.csv_export.message.success')
+        : t('actions.online_events.skipped.csv_export.message.failure'),
       success,
+      title: t('actions.online_events.skipped.csv_export.title'),
     };
   }
   catch (error: any) {
     message = {
-      title: t('actions.online_events.skipped.csv_export.title').toString(),
       description: error.message,
       success: false,
+      title: t('actions.online_events.skipped.csv_export.title'),
     };
   }
   setMessage(message);
@@ -88,9 +93,7 @@ async function createCsv(path: string): Promise<void> {
 async function exportCSV() {
   try {
     if (appSession) {
-      const directory = await openDirectory(
-        t('common.select_directory').toString(),
-      );
+      const directory = await openDirectory(t('common.select_directory'));
       if (!directory)
         return;
 
@@ -98,12 +101,8 @@ async function exportCSV() {
     }
     else {
       const result = await downloadSkippedEventsCSV();
-      if (!result.success) {
-        showExportCSVError(
-          result.message
-          ?? t('transactions.events.skipped.download_failed').toString(),
-        );
-      }
+      if (!result.success)
+        showExportCSVError(result.message ?? t('transactions.events.skipped.download_failed'));
     }
   }
   catch (error: any) {
@@ -111,45 +110,42 @@ async function exportCSV() {
   }
 }
 
-const { reProcessSkippedEvents: reProcessSkippedEventsCaller }
-  = useSkippedHistoryEventsApi();
+const { reProcessSkippedEvents: reProcessSkippedEventsCaller } = useSkippedHistoryEventsApi();
 
-const loading: Ref<boolean> = ref(false);
+const loading = ref<boolean>(false);
 
 async function reProcessSkippedEvents() {
   set(loading, true);
   let message: Message;
   try {
-    const { total, successful } = await reProcessSkippedEventsCaller();
+    const { successful, total } = await reProcessSkippedEventsCaller();
     if (successful === 0) {
       message = {
-        title: t('transactions.events.skipped.reprocess.failed.title'),
-        description: t(
-          'transactions.events.skipped.reprocess.failed.no_processed_events',
-        ),
+        description: t('transactions.events.skipped.reprocess.failed.no_processed_events'),
         success: false,
+        title: t('transactions.events.skipped.reprocess.failed.title'),
       };
     }
     else {
       message = {
-        title: t('transactions.events.skipped.reprocess.success.title'),
         description:
           successful < total
             ? t('transactions.events.skipped.reprocess.success.some', {
-              total,
               successful,
+              total,
             })
             : t('transactions.events.skipped.reprocess.success.all'),
         success: true,
+        title: t('transactions.events.skipped.reprocess.success.title'),
       };
     }
   }
   catch (error: any) {
     logger.error(error);
     message = {
-      title: t('transactions.events.skipped.reprocess.failed.title').toString(),
       description: error.message,
       success: false,
+      title: t('transactions.events.skipped.reprocess.failed.title'),
     };
   }
   finally {
@@ -163,43 +159,18 @@ async function reProcessSkippedEvents() {
 
 <template>
   <div>
-    <div class="mb-6 gap-4">
-      <div class="text-h6">
-        {{ t('transactions.events.skipped.title') }}
-      </div>
-    </div>
-
-    <div class="max-w-[40rem]">
-      <RuiDataTable
-        :cols="headers"
-        :rows="locationsData"
-        row-attr="location"
-        dense
-        striped
-        outlined
-        :empty="{
-          description: t('transactions.events.skipped.no_skipped_events'),
-        }"
-      >
-        <template #item.location="{ row }">
-          <LocationDisplay :identifier="row.location" />
+    <div class="pb-5 flex flex-wrap gap-4 items-center justify-between">
+      <SettingCategoryHeader>
+        <template #title>
+          {{ t('database_settings.skipped_events.title') }}
         </template>
-        <template #item.number="{ row }">
-          {{ row.number }}
+        <template #subtitle>
+          {{ t('database_settings.skipped_events.subtitle') }}
         </template>
-        <template #tfoot>
-          <tr>
-            <th>{{ t('common.total') }}</th>
-            <td class="text-end pr-12 py-2">
-              {{ skippedEvents.total }}
-            </td>
-          </tr>
-        </template>
-      </RuiDataTable>
-
+      </SettingCategoryHeader>
       <div
         v-if="skippedEvents.total > 0"
-        class="flex gap-3 mt-6"
+        class="flex flex-wrap gap-2"
       >
         <RuiButton
           variant="outlined"
@@ -207,7 +178,7 @@ async function reProcessSkippedEvents() {
           @click="exportCSV()"
         >
           <template #prepend>
-            <RuiIcon name="file-download-line" />
+            <RuiIcon name="lu-file-down" />
           </template>
           {{ t('common.actions.export_csv') }}
         </RuiButton>
@@ -217,11 +188,38 @@ async function reProcessSkippedEvents() {
           @click="reProcessSkippedEvents()"
         >
           <template #prepend>
-            <RuiIcon name="refresh-line" />
+            <RuiIcon name="lu-refresh-ccw" />
           </template>
           {{ t('transactions.events.skipped.reprocess.action') }}
         </RuiButton>
       </div>
     </div>
+    <RuiDataTable
+      :cols="headers"
+      :rows="locationsData"
+      row-attr="location"
+      dense
+      striped
+      outlined
+      class="bg-white dark:bg-transparent"
+      :empty="{
+        description: t('transactions.events.skipped.no_skipped_events'),
+      }"
+    >
+      <template #item.location="{ row }">
+        <LocationDisplay :identifier="row.location" />
+      </template>
+      <template #item.number="{ row }">
+        {{ row.number }}
+      </template>
+      <template #tfoot>
+        <tr>
+          <th>{{ t('common.total') }}</th>
+          <td class="text-end pr-12 py-2">
+            {{ skippedEvents.total }}
+          </td>
+        </tr>
+      </template>
+    </RuiDataTable>
   </div>
 </template>

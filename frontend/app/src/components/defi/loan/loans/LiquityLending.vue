@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
-import type { AssetBalance, BigNumber } from '@rotki/common';
+import { type AssetBalance, type BigNumber, Blockchain, HistoryEventEntryType } from '@rotki/common';
+import { useScramble } from '@/composables/scramble';
+import { usePremium } from '@/composables/premium';
+import HistoryEventsView from '@/components/history/events/HistoryEventsView.vue';
+import PremiumCard from '@/components/display/PremiumCard.vue';
+import LoanDebt from '@/components/defi/loan/LoanDebt.vue';
+import LiquityLiquidation from '@/components/defi/loan/loans/liquity/LiquityLiquidation.vue';
+import LiquityCollateral from '@/components/defi/loan/loans/liquity/LiquityCollateral.vue';
+import LoanHeader from '@/components/defi/loan/LoanHeader.vue';
 import type { LiquityLoan } from '@/types/defi/liquity';
 
 const props = defineProps<{
@@ -11,16 +17,10 @@ const props = defineProps<{
 const { t } = useI18n();
 const { loan } = toRefs(props);
 
-const debt: ComputedRef<AssetBalance> = computed(() => get(loan).balance.debt);
-const collateral: ComputedRef<AssetBalance> = computed(
-  () => get(loan).balance.collateral,
-);
-const ratio: ComputedRef<BigNumber | null> = computed(
-  () => get(loan).balance.collateralizationRatio,
-);
-const liquidationPrice: ComputedRef<BigNumber | null> = computed(
-  () => get(loan).balance.liquidationPrice,
-);
+const debt = computed<AssetBalance>(() => get(loan).balance.debt);
+const collateral = computed<AssetBalance>(() => get(loan).balance.collateral);
+const ratio = computed<BigNumber | null>(() => get(loan).balance.collateralizationRatio);
+const liquidationPrice = computed<BigNumber | null>(() => get(loan).balance.liquidationPrice);
 const premium = usePremium();
 
 const { scrambleIdentifier } = useScramble();

@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { externalLinks } from '@/data/external-links';
+import { externalLinks } from '@shared/external-links';
+import { useNotificationsStore } from '@/store/notifications';
+import { useExternalApiKeys, useServiceKeyHandler } from '@/composables/settings/api-keys/external';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import ServiceKeyCard from '@/components/settings/api-keys/ServiceKeyCard.vue';
+import ServiceKey from '@/components/settings/api-keys/ServiceKey.vue';
 
 const name = 'thegraph';
 const { t } = useI18n();
 
-const { loading, apiKey, actionStatus, save, confirmDelete }
-  = useExternalApiKeys(t);
+const { actionStatus, apiKey, confirmDelete, loading, save } = useExternalApiKeys(t);
+const { saveHandler, serviceKeyRef } = useServiceKeyHandler<InstanceType<typeof ServiceKey>>();
 
 const key = apiKey(name);
 const status = actionStatus(name);
 
-const { remove: removeNotification, prioritized } = useNotificationsStore();
+const { prioritized, remove: removeNotification } = useNotificationsStore();
 
 /**
  * After an api key is added, remove thegraph notification
@@ -18,9 +23,7 @@ const { remove: removeNotification, prioritized } = useNotificationsStore();
 function removeTheGraphNotification() {
   // using prioritized list here, because the actionable notifications are always on top (index 0|1)
   // so it is faster to find
-  const notification = prioritized.find(
-    data => data.i18nParam?.props?.service.toLowerCase() === name,
-  );
+  const notification = prioritized.find(data => data.i18nParam?.props?.service.toLowerCase() === name);
 
   if (!notification)
     return;
@@ -32,32 +35,51 @@ const link = externalLinks.applyTheGraphApiKey;
 </script>
 
 <template>
-  <RuiCard>
-    <template #header>
-      {{ t('external_services.thegraph.title') }}
+  <ServiceKeyCard
+    :key-set="!!key"
+    :title="t('external_services.thegraph.title')"
+    :subtitle="t('external_services.thegraph.description')"
+    image-src="./assets/images/services/thegraph.svg"
+    :primary-action="key
+      ? t('external_services.replace_key')
+      : t('external_services.save_key')"
+    :action-disabled="!serviceKeyRef?.currentValue"
+    @confirm="saveHandler()"
+  >
+    <template #left-buttons>
+      <RuiButton
+        :disabled="loading || !key"
+        color="error"
+        variant="text"
+        @click="confirmDelete(name)"
+      >
+        <template #prepend>
+          <RuiIcon
+            name="lu-trash-2"
+            size="16"
+          />
+        </template>
+        {{ t('external_services.delete_key') }}
+      </RuiButton>
     </template>
-    <template #subheader>
-      {{ t('external_services.thegraph.description') }}
-    </template>
-
     <ServiceKey
       :id="name"
+      ref="serviceKeyRef"
+      hide-actions
       :api-key="key"
       :name="name"
       :data-cy="name"
       :label="t('external_services.api_key')"
       :hint="t('external_services.thegraph.hint')"
       :loading="loading"
-      :tooltip="t('external_services.thegraph.delete_tooltip')"
       :status="status"
       @save="save($event, removeTheGraphNotification)"
-      @delete-key="confirmDelete($event)"
     >
-      <i18n
+      <i18n-t
         v-if="link"
         tag="div"
         class="text-rui-text-secondary text-body-2"
-        path="external_services.get_api_key"
+        keypath="external_services.get_api_key"
       >
         <template #link>
           <ExternalLink
@@ -67,7 +89,7 @@ const link = externalLinks.applyTheGraphApiKey;
             {{ t('common.here') }}
           </ExternalLink>
         </template>
-      </i18n>
+      </i18n-t>
     </ServiceKey>
-  </RuiCard>
+  </ServiceKeyCard>
 </template>

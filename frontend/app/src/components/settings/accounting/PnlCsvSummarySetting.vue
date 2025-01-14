@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const haveCSVSummary = ref(false);
 const { pnlCsvHaveSummary } = storeToRefs(useAccountingSettingsStore());
 
@@ -22,7 +25,7 @@ const { t } = useI18n();
       color="primary"
       :success-messages="success"
       :error-messages="error"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

@@ -2,7 +2,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from eth_abi import encode as encode_abi
-from eth_utils import to_checksum_address, to_hex, to_normalized_address
+from eth_utils import to_checksum_address, to_hex
 from web3 import Web3
 from web3.exceptions import Web3Exception
 
@@ -474,7 +474,7 @@ def _decode_uniswap_v3_result(
 
     Edge cases whereby a token does not conform to ERC20 standard,the user balance is set to ZERO.
     """
-    nft_id = NFT_DIRECTIVE + to_normalized_address(uniswap_v3_nft_manager_address) + '_' + str(data[0])  # noqa: E501
+    nft_id = NFT_DIRECTIVE + to_checksum_address(uniswap_v3_nft_manager_address) + '_' + str(data[0])  # noqa: E501
     pool_token = data[1]
     token0 = _decode_uniswap_v3_token(data[4])
     token1 = _decode_uniswap_v3_token(data[5])
@@ -503,6 +503,8 @@ def _decode_uniswap_v3_result(
                 f'Error fetching ethereum token {token.address!s} while decoding Uniswap V3 LP '
                 f'position due to: {e!s}',
             )
+            continue
+
         # Classify the asset either as price known or unknown
         if asset.has_oracle():
             price_known_tokens.add(asset)
@@ -514,7 +516,7 @@ def _decode_uniswap_v3_result(
             user_balance=Balance(amount=asset_balance),
         ))
     # total_supply is None because Uniswap V3 LP does not represent positions as tokens.
-    pool = NFTLiquidityPool(
+    return NFTLiquidityPool(
         address=pool_token,
         price_range=(FVal(data[3][0]), FVal(data[3][1])),
         nft_id=nft_id,
@@ -522,7 +524,6 @@ def _decode_uniswap_v3_result(
         total_supply=None,
         user_balance=Balance(amount=ZERO),
     )
-    return pool
 
 
 def get_unknown_asset_price_chain(
@@ -534,10 +535,10 @@ def get_unknown_asset_price_chain(
     asset_price: AssetToPrice = {}
     for from_token in unknown_tokens:
         try:
-            price, _ = oracle.query_current_price(from_token, A_USDC.resolve_to_asset_with_oracles(), False)  # noqa: E501
+            price = oracle.query_current_price(from_token, A_USDC.resolve_to_asset_with_oracles())
             asset_price[from_token.evm_address] = price
         except (PriceQueryUnsupportedAsset, RemoteError) as e:
-            log.error(
+            log.debug(
                 f'Failed to find price for {from_token!s}/{A_USDC!s} LP using '
                 f'Uniswap V3 oracle due to: {e!s}.',
             )

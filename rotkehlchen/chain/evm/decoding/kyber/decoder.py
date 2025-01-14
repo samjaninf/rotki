@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.asset import CryptoAsset
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
@@ -15,14 +15,17 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
-from .constants import CPT_KYBER, KYBER_AGGREGATOR_CONTRACT, KYBER_CPT_DETAILS
+from .constants import (
+    CPT_KYBER,
+    KYBER_AGGREGATOR_CONTRACT,
+    KYBER_AGGREGATOR_SWAPPED,
+    KYBER_CPT_DETAILS,
+)
 
 if TYPE_CHECKING:
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
-
-KYBER_AGGREGATOR_SWAPPED: Final = b'\xd6\xd4\xf5h\x1c$l\x9fB\xc2\x03\xe2\x87\x97Z\xf1`\x1f\x8d\xf8\x03Z\x92Q\xf7\x9a\xab\\\x8f\t\xe2\xf8'  # noqa: E501
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -70,16 +73,16 @@ class KyberCommonDecoder(DecoderInterface):
         if context.tx_log.topics[0] != KYBER_AGGREGATOR_SWAPPED:
             return DEFAULT_DECODING_OUTPUT
 
-        sender = hex_or_bytes_to_address(context.tx_log.data[:32])
-        receiver = hex_or_bytes_to_address(context.tx_log.data[96:128])
+        sender = bytes_to_address(context.tx_log.data[:32])
+        receiver = bytes_to_address(context.tx_log.data[96:128])
 
         if self.base.any_tracked([sender, receiver]) is False:
             return DEFAULT_DECODING_OUTPUT
 
-        source_token_address = hex_or_bytes_to_address(context.tx_log.data[32:64])
-        destination_token_address = hex_or_bytes_to_address(context.tx_log.data[64:96])
-        spent_amount_raw = hex_or_bytes_to_int(context.tx_log.data[128:160])
-        return_amount_raw = hex_or_bytes_to_int(context.tx_log.data[160:192])
+        source_token_address = bytes_to_address(context.tx_log.data[32:64])
+        destination_token_address = bytes_to_address(context.tx_log.data[64:96])
+        spent_amount_raw = int.from_bytes(context.tx_log.data[128:160])
+        return_amount_raw = int.from_bytes(context.tx_log.data[160:192])
 
         source_asset = self.base.get_or_create_evm_asset(source_token_address)
         destination_asset = self.base.get_or_create_evm_asset(destination_token_address)

@@ -2,8 +2,8 @@ from typing import Final
 
 from rotkehlchen.chain.evm.types import string_to_evm_address
 
-
-POOL_ADDRESS: Final = string_to_evm_address('0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2')
-ETH_GATEWAYS: Final = (string_to_evm_address('0x893411580e590D62dDBca8a703d61Cc4A8c7b2b9'),)
-AAVE_TREASURY: Final = string_to_evm_address('0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c')
-AAVE_V3_DATA_PROVIDER: Final = string_to_evm_address('0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3')
+AAVE_V3_DATA_PROVIDER_OLD: Final = string_to_evm_address('0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3')  # noqa: E501
+# Those can be found in https://search.onaave.com/?q=protocol%20data%20provider
+AAVE_V3_DATA_PROVIDER: Final = string_to_evm_address('0x41393e5e337606dc3821075Af65AeE84D7688CBD')
+LIDO_AAVE_V3_DATA_PROVIDER: Final = string_to_evm_address('0x08795CFE08C7a81dCDFf482BbAAF474B240f31cD')  # noqa: E501
+ETHERFI_AAVE_V3_DATA_PROVIDER: Final = string_to_evm_address('0xE7d490885A68f00d9886508DF281D67263ed5758')  # noqa: E501

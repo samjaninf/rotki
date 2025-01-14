@@ -2,26 +2,20 @@
 import useVuelidate from '@vuelidate/core';
 import { helpers, minValue, requiredIf } from '@vuelidate/validators';
 import { toMessages } from '@/utils/validation';
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
-const taxFreeAfterPeriod = ref<string>();
+const taxFreeAfterPeriod = ref<string>('');
 const taxFreePeriod = ref(false);
 
 const { t } = useI18n();
 
-const { taxfreeAfterPeriod: period } = storeToRefs(
-  useAccountingSettingsStore(),
-);
+const { taxfreeAfterPeriod: period } = storeToRefs(useAccountingSettingsStore());
 
 const rules = {
   taxFreeAfterPeriod: {
-    required: helpers.withMessage(
-      t('account_settings.validation.tax_free_days'),
-      requiredIf(taxFreePeriod),
-    ),
-    minValue: helpers.withMessage(
-      t('account_settings.validation.tax_free_days_gt_zero'),
-      minValue(1),
-    ),
+    minValue: helpers.withMessage(t('account_settings.validation.tax_free_days_gt_zero'), minValue(1)),
+    required: helpers.withMessage(t('account_settings.validation.tax_free_days'), requiredIf(taxFreePeriod)),
   },
 };
 
@@ -94,12 +88,12 @@ onMounted(() => {
     >
       <RuiSwitch
         v-model="taxFreePeriod"
-        class="accounting-settings__taxfree-period"
+        data-cy="taxfree-period-switch"
         :success-messages="success"
         :error-messages="error"
         :label="t('accounting_settings.trade.labels.tax_free')"
         color="primary"
-        @input="update($event)"
+        @update:model-value="update($event)"
       />
     </SettingsOption>
 
@@ -114,13 +108,14 @@ onMounted(() => {
         v-model="taxFreeAfterPeriod"
         variant="outlined"
         color="primary"
-        class="accounting-settings__taxfree-period-days pt-4"
+        data-cy="taxfree-period"
+        class="pt-4"
         :success-messages="success"
         :error-messages="error || toMessages(v$.taxFreeAfterPeriod)"
         :disabled="!taxFreePeriod"
         :label="t('accounting_settings.trade.labels.taxfree_after_period')"
         type="number"
-        @input="callIfValid($event, update)"
+        @update:model-value="callIfValid($event, update)"
       />
     </SettingsOption>
   </div>

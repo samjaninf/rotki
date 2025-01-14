@@ -23,7 +23,7 @@ from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress, EvmTokenKind, EvmTransaction
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import (
     COMPOUND_V3_SUPPLY,
@@ -88,17 +88,17 @@ class Compoundv3CommonDecoder(DecoderInterface):
         if context.tx_log.topics[0] != REWARD_CLAIMED:
             return DEFAULT_DECODING_OUTPUT
 
-        if not self.base.is_tracked(recipient := hex_or_bytes_to_address(context.tx_log.topics[2])):  # noqa: E501
+        if not self.base.is_tracked(recipient := bytes_to_address(context.tx_log.topics[2])):
             return DEFAULT_DECODING_OUTPUT
 
         reward_token = get_or_create_evm_token(
             userdb=self.base.database,
-            evm_address=hex_or_bytes_to_address(context.tx_log.topics[3]),
+            evm_address=bytes_to_address(context.tx_log.topics[3]),
             chain_id=self.base.evm_inquirer.chain_id,
             token_kind=EvmTokenKind.ERC20,
             evm_inquirer=self.base.evm_inquirer,
         )
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data)
+        amount_raw = int.from_bytes(context.tx_log.data)
         amount = asset_normalized_value(amount_raw, reward_token)
 
         for event in context.decoded_events:
@@ -148,14 +148,14 @@ class Compoundv3CommonDecoder(DecoderInterface):
             if (
                 tx_log.address == compound_token.evm_address and
                 tx_log.topics[0] == ERC20_OR_ERC721_TRANSFER and
-                hex_or_bytes_to_address(tx_log.topics[1]) == ZERO_ADDRESS and  # from
-                hex_or_bytes_to_address(tx_log.topics[2]) == hex_or_bytes_to_address(context.tx_log.topics[2])  # to  # noqa: E501
+                bytes_to_address(tx_log.topics[1]) == ZERO_ADDRESS and  # from
+                bytes_to_address(tx_log.topics[2]) == bytes_to_address(context.tx_log.topics[2])  # to  # noqa: E501
             ):
                 receiving_ctoken = True
                 break
 
         amount = asset_normalized_value(
-            amount=hex_or_bytes_to_int(context.tx_log.data),
+            amount=int.from_bytes(context.tx_log.data),
             asset=underlying_token,
         )
         paired_event, action_from_event_type, action_to_event_subtype, action_to_notes = None, None, None, None  # noqa: E501
@@ -188,7 +188,9 @@ class Compoundv3CommonDecoder(DecoderInterface):
             )
             return DEFAULT_DECODING_OUTPUT
 
-        action_items = []  # also create an action item for the receive of the cTokens
+        # create an action item for the receive of the cTokens. It's possible that
+        # there is no cToken received if you just supply collateral to the COMET contract
+        action_items = []
         if paired_event is not None and action_from_event_type is not None:
             action_items.append(ActionItem(
                 action='transform',
@@ -198,7 +200,7 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 to_event_subtype=action_to_event_subtype,
                 to_notes=action_to_notes,
                 to_counterparty=CPT_COMPOUND_V3,
-                paired_event_data=(paired_event, True),
+                paired_events_data=((paired_event,), True),
             ))
 
         return DecodingOutput(action_items=action_items)
@@ -222,8 +224,8 @@ class Compoundv3CommonDecoder(DecoderInterface):
             if (
                 tx_log.address == compound_token.evm_address and
                 tx_log.topics[0] == ERC20_OR_ERC721_TRANSFER and
-                hex_or_bytes_to_address(tx_log.topics[1]) == hex_or_bytes_to_address(context.tx_log.topics[2]) and  # from  # noqa: E501
-                hex_or_bytes_to_address(tx_log.topics[2]) == ZERO_ADDRESS  # to
+                bytes_to_address(tx_log.topics[1]) == bytes_to_address(context.tx_log.topics[2]) and  # from  # noqa: E501
+                bytes_to_address(tx_log.topics[2]) == ZERO_ADDRESS  # to
             ):
                 sending_ctoken = True
                 break
@@ -266,24 +268,24 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 to_event_subtype=action_to_event_subtype,
                 to_notes=action_to_notes,
                 to_counterparty=CPT_COMPOUND_V3,
-                paired_event_data=(paired_event, False),
+                paired_events_data=((paired_event,), False),
             ))
 
         return DecodingOutput(action_items=action_items)
 
-    def _decode_collateral_movemement(
+    def _decode_collateral_movement(
             self,
             context: DecoderContext,
             compound_token: EvmToken,
     ) -> DecodingOutput:
         """Decode compound v3 supply/withdraw collateral events"""
         collateral_asset = EvmToken(evm_address_to_identifier(
-            address=hex_or_bytes_to_address(context.tx_log.topics[3]),
+            address=bytes_to_address(context.tx_log.topics[3]),
             chain_id=self.evm_inquirer.chain_id,
             token_type=EvmTokenKind.ERC20,
         ))
         collateral_amount = asset_normalized_value(
-            amount=hex_or_bytes_to_int(context.tx_log.data),
+            amount=int.from_bytes(context.tx_log.data),
             asset=collateral_asset,
         )
 
@@ -346,8 +348,8 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 COMPOUND_V3_SUPPLY, COMPOUND_V3_SUPPLY_COLLATERAL,
                 COMPOUND_V3_WITHDRAW, COMPOUND_V3_WITHDRAW_COLLATERAL,
             } or self.base.any_tracked([
-                hex_or_bytes_to_address(context.tx_log.topics[1]),  # from_address
-                hex_or_bytes_to_address(context.tx_log.topics[2]),  # to_address
+                bytes_to_address(context.tx_log.topics[1]),  # from_address
+                bytes_to_address(context.tx_log.topics[2]),  # to_address
             ]) is False
         ):
             return DEFAULT_DECODING_OUTPUT
@@ -363,7 +365,7 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 compound_token=compound_token,
             )
         else:
-            return self._decode_collateral_movemement(
+            return self._decode_collateral_movement(
                 context=context,
                 compound_token=compound_token,
             )
@@ -380,10 +382,10 @@ class Compoundv3CommonDecoder(DecoderInterface):
         }
 
     def addresses_to_counterparties(self) -> dict['ChecksumEvmAddress', str]:
-        return {token.evm_address: CPT_COMPOUND_V3 for token in GlobalDBHandler.get_evm_tokens(
+        return dict.fromkeys(GlobalDBHandler.get_addresses_by_protocol(
             chain_id=self.evm_inquirer.chain_id,
             protocol=CPT_COMPOUND_V3,
-        )}
+        ), CPT_COMPOUND_V3)
 
     def post_decoding_rules(self) -> dict[str, list[tuple[int, Callable]]]:
         return {CPT_COMPOUND_V3: [(0, self._correct_supply_or_withdraw_event)]}

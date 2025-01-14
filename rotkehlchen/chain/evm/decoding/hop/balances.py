@@ -2,7 +2,6 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
@@ -22,8 +21,8 @@ from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChecksumEvmAddress, EvmTokenKind
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.evm.decoding.decoder import EVMTransactionDecoder
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -32,12 +31,12 @@ log = RotkehlchenLogsAdapter(logger)
 class HopBalances(ProtocolWithBalance):
     def __init__(
             self,
-            database: 'DBHandler',
             evm_inquirer: 'EvmNodeInquirer',
+            tx_decoder: 'EVMTransactionDecoder',
     ):
         super().__init__(
-            database=database,
             evm_inquirer=evm_inquirer,
+            tx_decoder=tx_decoder,
             counterparty=CPT_HOP,
             deposit_event_types={(HistoryEventType.STAKING, HistoryEventSubType.DEPOSIT_ASSET)},
         )
@@ -63,8 +62,7 @@ class HopBalances(ProtocolWithBalance):
                     staked_contracts[event.address].add(user_address)
 
         hop_abi = self.evm_inquirer.contracts.abi('HOP_STAKING')
-        for contract_address in staked_contracts:
-            addresses = staked_contracts[contract_address]
+        for contract_address, addresses in staked_contracts.items():
             staking_contract = EvmContract(
                 address=contract_address,
                 abi=hop_abi,

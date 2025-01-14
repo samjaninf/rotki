@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { useMessageStore } from '@/store/message';
+import { useReportsStore } from '@/store/reports';
+import { useReportsApi } from '@/composables/api/reports';
+import { useInterop } from '@/composables/electron-interop';
+
 withDefaults(
   defineProps<{
     list?: boolean;
@@ -18,9 +23,9 @@ const { downloadReportCSV } = useReportsApi();
 
 function showMessage(description: string) {
   setMessage({
-    title: t('profit_loss_report.csv_export_error'),
     description,
     success: false,
+    title: t('profit_loss_report.csv_export_error'),
   });
 }
 
@@ -35,11 +40,8 @@ async function exportCSV() {
     }
     else {
       const result = await downloadReportCSV();
-      if (!result.success) {
-        showMessage(
-          result.message ?? t('profit_loss_report.download_failed'),
-        );
-      }
+      if (!result.success)
+        showMessage(result.message ?? t('profit_loss_report.download_failed'));
     }
   }
   catch (error: any) {
@@ -47,9 +49,7 @@ async function exportCSV() {
   }
 }
 
-const label = computed(() =>
-  appSession ? t('common.actions.export_csv') : t('common.actions.download_csv'),
-);
+const label = computed(() => (appSession ? t('common.actions.export_csv') : t('common.actions.download_csv')));
 </script>
 
 <template>
@@ -61,7 +61,7 @@ const label = computed(() =>
     <template #prepend>
       <RuiIcon
         size="20"
-        name="file-download-line"
+        name="lu-file-down"
       />
     </template>
     {{ label }}

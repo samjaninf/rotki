@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { CurrencyLocation } from '@/types/currency-location';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
 const currencyLocation = ref<CurrencyLocation>(CurrencyLocation.AFTER);
 const { currencyLocation: location } = storeToRefs(useFrontendSettingsStore());
@@ -28,21 +30,24 @@ onMounted(() => {
     <RuiRadioGroup
       v-model="currencyLocation"
       color="primary"
-      class="general-settings__fields__currency-location mt-4"
-      :label="t('general_settings.amount.label.currency_location')"
+      data-cy="currency-location-input"
+      class="flex flex-col"
       :success-messages="success"
       :error-messages="error"
-      inline
-      @input="update($event)"
+      @update:model-value="update($event)"
     >
-      <RuiRadio
-        :label="t('general_settings.amount.label.location_before')"
-        internal-value="before"
-      />
-      <RuiRadio
-        :label="t('general_settings.amount.label.location_after')"
-        internal-value="after"
-      />
+      <RuiRadio value="before">
+        {{ t('general_settings.amount.label.location_before') }}
+        <div class="text-sm text-rui-text-secondary mt-1">
+          {{ t('general_settings.amount.example.before') }}
+        </div>
+      </RuiRadio>
+      <RuiRadio value="after">
+        {{ t('general_settings.amount.label.location_after') }}
+        <div class="text-sm text-rui-text-secondary mt-1">
+          {{ t('general_settings.amount.example.after') }}
+        </div>
+      </RuiRadio>
     </RuiRadioGroup>
   </SettingsOption>
 </template>

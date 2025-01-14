@@ -16,24 +16,29 @@ from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChainID, ChecksumEvmAddress, EvmTokenKind
+from rotkehlchen.types import ChainID, EvmTokenKind
 from rotkehlchen.utils.misc import get_chunks
 
 from .constants import CPT_GMX, GMX_READER, GMX_STAKING_REWARD, GMX_USD_DECIMALS, GMX_VAULT_ADDRESS
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.arbitrum_one.decoding.decoder import ArbitrumOneTransactionDecoder
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.types import ChecksumEvmAddress
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
 class GmxBalances(ProtocolWithBalance):
-    def __init__(self, database: 'DBHandler', evm_inquirer: 'ArbitrumOneInquirer'):
+    def __init__(
+            self,
+            evm_inquirer: 'ArbitrumOneInquirer',
+            tx_decoder: 'ArbitrumOneTransactionDecoder',
+    ):
         super().__init__(
-            database=database,
             evm_inquirer=evm_inquirer,
+            tx_decoder=tx_decoder,
             counterparty=CPT_GMX,
             deposit_event_types={(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET)},
         )

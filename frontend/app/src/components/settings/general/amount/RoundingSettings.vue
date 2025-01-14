@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import RoundingSelector from '@/components/settings/general/amount/RoundingSelector.vue';
 import type { BigNumber } from '@rotki/common';
 import type { RoundingMode } from '@/types/settings/frontend-settings';
 
 const frontendSettingsStore = useFrontendSettingsStore();
-const { amountRoundingMode, valueRoundingMode } = storeToRefs(
-  frontendSettingsStore,
-);
+const { amountRoundingMode, valueRoundingMode } = storeToRefs(frontendSettingsStore);
 
 const numberExample: BigNumber = bigNumberify(0.0815);
 
@@ -25,21 +26,13 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="rounding-settings mt-8">
-    <RuiCardHeader class="p-0 mb-4">
-      <template #header>
-        {{ t('rounding_settings.title') }}
-      </template>
-      <template #subheader>
-        {{ t('rounding_settings.subtitle') }}
-      </template>
-    </RuiCardHeader>
-    <div class="grid md:grid-cols-2 gap-6 mt-4">
+  <div class="rounding-settings">
+    <div class="flex flex-col space-y-6">
       <RoundingSelector
-        :value="amountRoundingMode"
+        :model-value="amountRoundingMode"
         :label="t('rounding_settings.amount_rounding')"
         :hint="t('rounding_settings.amount_rounding_hint')"
-        @input="setAmountRoundingMode($event)"
+        @update:model-value="setAmountRoundingMode($event)"
       >
         <AmountDisplay
           class="ml-2 mt-4"
@@ -47,10 +40,10 @@ const { t } = useI18n();
         />
       </RoundingSelector>
       <RoundingSelector
-        :value="valueRoundingMode"
+        :model-value="valueRoundingMode"
         :label="t('rounding_settings.value_rounding')"
         :hint="t('rounding_settings.value_rounding_hint')"
-        @input="setValueRoundingMode($event)"
+        @update:model-value="setValueRoundingMode($event)"
       >
         <AmountDisplay
           class="ml-2 mt-4"

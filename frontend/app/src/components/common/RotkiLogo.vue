@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { LogoProps } from '@rotki/ui-library-compat';
+import { checkIfDevelopment } from '@shared/utils';
+import type { LogoProps } from '@rotki/ui-library';
+
+defineOptions({
+  inheritAttrs: false,
+});
 
 withDefaults(
   defineProps<{
@@ -10,19 +15,18 @@ withDefaults(
   }>(),
   {
     logo: 'app',
-    uniqueKey: undefined,
     size: undefined,
     text: false,
+    uniqueKey: undefined,
   },
 );
 
-const attrs = useAttrs();
 const branch = checkIfDevelopment() ? 'develop' : 'main';
 </script>
 
 <template>
   <RuiLogo
-    v-bind="attrs"
+    v-bind="$attrs"
     :branch="branch"
     :logo="logo"
     :text="text"

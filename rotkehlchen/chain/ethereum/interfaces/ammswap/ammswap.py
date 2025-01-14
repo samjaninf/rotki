@@ -32,14 +32,14 @@ from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.premium.premium import Premium
+from rotkehlchen.premium.premium import Premium, has_premium_check
 from rotkehlchen.tasks.utils import query_missing_prices_of_base_entries
 from rotkehlchen.types import ChainID, ChecksumEvmAddress, EvmTokenKind, Timestamp
-from rotkehlchen.user_messages import MessagesAggregator
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.user_messages import MessagesAggregator
 
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ SUSHISWAP_TRADES_PREFIX = 'sushiswap_trades'
 
 class AMMSwapPlatform:
     """
-    AMM Module interace
+    AMM Module interface
     This class uses decoded events from protocols following the Uniswap design to query balances
     and stats.
     The counterparties provided are the ones used to filter the history events for querying the
@@ -64,7 +64,7 @@ class AMMSwapPlatform:
             ethereum_inquirer: 'EthereumInquirer',
             database: 'DBHandler',
             premium: Premium | None,
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
     ) -> None:
         self.counterparties = counterparties
         self.ethereum = ethereum_inquirer
@@ -206,7 +206,7 @@ class AMMSwapPlatform:
                 events = db.get_history_events(
                     cursor=cursor,
                     filter_query=dbfilter,
-                    has_premium=self.premium is not None,
+                    has_premium=has_premium_check(self.premium),
                     group_by_event_ids=False,
                 )
 

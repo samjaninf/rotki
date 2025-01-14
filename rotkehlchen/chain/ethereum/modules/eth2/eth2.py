@@ -13,6 +13,7 @@ from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.modules.eth2.beacon import BeaconInquirer
 from rotkehlchen.chain.structures import TimestampOrBlockRange
 from rotkehlchen.constants import ONE, ZERO
+from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, HOUR_IN_SECONDS, YEAR_IN_SECONDS
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.eth2 import DBEth2
@@ -25,7 +26,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.eth2 import EthBlockEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.premium.premium import Premium
+from rotkehlchen.premium.premium import Premium, has_premium_check
 from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.data_structures import LRUCacheWithRemove
@@ -46,7 +47,7 @@ from .structures import (
     ValidatorDetailsWithStatus,
     ValidatorID,
 )
-from .utils import create_profit_filter_queries, scrape_validator_daily_stats
+from .utils import create_profit_filter_queries
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
@@ -122,7 +123,10 @@ class Eth2(EthereumModule):
         if len(pubkey_to_ownership) == []:
             return {}  # nothing detected
 
-        balances = self.beacon_inquirer.get_balances(indices_or_pubkeys=list(pubkey_to_ownership.keys()))  # noqa: E501
+        balances = self.beacon_inquirer.get_balances(
+            indices_or_pubkeys=list(pubkey_to_ownership.keys()),
+            has_premium=has_premium_check(self.premium),
+        )
         for pubkey, balance in balances.items():
             if (ownership_proportion := pubkey_to_ownership.get(pubkey, ONE)) != ONE:
                 balances[pubkey] = balance * ownership_proportion
@@ -188,8 +192,8 @@ class Eth2(EthereumModule):
                 else:  # can only be EXITED
                     got_indices = dbeth2.get_exited_validator_indices(cursor)
 
-            to_filter_indices = got_indices if to_filter_indices is None else to_filter_indices | got_indices  # noqa: E501
-            to_query_indices = got_indices if to_query_indices is None else to_query_indices | got_indices  # noqa: E501
+            to_filter_indices = got_indices if to_filter_indices is None else to_filter_indices & got_indices  # noqa: E501
+            to_query_indices = got_indices if to_query_indices is None else to_query_indices & got_indices  # noqa: E501
 
         if addresses is not None:
             with self.database.conn.read_ctx() as cursor:
@@ -197,7 +201,7 @@ class Eth2(EthereumModule):
                     cursor=cursor,
                     addresses=addresses,
                 )
-            to_query_indices = associated_indices if to_query_indices is None else to_query_indices | associated_indices  # noqa: E501
+            to_query_indices = associated_indices if to_query_indices is None else to_query_indices & associated_indices  # noqa: E501
             # also add the to_filter_indices since this will enable deposit association
             # to validator index by address. We need to do this instead of adding
             # addresses to filter arguments since then we would be ANDing the filters
@@ -247,6 +251,7 @@ class Eth2(EthereumModule):
         if now - to_ts <= DAY_IN_SECONDS:
             balances = self.beacon_inquirer.get_balances(
                 indices_or_pubkeys=list(to_query_indices),
+                has_premium=has_premium_check(self.premium),
             )
             for pubkey, balance in balances.items():
                 entry = pnls[pubkey_to_index[pubkey]]
@@ -352,7 +357,7 @@ class Eth2(EthereumModule):
 
         for validator_index, last_ts, exit_ts in result:
             self._maybe_backoff_beaconchain(now=now)
-            new_stats = scrape_validator_daily_stats(
+            new_stats = self.beacon_inquirer.query_validator_daily_stats(
                 validator_index=validator_index,
                 last_known_timestamp=last_ts,
                 exit_ts=exit_ts,
@@ -565,13 +570,15 @@ class Eth2(EthereumModule):
                 'LEFT JOIN evm_events_info B_E '
                 'ON B_T.tx_hash=B_E.tx_hash LEFT JOIN history_events B_H '
                 'ON B_E.identifier=B_H.identifier WHERE '
-                'B_H.asset="ETH" AND B_H.type="receive" AND B_H.subtype="none" '
+                'B_H.asset=? AND B_H.type=? AND B_H.subtype=? '
                 'AND B_T.block_number=('
                 'SELECT A_S.is_exit_or_blocknumber '
                 'FROM history_events A_H LEFT JOIN eth_staking_events_info A_S '
-                'ON A_H.identifier=A_S.identifier WHERE A_H.subtype="mev reward" AND '
+                'ON A_H.identifier=A_S.identifier WHERE A_H.subtype=? AND '
                 'A_S.is_exit_or_blocknumber=B_T.block_number AND '
                 'A_H.amount=B_H.amount AND A_H.location_label=B_H.location_label)',
+                (A_ETH.identifier, HistoryEventType.RECEIVE.serialize(),
+                 HistoryEventSubType.NONE.serialize(), HistoryEventSubType.MEV_REWARD.serialize()),
             )
             result = cursor.fetchall()
 
@@ -654,9 +661,8 @@ class Eth2(EthereumModule):
         pubkey_to_data: dict[Eth2PubKey, tuple[int, str]] = {}
         with self.database.conn.read_ctx() as cursor:
             cursor.execute(
-                'SELECT H.identifier, H.amount, E.extra_data from history_events H LEFT JOIN eth_staking_events_info S '  # noqa: E501
-                'ON H.identifier=S.identifier LEFT JOIN evm_events_info E '
-                'ON E.identifier=H.identifier WHERE S.validator_index=?',
+                'SELECT H.identifier, H.amount, H.extra_data from history_events H LEFT JOIN eth_staking_events_info S '  # noqa: E501
+                'ON H.identifier=S.identifier WHERE S.validator_index=?',
                 (UNKNOWN_VALIDATOR_INDEX,),
             )
             for entry in cursor:
@@ -699,12 +705,8 @@ class Eth2(EthereumModule):
                 staking_changes,
             )
             write_cursor.executemany(
-                'UPDATE history_events SET notes=? WHERE identifier=?',
+                'UPDATE history_events SET extra_data=null, notes=? WHERE identifier=?',
                 history_changes,
-            )
-            write_cursor.executemany(
-                'UPDATE evm_events_info SET extra_data=null WHERE identifier=?',
-                [(x[1],) for x in staking_changes],
             )
             write_cursor.executemany(
                 'INSERT OR IGNORE INTO eth2_validators(validator_index, public_key, ownership_proportion) VALUES(?, ?, ?)',  # noqa: E501

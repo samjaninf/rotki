@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useLocations } from '@/composables/locations';
+import AppImage from '@/components/common/AppImage.vue';
+
 const props = withDefaults(
   defineProps<{
     item: string;
@@ -10,8 +13,8 @@ const props = withDefaults(
   {
     horizontal: false,
     icon: false,
-    size: '24px',
     noPadding: false,
+    size: '24px',
   },
 );
 
@@ -22,8 +25,6 @@ const { item } = toRefs(props);
 const { locationData } = useLocations();
 
 const location = locationData(item);
-
-const css = useCssModule();
 </script>
 
 <template>
@@ -34,7 +35,7 @@ const css = useCssModule();
       'flex-row gap-2': horizontal,
       'flex-col gap-1': !horizontal,
       'skeleton': !location,
-      [css.wrapper]: icon,
+      [$style.wrapper]: icon,
     }"
     @click="emit('click', item)"
   >
@@ -52,6 +53,7 @@ const css = useCssModule();
         class="icon-bg"
       >
         <RuiIcon
+          v-if="location.icon"
           color="secondary"
           :size="size"
           :name="location.icon"

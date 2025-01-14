@@ -1,38 +1,36 @@
 import {
   NotificationCategory,
   type NotificationData,
+  NotificationGroup,
   type NotificationPayload,
   Priority,
+  type SemiPartial,
   Severity,
-} from '@rotki/common/lib/messages';
+  assert,
+} from '@rotki/common';
 import { useSessionStorage } from '@vueuse/core';
-import { orderBy } from 'lodash-es';
-import type { SemiPartial } from '@rotki/common';
+import { orderBy } from 'es-toolkit';
+import { createNotification } from '@/utils/notifications';
 
 function notificationDefaults(): NotificationPayload {
   return {
-    title: '',
+    category: NotificationCategory.DEFAULT,
+    display: false,
     message: '',
     severity: Severity.ERROR,
-    display: false,
-    category: NotificationCategory.DEFAULT,
+    title: '',
   };
 }
 
 export const useNotificationsStore = defineStore('notifications', () => {
-  const data: Ref<NotificationData[]> = ref([]);
-  const lastDisplay: Ref<Record<string, number>> = useSessionStorage(
-    'rotki.notification.last_display',
-    {},
-  );
+  const data = ref<NotificationData[]>([]);
+  const lastDisplay: Ref<Record<string, number>> = useSessionStorage('rotki.notification.last_display', {});
+
+  const { t } = useI18n();
 
   const prioritized = computed<NotificationData[]>(() => {
-    const byDate = orderBy(get(data), n => n.date, 'desc');
-    return orderBy(
-      byDate,
-      (n: NotificationData) => n.priority ?? Priority.NORMAL,
-      'desc',
-    );
+    const byDate = orderBy(get(data), ['date'], ['desc']);
+    return orderBy(byDate, [(n: NotificationData): Priority => n.priority ?? Priority.NORMAL], ['desc']);
   });
   const count = computed(() => get(data).length);
   const nextId = computed(() => {
@@ -43,14 +41,11 @@ export const useNotificationsStore = defineStore('notifications', () => {
     let nextId: number;
     if (ids.length > 0)
       nextId = ids[0] + 1;
-    else
-      nextId = 1;
+    else nextId = 1;
 
     return nextId;
   });
-  const queue = computed(() =>
-    get(prioritized).filter(notification => notification.display),
-  );
+  const queue = computed(() => get(prioritized).filter(notification => notification.display));
 
   function update(payload: NotificationData[]): void {
     set(data, [...get(data), ...payload]);
@@ -70,21 +65,57 @@ export const useNotificationsStore = defineStore('notifications', () => {
     set(data, notifications);
   }
 
-  const notify = (
-    newData: SemiPartial<NotificationPayload, 'title' | 'message'>,
-  ): void => {
-    const groupToFind = newData.group;
+  const notify = (newData: SemiPartial<NotificationPayload, 'title' | 'message'>): void => {
     const dataList = [...get(data)];
 
-    const notificationIndex = groupToFind
-      ? dataList.findIndex(({ group }) => group === groupToFind)
-      : -1;
+    if (newData.priority === Priority.BULK) {
+      const messages = dataList.filter(notification => notification.priority === Priority.BULK)
+        .map(notification => notification.message);
+
+      if (messages.includes(newData.message)) {
+        return;
+      }
+
+      const deserializationErrorPrefix = 'Could not deserialize';
+
+      if (newData.message.startsWith(deserializationErrorPrefix)) {
+        const index = dataList.findIndex(notification => notification.group === NotificationGroup.DESERIALIZATION_ERROR);
+        if (index >= 0) {
+          const existing = dataList[index];
+          assert(
+            existing.groupCount !== undefined,
+            'groupCount should be defined when group is set',
+          );
+          const groupCount = existing.groupCount + 1;
+          dataList[index] = {
+            ...existing,
+            date: new Date(),
+            groupCount,
+            message: t('notification_messages.deserialization_error', { count: groupCount }),
+          };
+
+          set(data, dataList);
+        }
+        else {
+          update([
+            createNotification(get(nextId), Object.assign(notificationDefaults(), {
+              ...newData,
+              group: NotificationGroup.DESERIALIZATION_ERROR,
+              groupCount: 1,
+              message: t('notification_messages.deserialization_error', { count: 1 }),
+            })),
+          ]);
+        }
+        return;
+      }
+    }
+
+    const groupToFind = newData.group;
+
+    const notificationIndex = groupToFind ? dataList.findIndex(({ group }) => group === groupToFind) : -1;
 
     if (notificationIndex === -1) {
-      const notification = createNotification(
-        get(nextId),
-        Object.assign(notificationDefaults(), newData),
-      );
+      const notification = createNotification(get(nextId), Object.assign(notificationDefaults(), newData));
 
       if (groupToFind && notification.display) {
         set(lastDisplay, {
@@ -111,14 +142,14 @@ export const useNotificationsStore = defineStore('notifications', () => {
 
       const newNotification: NotificationData = {
         ...notification,
-        date,
-        title: newData.title,
-        message: newData.message,
-        groupCount: newData.groupCount,
         action: newData.action,
-        severity: newData.severity || notification.severity,
-        priority: newData.priority,
+        date,
         display,
+        groupCount: newData.groupCount,
+        message: newData.message,
+        priority: newData.priority,
+        severity: newData.severity || notification.severity,
+        title: newData.title,
       };
 
       dataList.splice(notificationIndex, 1);
@@ -150,19 +181,16 @@ export const useNotificationsStore = defineStore('notifications', () => {
   };
 
   return {
-    data,
     count,
-    nextId,
-    queue,
-    prioritized,
-    notify,
+    data,
     displayed,
+    nextId,
+    notify,
+    prioritized,
+    queue,
     remove,
   };
 });
 
-if (import.meta.hot) {
-  import.meta.hot.accept(
-    acceptHMRUpdate(useNotificationsStore, import.meta.hot),
-  );
-}
+if (import.meta.hot)
+  import.meta.hot.accept(acceptHMRUpdate(useNotificationsStore, import.meta.hot));

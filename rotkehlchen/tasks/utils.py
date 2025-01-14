@@ -33,6 +33,7 @@ def should_run_periodic_task(
             DBCacheStatic.LAST_DELETE_PAST_CALENDAR_EVENTS,
             DBCacheStatic.LAST_CREATE_REMINDER_CHECK_TS,
             DBCacheStatic.LAST_GRAPH_DELEGATIONS_CHECK_TS,
+            DBCacheStatic.LAST_GNOSISPAY_QUERY_TS,
         ],
         refresh_period: int,
 ) -> bool:
@@ -72,7 +73,7 @@ def query_missing_prices_of_base_entries(
                 timestamp=timestamp,
             )
         except (NoPriceForGivenTimestamp, RemoteError) as e:
-            log.error(
+            log.debug(
                 f'Failed to find price for {asset} at {timestamp} in history '
                 f'event with {identifier=}. {e!s}.',
             )

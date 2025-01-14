@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { createNotification } from '@/utils/notifications';
+import { useAreaVisibilityStore } from '@/store/session/visibility';
+import { useNotificationsStore } from '@/store/notifications';
+import Notification from '@/components/status/notifications/Notification.vue';
+
 const { t } = useI18n();
 
 const visibleNotification = ref(createNotification());
 const notificationStore = useNotificationsStore();
 const { queue } = storeToRefs(notificationStore);
-const css = useCssModule();
 const { displayed } = notificationStore;
 
 async function dismiss(id: number) {
@@ -17,7 +21,12 @@ async function dismissAll() {
   set(visibleNotification, { ...get(visibleNotification), display: false });
 }
 
+const { showNotificationBar } = storeToRefs(useAreaVisibilityStore());
+
 function checkQueue() {
+  if (get(showNotificationBar))
+    return;
+
   const data = [...get(queue)];
   if (!get(visibleNotification).display && data.length > 0) {
     const next = data.shift();
@@ -30,27 +39,21 @@ function checkQueue() {
   }
 }
 
-watch(queue, checkQueue, { deep: true });
+watch(queue, checkQueue, { deep: true, immediate: true });
 
-onMounted(() => {
-  checkQueue();
+watch(showNotificationBar, (showNotificationBar) => {
+  if (showNotificationBar)
+    dismissAll();
 });
-
-const { dark } = useTheme();
 </script>
 
 <template>
-  <VSnackbar
+  <RuiNotification
     v-model="visibleNotification.display"
-    :class="css.popup"
     :timeout="visibleNotification.duration"
-    top
-    right
-    :light="!dark"
-    app
-    rounded
     width="400px"
-    @input="displayed([visibleNotification.id])"
+    class="top-[3.5rem]"
+    @update:model-value="displayed([visibleNotification.id])"
   >
     <Notification
       popup
@@ -58,9 +61,7 @@ const { dark } = useTheme();
       @dismiss="dismiss(visibleNotification.id)"
     />
     <template v-if="queue.length > 0">
-      <div
-        class="flex justify-between p-2 items-center border-t border-default"
-      >
+      <div class="flex justify-between p-2 items-center border-t border-default">
         <RuiTooltip
           :open-delay="400"
           :popper="{ placement: 'right' }"
@@ -88,32 +89,12 @@ const { dark } = useTheme();
               icon
               @click="dismissAll()"
             >
-              <RuiIcon name="list-unordered" />
+              <RuiIcon name="lu-list" />
             </RuiButton>
           </template>
           {{ t('notification_popup.dismiss_all') }}
         </RuiTooltip>
       </div>
     </template>
-  </VSnackbar>
+  </RuiNotification>
 </template>
-
-<style module lang="scss">
-.popup {
-  :global {
-    .v-snack {
-      &__wrapper {
-        width: 400px;
-      }
-
-      &__content {
-        padding: 0 !important;
-      }
-
-      &__action {
-        margin-right: 0 !important;
-      }
-    }
-  }
-}
-</style>

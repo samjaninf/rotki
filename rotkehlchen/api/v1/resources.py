@@ -33,7 +33,6 @@ from rotkehlchen.api.v1.schemas import (
     AllBalancesQuerySchema,
     AppInfoSchema,
     AssetIconUploadSchema,
-    AssetMovementsQuerySchema,
     AssetResetRequestSchema,
     AssetsImportingFromFormSchema,
     AssetsImportingSchema,
@@ -58,9 +57,12 @@ from rotkehlchen.api.v1.schemas import (
     BlockchainAccountsPutSchema,
     BlockchainBalanceQuerySchema,
     BlockchainTransactionDeletionSchema,
+    BlockchainTypeAccountsDeleteSchema,
+    ChainTypeAccountSchema,
     ClearAvatarsCacheSchema,
     ClearCacheSchema,
     ClearIconsCacheSchema,
+    ConnectToRPCNodes,
     CreateAccountingRuleSchema,
     CreateHistoryEventSchema,
     CurrentAssetsPriceSchema,
@@ -89,17 +91,20 @@ from rotkehlchen.api.v1.schemas import (
     EvmTransactionHashAdditionSchema,
     EvmTransactionQuerySchema,
     ExchangeBalanceQuerySchema,
+    ExchangeEventsQuerySchema,
     ExchangeRatesSchema,
     ExchangesDataResourceSchema,
     ExchangesResourceAddSchema,
     ExchangesResourceEditSchema,
     ExchangesResourceRemoveSchema,
+    ExportHistoryDownloadSchema,
     ExportHistoryEventSchema,
     ExternalServicesResourceAddSchema,
     ExternalServicesResourceDeleteSchema,
-    FalsePositveSpamTokenSchema,
     FileListSchema,
     HistoricalAssetsPriceSchema,
+    HistoricalPerAssetAmountsSchema,
+    HistoricalPerAssetBalanceSchema,
     HistoryEventSchema,
     HistoryEventsDeletionSchema,
     HistoryExportingSchema,
@@ -111,6 +116,7 @@ from rotkehlchen.api.v1.schemas import (
     LocationAssetMappingsDeleteSchema,
     LocationAssetMappingsPostSchema,
     LocationAssetMappingsUpdateSchema,
+    ManualBalanceQuerySchema,
     ManuallyTrackedBalancesAddSchema,
     ManuallyTrackedBalancesDeleteSchema,
     ManuallyTrackedBalancesEditSchema,
@@ -143,12 +149,13 @@ from rotkehlchen.api.v1.schemas import (
     SingleAssetIdentifierSchema,
     SingleAssetWithOraclesIdentifierSchema,
     SingleFileSchema,
+    SingleTokenSchema,
     SkippedExternalEventsExportSchema,
     SnapshotEditingSchema,
     SnapshotImportingSchema,
     SnapshotQuerySchema,
     SnapshotTimestampQuerySchema,
-    SpamTokenSchema,
+    SpamTokenListSchema,
     StakingQuerySchema,
     StatisticsAssetBalanceSchema,
     StatisticsNetValueSchema,
@@ -156,6 +163,7 @@ from rotkehlchen.api.v1.schemas import (
     StringIdentifierSchema,
     TagSchema,
     TimedManualPriceSchema,
+    TimestampRangeSchema,
     TradeDeleteSchema,
     TradePatchSchema,
     TradeSchema,
@@ -199,7 +207,6 @@ from rotkehlchen.db.constants import (
 from rotkehlchen.db.filtering import (
     AccountingRulesFilterQuery,
     AddressbookFilterQuery,
-    AssetMovementsFilterQuery,
     AssetsFilterQuery,
     CustomAssetsFilterQuery,
     DBFilterQuery,
@@ -234,6 +241,7 @@ from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetAmount,
+    ChainType,
     ChecksumEvmAddress,
     Eth2PubKey,
     EvmlikeChain,
@@ -290,8 +298,7 @@ def load_json_viewargs_data(request: Request, schema: Schema) -> dict[str, Any]:
     if data is missing:
         data = {}
 
-    data = _combine_parser_data(data, view_args, schema)
-    return data
+    return _combine_parser_data(data, view_args, schema)  # type: ignore  # MultiDictproxy is dict
 
 
 @parser.location_loader('json_and_query')
@@ -315,8 +322,7 @@ def load_json_query_viewargs_data(request: Request, schema: Schema) -> dict[str,
     if data is missing:
         return data
 
-    data = _combine_parser_data(data, view_args, schema)
-    return data
+    return _combine_parser_data(data, view_args, schema)  # type: ignore  # MultiDictproxy is dict
 
 
 @parser.location_loader('form_and_file')
@@ -324,8 +330,7 @@ def load_form_file_data(request: Request, schema: Schema) -> MultiDictProxy:
     """Load data from a request accepting form and file encoded data"""
     form_data = parser.load_form(request, schema)
     file_data = parser.load_files(request, schema)
-    data = _combine_parser_data(form_data, file_data, schema)
-    return data
+    return _combine_parser_data(form_data, file_data, schema)
 
 
 @parser.location_loader('view_args_and_file')
@@ -333,8 +338,7 @@ def load_view_args_file_data(request: Request, schema: Schema) -> MultiDictProxy
     """Load data from a request accepting view_args and file encoded data"""
     view_args_data = parser.load_view_args(request, schema)
     file_data = parser.load_files(request, schema)
-    data = _combine_parser_data(view_args_data, file_data, schema)
-    return data
+    return _combine_parser_data(view_args_data, file_data, schema)
 
 
 def allow_async_validation() -> Callable:
@@ -634,13 +638,13 @@ class EvmTransactionsResource(BaseMethodView):
     def put(
             self,
             async_query: bool,
-            evm_chain: SUPPORTED_CHAIN_IDS,
-            tx_hash: EVMTxHash,
+            transactions: list[dict[str, Any]],
+            delete_custom: bool,
     ) -> Response:
-        return self.rest_api.decode_evm_transaction(
+        return self.rest_api.decode_given_evm_transactions(
             async_query=async_query,
-            evm_chain=evm_chain,
-            tx_hash=tx_hash,
+            transactions=[(x['evm_chain'], x['tx_hash']) for x in transactions],
+            delete_custom=delete_custom,
         )
 
 
@@ -671,13 +675,11 @@ class EvmlikeTransactionsResource(BaseMethodView):
     def put(
             self,
             async_query: bool,
-            tx_hash: EVMTxHash,
-            chain: EvmlikeChain,
+            transactions: list[dict[str, Any]],
     ) -> Response:
         return self.rest_api.decode_evmlike_transactions(
             async_query=async_query,
-            tx_hash=tx_hash,
-            chain=chain,
+            transactions=[(x['chain'], x['tx_hash']) for x in transactions],
         )
 
 
@@ -743,6 +745,7 @@ class RpcNodesResource(BaseMethodView):
 
     get_schema = RpcNodeSchema()
     put_schema = RpcAddNodeSchema()
+    post_schema = ConnectToRPCNodes()
 
     def make_patch_schema(self) -> RpcNodeEditSchema:
         return RpcNodeEditSchema(
@@ -805,7 +808,7 @@ class RpcNodesResource(BaseMethodView):
             weight=weight,
             active=active,
         )
-        return self.rest_api.update_rpc_node(node=node)
+        return self.rest_api.update_and_connect_rpc_node(node=node)
 
     @require_loggedin_user()
     @resource_parser.use_kwargs(make_delete_schema, location='json_and_query_and_view_args')
@@ -815,6 +818,11 @@ class RpcNodesResource(BaseMethodView):
             identifier: int,
     ) -> Response:
         return self.rest_api.delete_rpc_node(identifier=identifier, blockchain=blockchain)
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json_and_query_and_view_args')
+    def post(self, identifier: int | None, blockchain: SupportedBlockchain) -> Response:
+        return self.rest_api.connect_rpc_node(identifier=identifier, blockchain=blockchain)
 
 
 class ExternalServicesResource(BaseMethodView):
@@ -867,11 +875,18 @@ class ExchangeBalancesResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query_and_view_args')
-    def get(self, location: Location | None, async_query: bool, ignore_cache: bool) -> Response:
+    def get(
+            self,
+            location: Location | None,
+            async_query: bool,
+            ignore_cache: bool,
+            usd_value_threshold: FVal | None,
+    ) -> Response:
         return self.rest_api.query_exchange_balances(
             location=location,
             async_query=async_query,
             ignore_cache=ignore_cache,
+            usd_value_threshold=usd_value_threshold,
         )
 
 
@@ -1068,25 +1083,30 @@ class BlockchainBalancesResource(BaseMethodView):
             blockchain: SupportedBlockchain | None,
             async_query: bool,
             ignore_cache: bool,
+            usd_value_threshold: FVal | None,
     ) -> Response:
         return self.rest_api.query_blockchain_balances(
             blockchain=blockchain,
             async_query=async_query,
             ignore_cache=ignore_cache,
+            usd_value_threshold=usd_value_threshold,
         )
 
 
 class ManuallyTrackedBalancesResource(BaseMethodView):
 
-    get_schema = AsyncQueryArgumentSchema()
+    get_schema = ManualBalanceQuerySchema()
     put_schema = ManuallyTrackedBalancesAddSchema()
     patch_schema = ManuallyTrackedBalancesEditSchema()
     delete_schema = ManuallyTrackedBalancesDeleteSchema()
 
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
-    def get(self, async_query: bool) -> Response:
-        return self.rest_api.get_manually_tracked_balances(async_query=async_query)
+    def get(self, async_query: bool, usd_value_threshold: FVal | None) -> Response:
+        return self.rest_api.get_manually_tracked_balances(
+            async_query=async_query,
+            usd_value_threshold=usd_value_threshold,
+        )
 
     @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
@@ -1202,30 +1222,6 @@ class TradesResource(BaseMethodView):
         return self.rest_api.delete_trades(trades_ids=trades_ids)
 
 
-class AssetMovementsResource(BaseMethodView):
-
-    def make_get_schema(self) -> AssetMovementsQuerySchema:
-        with self.rest_api.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            settings = self.rest_api.rotkehlchen.data.db.get_settings(cursor)
-        return AssetMovementsQuerySchema(
-            treat_eth2_as_eth=settings.treat_eth2_as_eth,
-        )
-
-    @require_loggedin_user()
-    @resource_parser.use_kwargs(make_get_schema, location='json_and_query')
-    def get(
-            self,
-            filter_query: AssetMovementsFilterQuery,
-            async_query: bool,
-            only_cache: bool,
-    ) -> Response:
-        return self.rest_api.get_asset_movements(
-            filter_query=filter_query,
-            async_query=async_query,
-            only_cache=only_cache,
-        )
-
-
 class TagsResource(BaseMethodView):
 
     put_schema = TagSchema(color_required=True)
@@ -1287,6 +1283,25 @@ class EventsOnlineQueryResource(BaseMethodView):
         )
 
 
+class ExchangeEventsQueryResource(BaseMethodView):
+
+    post_schema = ExchangeEventsQuerySchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(
+            self,
+            location: Location,
+            async_query: bool,
+            name: str | None,
+    ) -> Response:
+        return self.rest_api.query_exchange_history_events(
+            name=name,
+            location=location,
+            async_query=async_query,
+        )
+
+
 class HistorySkippedExternalEventResource(BaseMethodView):
 
     put_schema = SkippedExternalEventsExportSchema()
@@ -1313,8 +1328,12 @@ class HistoryEventResource(BaseMethodView):
 
     put_schema = CreateHistoryEventSchema()
     post_schema = HistoryEventSchema()
-    patch_schema = EditHistoryEventSchema()
     delete_schema = HistoryEventsDeletionSchema()
+
+    def make_patch_schema(self) -> EditHistoryEventSchema:
+        return EditHistoryEventSchema(
+            dbhandler=self.rest_api.rotkehlchen.data.db,
+        )
 
     @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
@@ -1323,13 +1342,13 @@ class HistoryEventResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
-    def put(self, event: 'HistoryBaseEntry') -> Response:
-        return self.rest_api.add_history_event(event=event)
+    def put(self, events: list['HistoryBaseEntry']) -> Response:
+        return self.rest_api.add_history_events(events)
 
     @require_loggedin_user()
-    @use_kwargs(patch_schema, location='json')
-    def patch(self, event: 'HistoryBaseEntry') -> Response:
-        return self.rest_api.edit_history_event(event=event)
+    @resource_parser.use_kwargs(make_patch_schema, location='json')
+    def patch(self, events: list['HistoryBaseEntry']) -> Response:
+        return self.rest_api.edit_history_events(events)
 
     @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
@@ -1760,6 +1779,43 @@ class BlockchainsAccountsResource(BaseMethodView):
     ) -> dict[str, Any]:
         return self.rest_api.remove_single_blockchain_accounts(
             blockchain=blockchain,
+            accounts=accounts,
+        )
+
+
+class ChainTypeAccountResource(BaseMethodView):
+
+    @require_loggedin_user()
+    @use_kwargs(ChainTypeAccountSchema(), location='json_and_view_args')
+    def patch(
+            self,
+            chain_type: ChainType,  # pylint: disable=unused-argument
+            accounts: list[dict[str, Any]],
+            async_query: bool,
+    ) -> Response:
+        account_data = [
+            SingleBlockchainAccountData(
+                address=entry['address'],
+                label=entry['label'],
+                tags=entry['tags'],
+            ) for entry in accounts
+        ]
+        return self.rest_api.edit_chain_type_accounts_labels(
+            async_query=async_query,
+            accounts=account_data,
+        )
+
+    @require_loggedin_user()
+    @use_kwargs(BlockchainTypeAccountsDeleteSchema(), location='json_and_view_args')
+    def delete(
+            self,
+            chain_type: ChainType,
+            accounts: ListOfBlockchainAddresses,
+            async_query: bool,
+    ) -> Response:
+        return self.rest_api.remove_chain_type_accounts(
+            async_query=async_query,
+            chain_type=chain_type,
             accounts=accounts,
         )
 
@@ -2376,9 +2432,7 @@ class AssetIconsResource(BaseMethodView):
             filename = file.filename or f'{asset.identifier}.png'
             filepath = Path(temp_directory) / filename
             file.save(str(filepath))
-            response = self.rest_api.upload_asset_icon(asset=asset, filepath=filepath)
-
-        return response
+            return self.rest_api.upload_asset_icon(asset=asset, filepath=filepath)
 
     @use_kwargs(patch_schema, location='json')
     def patch(self, asset: AssetWithOracles) -> Response:
@@ -2730,11 +2784,10 @@ class UserAssetsResource(BaseMethodView):
             suffix=file.filename or 'assets.zip',
         ) as temp_file:
             file.save(temp_file.name)
-            response = self.rest_api.import_user_assets(
+            return self.rest_api.import_user_assets(
                 async_query=async_query,
                 path=Path(temp_file.name),
             )
-        return response
 
 
 class DBSnapshotsResource(BaseMethodView):
@@ -2792,11 +2845,10 @@ class DBSnapshotsResource(BaseMethodView):
             location_data_snapshot_filepath = Path(temp_directory) / location_data_snapshot_filename  # noqa: E501
             balances_snapshot_file.save(balance_snapshot_filepath)
             location_data_snapshot_file.save(location_data_snapshot_filepath)
-            response = self.rest_api.import_user_snapshot(
+            return self.rest_api.import_user_snapshot(
                 balances_snapshot_file=balance_snapshot_filepath,
                 location_data_snapshot_file=location_data_snapshot_filepath,
             )
-        return response
 
     @require_loggedin_user()
     @use_kwargs(patch_schema, location='json_and_view_args')
@@ -3108,13 +3160,23 @@ class ExportHistoryEventResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(post_schema, location='json_and_query')
-    def post(self, filter_query: 'HistoryBaseEntryFilterQuery', directory_path: Path) -> Response:
-        return self.rest_api.export_history_events(filter_query=filter_query, directory_path=directory_path)  # noqa: E501
+    def post(self, async_query: bool, filter_query: 'HistoryBaseEntryFilterQuery', directory_path: Path) -> dict[str, Any]:  # noqa: E501
+        return self.rest_api.export_history_events(filter_query=filter_query, directory_path=directory_path, async_query=async_query)  # noqa: E501
 
     @require_loggedin_user()
     @use_kwargs(put_schema, location='json_and_query')
-    def put(self, filter_query: 'HistoryBaseEntryFilterQuery') -> Response:
-        return self.rest_api.export_history_events(filter_query=filter_query, directory_path=None)
+    def put(self, async_query: bool, filter_query: 'HistoryBaseEntryFilterQuery') -> Response | dict[str, Any]:  # noqa: E501
+        return self.rest_api.export_history_events(filter_query=filter_query, directory_path=None, async_query=async_query)  # noqa: E501
+
+
+class ExportHistoryDownloadResource(BaseMethodView):
+
+    get_schema = ExportHistoryDownloadSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, file_path: str) -> Response:
+        return self.rest_api.download_history_events_csv(file_path=file_path)
 
 
 class AccountingRulesResource(BaseMethodView):
@@ -3206,7 +3268,7 @@ class AccountingRulesConflictsResource(BaseMethodView):
 
 class FalsePositiveSpamTokenResource(BaseMethodView):
 
-    post_delete_schema = FalsePositveSpamTokenSchema()
+    post_delete_schema = SingleTokenSchema()
 
     @require_loggedin_user()
     @use_kwargs(post_delete_schema, location='json_and_query')
@@ -3224,15 +3286,16 @@ class FalsePositiveSpamTokenResource(BaseMethodView):
 
 class SpamEvmTokenResource(BaseMethodView):
 
-    post_delete_schema = SpamTokenSchema()
+    delete_schema = SingleTokenSchema()
+    post_schema = SpamTokenListSchema()
 
     @require_loggedin_user()
-    @use_kwargs(post_delete_schema, location='json_and_query')
-    def post(self, token: EvmToken) -> Response:
-        return self.rest_api.add_token_to_spam(token=token)
+    @use_kwargs(post_schema, location='json_and_query')
+    def post(self, tokens: list[EvmToken]) -> Response:
+        return self.rest_api.add_tokens_to_spam(tokens)
 
     @require_loggedin_user()
-    @use_kwargs(post_delete_schema, location='json_and_query')
+    @use_kwargs(delete_schema, location='json_and_query')
     def delete(self, token: EvmToken) -> Response:
         return self.rest_api.remove_token_from_spam(token=token)
 
@@ -3303,3 +3366,61 @@ class CalendarRemindersResource(BaseMethodView):
     @use_kwargs(query_schema, location='json_and_query')
     def post(self, identifier: int) -> Response:
         return self.rest_api.query_reminders(event_id=identifier)
+
+
+class StatsWrapResource(BaseMethodView):
+    """Endpoint for the wrap stats. It is temporary and will be removed."""
+
+    query_schema = TimestampRangeSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(query_schema, location='json_and_query')
+    def post(self, from_timestamp: Timestamp, to_timestamp: Timestamp) -> Response:
+        return self.rest_api.query_wrap_stats(
+            from_ts=from_timestamp,
+            to_ts=to_timestamp,
+        )
+
+
+class TimestampHistoricalBalanceResource(BaseMethodView):
+
+    post_schema = HistoricalPerAssetBalanceSchema()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(post_schema, location='json')
+    def post(
+            self,
+            async_query: bool,
+            timestamp: Timestamp,
+            asset: Asset | None = None,
+    ) -> Response:
+        if asset is None:
+            return self.rest_api.get_historical_balance(
+                timestamp=timestamp,
+                async_query=async_query,
+            )
+
+        return self.rest_api.get_historical_asset_balance(
+            asset=asset,
+            timestamp=timestamp,
+            async_query=async_query,
+        )
+
+
+class HistoricalAssetAmountsResource(BaseMethodView):
+
+    post_schema = HistoricalPerAssetAmountsSchema()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(post_schema, location='json')
+    def post(
+            self,
+            asset: Asset,
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+    ) -> Response:
+        return self.rest_api.get_historical_asset_amounts(
+            asset=asset,
+            to_timestamp=to_timestamp,
+            from_timestamp=from_timestamp,
+        )

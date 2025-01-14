@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { Blockchain } from '@rotki/common';
 import { type ExplorerUrls, explorerUrls } from '@/types/asset/asset-urls';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useValueOrDefault } from '@/composables/utils/useValueOrDefault';
+import { useRefMap } from '@/composables/utils/useRefMap';
+import ExplorerInput from '@/components/settings/explorers/ExplorerInput.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import ChainDisplay from '@/components/accounts/blockchain/ChainDisplay.vue';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
 
 const additional = ['ETC'] as const;
 const supportedExplorers = [...Object.values(Blockchain), ...additional];
@@ -13,9 +20,7 @@ const address = ref<string>('');
 const tx = ref<string>('');
 const block = ref<string>('');
 
-const defaultUrls: ComputedRef<ExplorerUrls> = computed(
-  () => explorerUrls[get(selection)],
-);
+const defaultUrls = computed<ExplorerUrls>(() => explorerUrls[get(selection)]);
 
 const userUrls = computed(() => {
   const userExplorers = get(explorers);
@@ -84,28 +89,25 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="explorers mt-8">
-    <RuiCardHeader class="p-0">
-      <template #header>
-        {{ t('explorers.title') }}
-      </template>
-      <template #subheader>
-        {{ t('explorers.subtitle') }}
-      </template>
-    </RuiCardHeader>
-
-    <div class="flex flex-col gap-4 mt-6">
+  <SettingsItem>
+    <template #title>
+      {{ t('explorers.title') }}
+    </template>
+    <template #subtitle>
+      {{ t('explorers.subtitle') }}
+    </template>
+    <div class="flex flex-col gap-4">
       <RuiMenuSelect
         v-model="selection"
         :options="supportedExplorers"
         :label="t('explorers.chain_selector')"
         :item-height="56"
         variant="outlined"
-        @input="onChange()"
+        @update:model-value="onChange()"
       >
         <template #item="{ item }">
           <ChainDisplay
-            v-if="!additional.includes(item)"
+            v-if="!additional.some((chain) => chain === item)"
             dense
             :chain="item"
           />
@@ -118,7 +120,7 @@ const { t } = useI18n();
         </template>
         <template #selection="{ item }">
           <ChainDisplay
-            v-if="!additional.includes(item)"
+            v-if="!additional.some((chain) => chain === item)"
             dense
             :chain="item"
           />
@@ -155,5 +157,5 @@ const { t } = useI18n();
         @save-data="saveBlock($event)"
       />
     </div>
-  </div>
+  </SettingsItem>
 </template>

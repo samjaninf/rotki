@@ -155,7 +155,7 @@ class DBEth2:
     def get_validators(self, cursor: 'DBCursor') -> list[ValidatorDetails]:
         cursor.execute(
             'SELECT validator_index, public_key, ownership_proportion, withdrawal_address, '
-            'activation_timestamp, withdrawable_timestamp FROM eth2_validators;',
+            'activation_timestamp, withdrawable_timestamp, exited_timestamp FROM eth2_validators;',
         )
         return [ValidatorDetails.deserialize_from_db(x) for x in cursor]
 
@@ -168,7 +168,7 @@ class DBEth2:
         exited_indices = self.get_exited_validator_indices(cursor)
         cursor.execute(
             'SELECT validator_index, public_key, ownership_proportion, withdrawal_address, '
-            'activation_timestamp, withdrawable_timestamp FROM eth2_validators;',
+            'activation_timestamp, withdrawable_timestamp, exited_timestamp FROM eth2_validators;',
         )
         for entry in cursor:
             validator = ValidatorDetailsWithStatus.deserialize_from_db(entry)
@@ -181,32 +181,17 @@ class DBEth2:
         return result
 
     def get_active_validator_indices(self, cursor: 'DBCursor') -> set[int]:
-        """Returns the indices of the tracked validators that we know have not exited
-
-        Does so by using processed events, so will only return a list as up to date
-        as the events we got
-        """
+        """Returns the indices of the tracked validators that we know have not exited"""
         cursor.execute(
-            'SELECT EV.validator_index FROM eth2_validators EV LEFT JOIN '
-            'eth_staking_events_info SE ON EV.validator_index = SE.validator_index '
-            'WHERE SE.validator_index IS NULL '
-            'UNION '
-            'SELECT DISTINCT EV.validator_index FROM eth2_validators EV INNER JOIN '
-            'eth_staking_events_info SE ON EV.validator_index = SE.validator_index '
-            'WHERE EV.validator_index NOT IN ('
-            'SELECT validator_index from eth_staking_events_info WHERE is_exit_or_blocknumber=1)',
+            'SELECT validator_index from eth2_validators WHERE exited_timestamp IS NULL',
         )
         return {x[0] for x in cursor}
 
     def get_exited_validator_indices(self, cursor: 'DBCursor') -> set[int]:
-        """Returns the indices of the tracked validators that we know have exited
-
-        Does so by using processed events, so will only return a list as up to date
-        as the events we got
-        """
+        """Returns the indices of the tracked validators that we know have exited"""
         cursor.execute(
-            'SELECT validator_index FROM eth_staking_events_info WHERE is_exit_or_blocknumber=1',
-        )  # checking against literal 1 is safe since block 1 was not mined during PoS
+            'SELECT validator_index FROM eth2_validators WHERE exited_timestamp IS NOT NULL',
+        )
         return {x[0] for x in cursor}
 
     def get_associated_with_addresses_validator_indices(
@@ -243,7 +228,7 @@ class DBEth2:
         if (latest_result := write_cursor.fetchone()) is None:
             return  # no event found so nothing to do
 
-        if ts_ms_to_sec(latest_result[1]) >= withdrawable_timestamp:
+        if (exit_ts := ts_ms_to_sec(latest_result[1])) >= withdrawable_timestamp:
             write_cursor.execute(
                 'UPDATE eth_staking_events_info SET is_exit_or_blocknumber=? WHERE identifier=?',
                 (1, latest_result[0]),
@@ -251,6 +236,10 @@ class DBEth2:
             write_cursor.execute(
                 'UPDATE history_events SET notes=? WHERE identifier=?',
                 (form_withdrawal_notes(is_exit=True, validator_index=index, amount=latest_result[2]), latest_result[0]),  # noqa: E501
+            )
+            write_cursor.execute(
+                'UPDATE eth2_validators SET exited_timestamp=? WHERE validator_index=?',
+                (exit_ts, index),
             )
 
     def add_or_update_validators_except_ownership(
@@ -269,7 +258,7 @@ class DBEth2:
             self,
             write_cursor: 'DBCursor',
             validators: list[ValidatorDetails],
-            updatable_attributes: tuple[str, ...] = ('validator_index', 'ownership_proportion', 'withdrawal_address', 'activation_timestamp', 'withdrawable_timestamp'),  # noqa: E501
+            updatable_attributes: tuple[str, ...] = ('validator_index', 'ownership_proportion', 'withdrawal_address', 'activation_timestamp', 'withdrawable_timestamp', 'exited_timestamp'),  # noqa: E501
     ) -> None:
         """Adds or updates validator data
 
@@ -281,8 +270,8 @@ class DBEth2:
         for validator in validators:
             result = write_cursor.execute(
                 'SELECT validator_index, public_key, ownership_proportion, withdrawal_address, '
-                'activation_timestamp, withdrawable_timestamp FROM eth2_validators '
-                'WHERE public_key=?', (validator.public_key,),
+                'activation_timestamp, withdrawable_timestamp, exited_timestamp '
+                'FROM eth2_validators WHERE public_key=?', (validator.public_key,),
             ).fetchone()
             if result is not None:  # update case
                 db_validator = ValidatorDetails.deserialize_from_db(result)
@@ -295,7 +284,7 @@ class DBEth2:
             else:  # insertion case
                 write_cursor.execute(
                     'INSERT INTO '
-                    'eth2_validators(validator_index, public_key, ownership_proportion, withdrawal_address, activation_timestamp, withdrawable_timestamp) VALUES(?, ?, ?, ?, ?, ?)',  # noqa: E501
+                    'eth2_validators(validator_index, public_key, ownership_proportion, withdrawal_address, activation_timestamp, withdrawable_timestamp, exited_timestamp) VALUES(?, ?, ?, ?, ?, ?, ?)',  # noqa: E501
                     validator.serialize_for_db(),
                 )
 

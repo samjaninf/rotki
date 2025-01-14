@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import CopyButton from '@/components/helper/CopyButton.vue';
+
 const props = withDefaults(
   defineProps<{
     header?: string;
@@ -9,12 +11,12 @@ const props = withDefaults(
     alternative?: string;
   }>(),
   {
-    header: '',
-    title: '',
-    subtitle: '',
-    message: '',
-    error: '',
     alternative: '',
+    error: '',
+    header: '',
+    message: '',
+    subtitle: '',
+    title: '',
   },
 );
 
@@ -35,7 +37,7 @@ const errorText = computed(() => {
       <RuiIcon
         size="120"
         color="error"
-        name="error-warning-line"
+        name="lu-circle-alert"
       />
     </div>
     <div
@@ -64,9 +66,7 @@ const errorText = computed(() => {
       <template #subheader>
         {{ subtitle }}
       </template>
-      <div
-        class="font-light text-rui-text-secondary` error-screen__description"
-      >
+      <div class="font-light text-rui-text-secondary` error-screen__description">
         <pre class="text-caption text-wrap error-screen__description__message">
           {{ message }}
           <RuiDivider

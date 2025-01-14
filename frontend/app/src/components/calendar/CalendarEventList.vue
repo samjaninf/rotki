@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import dayjs from 'dayjs';
+import dayjs, { type Dayjs } from 'dayjs';
 import type { CalendarEvent } from '@/types/history/calendar';
 
+const selectedDate = defineModel<Dayjs>('selectedDate', { required: true });
+
 const props = defineProps<{
+  visibleDate: Dayjs;
   event: CalendarEvent;
 }>();
 
@@ -31,6 +34,14 @@ const description = computed(() => {
 });
 
 const { t } = useI18n();
+
+function onEventClicked(event: CalendarEvent) {
+  if (!get(selectedDate).isSame(props.visibleDate, 'month')) {
+    set(selectedDate, dayjs(event.timestamp * 1000));
+  }
+
+  edit(event);
+}
 </script>
 
 <template>
@@ -68,7 +79,7 @@ const { t } = useI18n();
           variant="text"
           size="sm"
           class="-ml-1"
-          @click="edit(event)"
+          @click="onEventClicked(event)"
         >
           {{ t('calendar.view_details') }}
         </RuiButton>

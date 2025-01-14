@@ -1,7 +1,12 @@
 <script setup lang="ts">
-const props = withDefaults(
+defineOptions({
+  inheritAttrs: false,
+});
+
+const modelValue = defineModel<boolean>({ required: true });
+
+withDefaults(
   defineProps<{
-    value: boolean;
     disabled?: boolean;
   }>(),
   {
@@ -9,20 +14,14 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{
-  (e: 'input', value: boolean): void;
-}>();
-
 const { t } = useI18n();
-
-const model = useSimpleVModel(props, emit);
 </script>
 
 <template>
   <RuiCard class="rounded">
     <label class="flex items-center gap-3 cursor-pointer">
       <RuiCheckbox
-        v-model="model"
+        v-model="modelValue"
         data-cy="account-all-evm-chains"
         class="mt-0 p-1"
         color="primary"

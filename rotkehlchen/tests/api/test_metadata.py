@@ -11,14 +11,14 @@ if TYPE_CHECKING:
     from rotkehlchen.api.server import APIServer
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 def test_metadata_endpoint(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that all the endpoints that query mappings or metadata from the backend work fine"""
     airdrops_response = requests.get(
         api_url_for(rotkehlchen_api_server, 'airdropsmetadataresource'),
     )
     airdrops_result = assert_proper_sync_response_with_result(airdrops_response)
-    assert len(airdrops_result) == 22
+    assert len(airdrops_result) == 26
     for res in airdrops_result:
         assert 'identifier' in res and isinstance(res['identifier'], str)
         assert 'name' in res and isinstance(res['name'], str)
@@ -47,7 +47,7 @@ def test_metadata_endpoint(rotkehlchen_api_server: 'APIServer') -> None:
             if (
                 entry.serialize() == result_entry['id'] and
                 str(entry) == result_entry['name'] and
-                entry.get_chain_type() == result_entry['type']
+                entry.get_chain_type().serialize() == result_entry['type']
             ):
                 if entry.is_evm() is True:
                     assert result_entry['evm_chain_name'] == entry.to_chain_id().to_name()

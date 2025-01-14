@@ -19,6 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
       - name: Load env
         uses: rotki/action-env@v2
         with:
@@ -40,7 +41,7 @@ jobs:
         id: pnpm-cache
         shell: bash
         run: |
-          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+          echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
       - name: Setup pnpm cache
         uses: actions/cache@v4
         with:
@@ -92,7 +93,7 @@ jobs:
           path: ./frontend/app/.e2e/logs/*.log
       - name: Upload videos
         uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
         with:
           name: videos-${{ runner.os }}-${{ matrix.group }}
           path: ./frontend/app/tests/e2e/videos

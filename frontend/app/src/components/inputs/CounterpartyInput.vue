@@ -1,36 +1,24 @@
 <script lang="ts" setup>
-const props = withDefaults(
-  defineProps<{
-    value?: string | null;
-  }>(),
-  {
-    value: null,
-  },
-);
+import { useHistoryEventCounterpartyMappings } from '@/composables/history/events/mapping/counterparty';
+import CounterpartyDisplay from '@/components/history/CounterpartyDisplay.vue';
 
-const emit = defineEmits<{
-  (e: 'input', value: string): void;
-}>();
+defineOptions({
+  inheritAttrs: false,
+});
 
-const vModel = useSimpleVModel(props, emit);
-
-const rootAttrs = useAttrs();
+const modelValue = defineModel<string | undefined>({ required: true });
 
 const { counterparties } = useHistoryEventCounterpartyMappings();
 </script>
 
 <template>
   <RuiAutoComplete
-    v-model="vModel"
+    v-model="modelValue"
     variant="outlined"
     clearable
-    v-bind="rootAttrs"
+    v-bind="$attrs"
     auto-select-first
     :options="counterparties"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
   >
     <template #item="{ item }">
       <CounterpartyDisplay :counterparty="item" />

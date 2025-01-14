@@ -5,28 +5,34 @@ import {
   validWithParamsSessionAndExternalService,
   validWithSessionAndExternalService,
 } from '@/services/utils';
-import { type ManualBalance, ManualBalances } from '@/types/manual-balances';
-import type { ActionResult } from '@rotki/common/lib/data';
+import { type ManualBalance, ManualBalances, type RawManualBalance } from '@/types/manual-balances';
+import { nonEmptyProperties } from '@/utils/data';
+import type { ActionResult } from '@rotki/common';
 import type { PendingTask } from '@/types/task';
 
-export function useManualBalancesApi() {
-  const queryManualBalances = async (): Promise<PendingTask> => {
-    const response = await api.instance.get<ActionResult<PendingTask>>(
-      'balances/manual',
-      {
-        params: snakeCaseTransformer({ asyncQuery: true }),
-        validateStatus: validWithSessionAndExternalService,
-      },
-    );
+interface UseManualBalancesApiReturn {
+  addManualBalances: (balances: RawManualBalance[]) => Promise<PendingTask>;
+  editManualBalances: (balances: ManualBalance[]) => Promise<PendingTask>;
+  deleteManualBalances: (ids: number[]) => Promise<ManualBalances>;
+  queryManualBalances: (usdValueThreshold?: string) => Promise<PendingTask>;
+}
+
+export function useManualBalancesApi(): UseManualBalancesApiReturn {
+  const queryManualBalances = async (usdValueThreshold?: string): Promise<PendingTask> => {
+    const response = await api.instance.get<ActionResult<PendingTask>>('balances/manual', {
+      params: snakeCaseTransformer({
+        asyncQuery: true,
+        usdValueThreshold,
+      }),
+      validateStatus: validWithSessionAndExternalService,
+    });
     return handleResponse(response);
   };
 
-  const addManualBalances = async (
-    balances: Omit<ManualBalance, 'identifier'>[],
-  ): Promise<PendingTask> => {
+  const addManualBalances = async (balances: RawManualBalance[]): Promise<PendingTask> => {
     const response = await api.instance.put<ActionResult<PendingTask>>(
       'balances/manual',
-      snakeCaseTransformer(nonEmptyProperties({ balances, asyncQuery: true })),
+      snakeCaseTransformer(nonEmptyProperties({ asyncQuery: true, balances })),
       {
         validateStatus: validWithParamsSessionAndExternalService,
       },
@@ -34,12 +40,10 @@ export function useManualBalancesApi() {
     return handleResponse(response);
   };
 
-  const editManualBalances = async (
-    balances: ManualBalance[],
-  ): Promise<PendingTask> => {
+  const editManualBalances = async (balances: ManualBalance[]): Promise<PendingTask> => {
     const response = await api.instance.patch<ActionResult<PendingTask>>(
       'balances/manual',
-      snakeCaseTransformer(nonEmptyProperties({ balances, asyncQuery: true })),
+      snakeCaseTransformer(nonEmptyProperties({ asyncQuery: true, balances })),
       {
         validateStatus: validWithParamsSessionAndExternalService,
       },
@@ -47,23 +51,18 @@ export function useManualBalancesApi() {
     return handleResponse(response);
   };
 
-  const deleteManualBalances = async (
-    ids: number[],
-  ): Promise<ManualBalances> => {
-    const response = await api.instance.delete<ActionResult<ManualBalances>>(
-      'balances/manual',
-      {
-        data: { ids },
-        validateStatus: validWithParamsSessionAndExternalService,
-      },
-    );
+  const deleteManualBalances = async (ids: number[]): Promise<ManualBalances> => {
+    const response = await api.instance.delete<ActionResult<ManualBalances>>('balances/manual', {
+      data: { ids },
+      validateStatus: validWithParamsSessionAndExternalService,
+    });
     return ManualBalances.parse(handleResponse(response));
   };
 
   return {
     addManualBalances,
-    editManualBalances,
     deleteManualBalances,
+    editManualBalances,
     queryManualBalances,
   };
 }

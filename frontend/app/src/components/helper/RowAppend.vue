@@ -10,17 +10,15 @@ const props = withDefaults(
   }>(),
   {
     className: '',
+    isMobile: false,
     label: '',
     labelColspan: 1,
     leftPatchColspan: 0,
     rightPatchColspan: 0,
-    isMobile: false,
   },
 );
 
 const { className, isMobile, leftPatchColspan, rightPatchColspan } = toRefs(props);
-
-const slots = useSlots();
 
 const formattedClassName = computed(() => {
   const propClassName
@@ -59,7 +57,7 @@ const rightColspan = useToNumber(rightPatchColspan);
     </td>
     <slot name="custom-columns" />
     <td
-      v-if="slots.default"
+      v-if="$slots.default"
       class="text-end"
       :class="{ 'flex items-center': isMobile }"
     >

@@ -1,18 +1,20 @@
 <script setup lang="ts">
-const slots = useSlots();
+import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
 </script>
 
 <template>
-  <RuiCard class="mt-8">
-    <template #header>
-      <slot name="title" />
-    </template>
-    <template
-      v-if="slots.subtitle"
-      #subheader
-    >
-      <slot name="subtitle" />
-    </template>
+  <div>
+    <SettingCategoryHeader class="border-b pb-5">
+      <template #title>
+        <slot name="title" />
+      </template>
+      <template
+        v-if="$slots.subtitle"
+        #subtitle
+      >
+        <slot name="subtitle" />
+      </template>
+    </SettingCategoryHeader>
     <slot />
-  </RuiCard>
+  </div>
 </template>

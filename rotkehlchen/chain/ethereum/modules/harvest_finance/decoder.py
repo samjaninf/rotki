@@ -8,7 +8,6 @@ from rotkehlchen.types import ChecksumEvmAddress
 
 from .constants import CPT_HARVEST_FINANCE, GRAIN_TOKEN_ID, HARVEST_GRAIN_CLAIM
 
-
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
@@ -25,6 +24,7 @@ class HarvestFinanceDecoder(MerkleClaimDecoderInterface):
                 GRAIN_TOKEN_ID,  # token id
                 18,  # token decimals
                 'GRAIN from the harvest finance hack compensation airdrop',  # notes suffix
+                'grain',
             ),
         }
 

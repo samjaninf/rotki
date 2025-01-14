@@ -23,9 +23,8 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType
 from rotkehlchen.history.price import query_usd_price_zero_if_error
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.premium.premium import Premium
+from rotkehlchen.premium.premium import Premium, has_premium_check
 from rotkehlchen.types import ChecksumEvmAddress, Timestamp
-from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.misc import ts_ms_to_sec
 
@@ -42,6 +41,7 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.defi.structures import GIVEN_DEFI_BALANCES, GIVEN_ETH_BALANCES
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.user_messages import MessagesAggregator
 
 
 logger = logging.getLogger(__name__)
@@ -69,13 +69,12 @@ class Aave(EthereumModule):
             ethereum_inquirer: 'EthereumInquirer',
             database: 'DBHandler',
             premium: Premium | None,
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
     ) -> None:
         self.ethereum = ethereum_inquirer
         self.database = database
         self.msg_aggregator = msg_aggregator
         self.premium = premium
-        self.history_lock = Semaphore()
         self.balances_lock = Semaphore()
         self.counterparties = [CPT_AAVE_V1, CPT_AAVE_V2]
         self.v3_data_provider = self.ethereum.contracts.contract(AAVE_V3_DATA_PROVIDER)
@@ -296,7 +295,7 @@ class Aave(EthereumModule):
                 earned_atoken_balances[event.asset] += Balance(amount=amount_diff, usd_value=amount_diff * usd_price)  # noqa: E501
 
         for borrowed_asset, amount in historical_borrow_balances.items():
-            borrow_balance = balances.borrowing.get(cast(CryptoAsset, borrowed_asset), None)
+            borrow_balance = balances.borrowing.get(cast('CryptoAsset', borrowed_asset), None)
             this_amount = abs(amount)  # the amount is always <= 0 as it represents a debt position that can get repaid but we need it positive for the calculations  # noqa: E501
             if borrow_balance is not None:
                 this_amount += borrow_balance.balance.amount
@@ -390,7 +389,7 @@ class Aave(EthereumModule):
             events = db.get_history_events(
                 cursor=cursor,
                 filter_query=query_filter,
-                has_premium=self.premium is not None,
+                has_premium=has_premium_check(self.premium),
                 group_by_event_ids=False,
             )
 

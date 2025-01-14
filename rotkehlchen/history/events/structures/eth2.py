@@ -163,7 +163,7 @@ class EthWithdrawalEvent(EthStakingEvent):
 
     @classmethod
     def deserialize_from_db(cls: type['EthWithdrawalEvent'], entry: tuple) -> 'EthWithdrawalEvent':
-        entry = cast(ETH_STAKING_EVENT_DB_TUPLE_READ, entry)
+        entry = cast('ETH_STAKING_EVENT_DB_TUPLE_READ', entry)
         amount = deserialize_fval(entry[5], 'amount', 'eth withdrawal event')
         usd_value = deserialize_fval(entry[6], 'usd_value', 'eth withdrawal event')
         return cls(
@@ -210,7 +210,7 @@ class EthWithdrawalEvent(EthStakingEvent):
     ) -> int:
         profit_amount = self.balance.amount
         if self.balance.amount >= 32:
-            profit_amount = 32 - self.balance.amount
+            profit_amount = self.balance.amount - 32
 
         # TODO: This is hacky and does not cover edge case where people mistakenly
         # double deposited for a validator. We can and should combine deposit and
@@ -290,7 +290,7 @@ class EthBlockEvent(EthStakingEvent):
 
     @classmethod
     def deserialize_from_db(cls: type['EthBlockEvent'], entry: tuple) -> 'EthBlockEvent':
-        entry = cast(ETH_STAKING_EVENT_DB_TUPLE_READ, entry)
+        entry = cast('ETH_STAKING_EVENT_DB_TUPLE_READ', entry)
         amount = deserialize_fval(entry[5], 'amount', 'eth block event')
         usd_value = deserialize_fval(entry[6], 'usd_value', 'eth block event')
         return cls(
@@ -431,7 +431,7 @@ class EthDepositEvent(EvmEvent, EthStakingEvent):  # noqa: PLW1641  # hash in su
 
     @classmethod
     def deserialize_from_db(cls: type['EthDepositEvent'], entry: tuple) -> 'EthDepositEvent':
-        entry = cast(EVM_DEPOSIT_EVENT_DB_TUPLE_READ, entry)
+        entry = cast('EVM_DEPOSIT_EVENT_DB_TUPLE_READ', entry)
         amount = deserialize_fval(entry[5], 'amount', 'eth deposit event')
         usd_value = deserialize_fval(entry[6], 'usd_value', 'eth deposit event')
         return cls(

@@ -1,11 +1,7 @@
 <script setup lang="ts">
 import { displayDateFormatter } from '@/data/date-formatter';
 
-const props = defineProps<{ value: boolean }>();
-
-const emit = defineEmits<{ (e: 'input', value: boolean): void }>();
-
-const display = useSimpleVModel(props, emit);
+const model = defineModel<boolean>({ required: true });
 
 const formatter = displayDateFormatter;
 const directives: string[] = displayDateFormatter.directives;
@@ -15,34 +11,34 @@ const { t } = useI18n();
 
 function description(directive: string): string {
   const descriptions: Record<string, string> = {
-    'a': t('date_format_help.directive.week_day_short').toString(),
-    'A': t('date_format_help.directive.week_day').toString(),
-    'w': t('date_format_help.directive.day_of_the_week').toString(),
-    'y': t('date_format_help.directive.year_two_digit').toString(),
-    'Y': t('date_format_help.directive.year').toString(),
-    'b': t('date_format_help.directive.month_short').toString(),
-    'B': t('date_format_help.directive.month').toString(),
-    'm': t('date_format_help.directive.month_two_digit').toString(),
-    '-m': t('date_format_help.directive.month_numeric').toString(),
-    'd': t('date_format_help.directive.day_two_digit').toString(),
-    '-d': t('date_format_help.directive.day_numeric').toString(),
-    'H': t('date_format_help.directive.hour_padded').toString(),
-    '-H': t('date_format_help.directive.hour').toString(),
-    'I': t('date_format_help.directive.hour_twelve_padded').toString(),
-    '-I': t('date_format_help.directive.hour_twelve').toString(),
-    'M': t('date_format_help.directive.minutes_padded').toString(),
-    '-M': t('date_format_help.directive.minutes').toString(),
-    'S': t('date_format_help.directive.seconds_padded').toString(),
-    '-S': t('date_format_help.directive.seconds').toString(),
-    's': t('date_format_help.directive.milliseconds').toString(),
-    'p': t('date_format_help.directive.ampm').toString(),
-    'z': t('date_format_help.directive.timezone_offset').toString(),
-    'Z': t('date_format_help.directive.timezone').toString(),
-    'j': t('date_format_help.directive.day_of_year_padded').toString(),
-    '-j': t('date_format_help.directive.day_of_year').toString(),
-    'c': t('date_format_help.directive.locale_datetime').toString(),
-    'x': t('date_format_help.directive.locale_date').toString(),
-    'X': t('date_format_help.directive.locale_time').toString(),
+    '-d': t('date_format_help.directive.day_numeric'),
+    '-H': t('date_format_help.directive.hour'),
+    '-I': t('date_format_help.directive.hour_twelve'),
+    '-j': t('date_format_help.directive.day_of_year'),
+    '-m': t('date_format_help.directive.month_numeric'),
+    '-M': t('date_format_help.directive.minutes'),
+    '-S': t('date_format_help.directive.seconds'),
+    'a': t('date_format_help.directive.week_day_short'),
+    'A': t('date_format_help.directive.week_day'),
+    'b': t('date_format_help.directive.month_short'),
+    'B': t('date_format_help.directive.month'),
+    'c': t('date_format_help.directive.locale_datetime'),
+    'd': t('date_format_help.directive.day_two_digit'),
+    'H': t('date_format_help.directive.hour_padded'),
+    'I': t('date_format_help.directive.hour_twelve_padded'),
+    'j': t('date_format_help.directive.day_of_year_padded'),
+    'm': t('date_format_help.directive.month_two_digit'),
+    'M': t('date_format_help.directive.minutes_padded'),
+    'p': t('date_format_help.directive.ampm'),
+    'S': t('date_format_help.directive.seconds_padded'),
+    's': t('date_format_help.directive.milliseconds'),
+    'w': t('date_format_help.directive.day_of_the_week'),
+    'x': t('date_format_help.directive.locale_date'),
+    'X': t('date_format_help.directive.locale_time'),
+    'y': t('date_format_help.directive.year_two_digit'),
+    'Y': t('date_format_help.directive.year'),
+    'z': t('date_format_help.directive.timezone_offset'),
+    'Z': t('date_format_help.directive.timezone'),
   };
 
   return descriptions[directive.replace('%', '')] ?? '';
@@ -51,7 +47,7 @@ function description(directive: string): string {
 
 <template>
   <RuiDialog
-    v-model="display"
+    v-model="model"
     max-width="500"
   >
     <RuiCard>
@@ -88,7 +84,7 @@ function description(directive: string): string {
         <div class="grow" />
         <RuiButton
           color="primary"
-          @click="display = false"
+          @click="model = false"
         >
           {{ t('common.actions.close') }}
         </RuiButton>

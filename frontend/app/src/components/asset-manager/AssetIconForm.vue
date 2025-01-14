@@ -1,4 +1,13 @@
 <script setup lang="ts">
+import { useAssetIconStore } from '@/store/assets/icon';
+import { useMessageStore } from '@/store/message';
+import { useNotificationsStore } from '@/store/notifications';
+import { useInterop } from '@/composables/electron-interop';
+import { useAssetIconApi } from '@/composables/api/assets/icon';
+import FileUpload from '@/components/import/FileUpload.vue';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import AppImage from '@/components/common/AppImage.vue';
+
 const props = withDefaults(
   defineProps<{
     identifier: string;
@@ -10,11 +19,12 @@ const props = withDefaults(
 const { identifier } = toRefs(props);
 
 const preview = computed<string | null>(() => get(identifier) ?? null);
-const icon = ref<File | null>(null);
+const icon = ref<File>();
 
 const refreshIconLoading = ref<boolean>(false);
+const refreshKey = ref<number>(0);
 const { notify } = useNotificationsStore();
-const { appSession } = useInterop();
+const { getPath } = useInterop();
 const { setMessage } = useMessageStore();
 const { refreshIcon: refresh, setIcon, uploadIcon } = useAssetIconApi();
 
@@ -23,19 +33,23 @@ const { t } = useI18n();
 const { setLastRefreshedAssetIcon } = useAssetIconStore();
 
 async function refreshIcon() {
+  if (get(refreshIconLoading))
+    return;
+
   set(refreshIconLoading, true);
   const identifierVal = get(identifier);
   try {
     await refresh(identifierVal);
+    set(refreshKey, get(refreshKey) + 1);
   }
   catch (error: any) {
     notify({
-      title: t('asset_form.fetch_latest_icon.title'),
+      display: true,
       message: t('asset_form.fetch_latest_icon.description', {
         identifier: identifierVal,
         message: error.message,
       }),
-      display: true,
+      title: t('asset_form.fetch_latest_icon.title'),
     });
   }
   set(refreshIconLoading, false);
@@ -48,8 +62,9 @@ async function saveIcon(identifier: string) {
     return;
 
   try {
-    if (appSession)
-      await setIcon(identifier, iconVal.path);
+    const path = getPath(iconVal);
+    if (path)
+      await setIcon(identifier, path);
     else
       await uploadIcon(identifier, iconVal);
 
@@ -59,15 +74,15 @@ async function saveIcon(identifier: string) {
     const message = error.message;
 
     setMessage({
-      title: t('asset_form.icon_upload.title'),
       description: t('asset_form.icon_upload.description', {
         message,
       }),
+      title: t('asset_form.icon_upload.title'),
     });
   }
 }
 
-const previewImageSource: Ref<string> = ref('');
+const previewImageSource = ref<string>('');
 watch(icon, (icon) => {
   if (icon && icon.type.startsWith('image')) {
     const reader = new FileReader();
@@ -109,7 +124,7 @@ defineExpose({
             >
               <RuiIcon
                 size="20"
-                name="refresh-line"
+                name="lu-refresh-ccw"
               />
             </RuiButton>
           </template>
@@ -124,6 +139,7 @@ defineExpose({
         />
         <AssetIcon
           v-else-if="preview"
+          :key="refreshKey"
           :identifier="preview"
           size="72px"
           changeable

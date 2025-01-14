@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { externalLinks } from '@/data/external-links';
+import { externalLinks } from '@shared/external-links';
+import { useMainStore } from '@/store/main';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
 
 const { dockerRiskAccepted } = storeToRefs(useMainStore());
 const { t } = useI18n();
@@ -13,13 +15,13 @@ function proceed() {
 <template>
   <div class="max-w-[27.5rem] mx-auto">
     <RuiAlert type="warning">
-      <i18n path="docker_warning.title">
+      <i18n-t keypath="docker_warning.title">
         <ExternalLink
           :text="t('docker_warning.documentation')"
           :url="usageGuideSection.dockerWarning"
           color="warning"
         />
-      </i18n>
+      </i18n-t>
 
       <RuiButton
         class="mt-4"

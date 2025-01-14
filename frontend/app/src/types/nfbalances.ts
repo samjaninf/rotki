@@ -6,37 +6,25 @@ import type { PaginationRequestPayload } from '@/types/common';
 
 export const NonFungibleBalance = PriceInformation.merge(
   z.object({
-    name: z.string().nullable(),
+    collectionName: z.string().nullable(),
     id: z.string().min(1),
     imageUrl: z.string().nullable(),
     isLp: z.boolean().nullish(),
-    collectionName: z.string().nullable(),
+    name: z.string().nullable(),
   }),
 );
 
 export type NonFungibleBalance = z.infer<typeof NonFungibleBalance>;
 
-export interface NonFungibleBalanceWithLastPrice extends NonFungibleBalance {
-  lastPrice?: any;
-}
-
 const NonFungibleBalanceArray = z.array(NonFungibleBalance);
 
-export const NonFungibleBalances = z.record(NonFungibleBalanceArray);
+export const NonFungibleBalancesCollectionResponse = CollectionCommonFields.extend({
+  entries: NonFungibleBalanceArray,
+});
 
-export type NonFungibleBalances = z.infer<typeof NonFungibleBalances>;
+export type NonFungibleBalancesCollectionResponse = z.infer<typeof NonFungibleBalancesCollectionResponse>;
 
-export const NonFungibleBalancesCollectionResponse
-  = CollectionCommonFields.extend({
-    entries: NonFungibleBalanceArray,
-  });
-
-export type NonFungibleBalancesCollectionResponse = z.infer<
-  typeof NonFungibleBalancesCollectionResponse
->;
-
-export interface NonFungibleBalancesRequestPayload
-  extends PaginationRequestPayload<NonFungibleBalance> {
+export interface NonFungibleBalancesRequestPayload extends PaginationRequestPayload<NonFungibleBalance> {
   readonly name?: string;
   readonly collectionName?: string;
   readonly ignoredAssetsHandling?: IgnoredAssetsHandlingType;

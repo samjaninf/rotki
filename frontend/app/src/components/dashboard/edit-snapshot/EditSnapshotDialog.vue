@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import type {
-  BalanceSnapshot,
-  LocationDataSnapshot,
-  Snapshot,
-  SnapshotPayload,
-} from '@/types/snapshots';
+import { sortDesc } from '@/utils/bignumbers';
+import { useMessageStore } from '@/store/message';
+import { useNotificationsStore } from '@/store/notifications';
+import { useStatisticsStore } from '@/store/statistics';
+import { useSnapshotApi } from '@/composables/api/settings/snapshot-api';
+import EditSnapshotTotal from '@/components/dashboard/edit-snapshot/EditSnapshotTotal.vue';
+import EditLocationDataSnapshotTable from '@/components/dashboard/edit-snapshot/EditLocationDataSnapshotTable.vue';
+import EditBalancesSnapshotTable from '@/components/dashboard/edit-snapshot/EditBalancesSnapshotTable.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import type { BalanceSnapshot, LocationDataSnapshot, Snapshot, SnapshotPayload } from '@/types/snapshots';
 
 const props = defineProps<{
   timestamp: number;
@@ -17,7 +21,7 @@ const emit = defineEmits<{
 
 const { timestamp } = toRefs(props);
 
-const snapshotData: Ref<Snapshot | null> = ref(null);
+const snapshotData = ref<Snapshot | null>(null);
 const step = ref<number>(1);
 const { fetchNetValue } = useStatisticsStore();
 
@@ -25,17 +29,15 @@ const api = useSnapshotApi();
 
 const { t } = useI18n();
 
-const balancesSnapshot: ComputedRef<BalanceSnapshot[]> = computed(() => {
+const balancesSnapshot = computed<BalanceSnapshot[]>(() => {
   const data = get(snapshotData);
   return !data ? [] : (data.balancesSnapshot as BalanceSnapshot[]);
 });
 
-const locationDataSnapshot: ComputedRef<LocationDataSnapshot[]> = computed(
-  () => {
-    const data = get(snapshotData);
-    return !data ? [] : (data.locationDataSnapshot as LocationDataSnapshot[]);
-  },
-);
+const locationDataSnapshot = computed<LocationDataSnapshot[]>(() => {
+  const data = get(snapshotData);
+  return !data ? [] : (data.locationDataSnapshot as LocationDataSnapshot[]);
+});
 
 async function fetchSnapshotData() {
   const result = await api.getSnapshotData(get(timestamp));
@@ -95,11 +97,11 @@ async function save(): Promise<boolean> {
 
   const notifyError = (e?: any) => {
     notify({
-      title: t('dashboard.snapshot.edit.dialog.message.title'),
+      display: true,
       message: t('dashboard.snapshot.edit.dialog.message.error', {
         message: e,
       }),
-      display: true,
+      title: t('dashboard.snapshot.edit.dialog.message.title'),
     });
   };
 
@@ -126,9 +128,9 @@ async function finish() {
 
   if (success) {
     setMessage({
-      title: t('dashboard.snapshot.edit.dialog.message.title'),
       description: t('dashboard.snapshot.edit.dialog.message.success'),
       success: true,
+      title: t('dashboard.snapshot.edit.dialog.message.title'),
     });
     await fetchNetValue();
     emit('finish');
@@ -161,100 +163,87 @@ const steps = computed(() => [
 <template>
   <RuiDialog
     persistent
-    value
+    :model-value="true"
     max-width="1400"
   >
-    <AppBridge>
-      <RuiCard
-        no-padding
-        variant="flat"
-        class="overflow-hidden"
-      >
-        <div class="flex bg-rui-primary text-white p-2">
-          <RuiButton
-            variant="text"
-            icon
-            @click="close()"
-          >
-            <RuiIcon
-              class="text-white"
-              name="close-line"
-            />
-          </RuiButton>
-
-          <h5 class="pl-2 text-h5 flex items-center">
-            <i18n path="dashboard.snapshot.edit.dialog.title">
-              <template #date>
-                <DateDisplay :timestamp="timestamp" />
-              </template>
-            </i18n>
-          </h5>
-        </div>
-
-        <div v-if="snapshotData">
-          <RuiStepper
-            :steps="steps"
-            :step="step"
-            class="py-4 border-b-2 border-default"
-          />
-          <RuiTabItems v-model="step">
-            <template #default>
-              <RuiTabItem :value="1">
-                <EditBalancesSnapshotTable
-                  v-model="snapshotData"
-                  :timestamp="timestamp"
-                  @update:step="step = $event"
-                  @input="save()"
-                />
-              </RuiTabItem>
-              <RuiTabItem :value="2">
-                <EditLocationDataSnapshotTable
-                  :value="locationDataSnapshot"
-                  :timestamp="timestamp"
-                  @update:step="step = $event"
-                  @input="updateAndSave($event)"
-                />
-              </RuiTabItem>
-              <RuiTabItem :value="3">
-                <EditSnapshotTotal
-                  v-if="step === 3"
-                  :value="locationDataSnapshot"
-                  :balances-snapshot="balancesSnapshot"
-                  :timestamp="timestamp"
-                  @update:step="step = $event"
-                  @input="updateAndComplete($event)"
-                />
-              </RuiTabItem>
-            </template>
-          </RuiTabItems>
-        </div>
-        <div
-          v-else
-          class="flex flex-col justify-center items-center py-6 bg-white dark:bg-rui-grey-800"
+    <RuiCard
+      no-padding
+      variant="flat"
+      class="overflow-hidden"
+    >
+      <div class="flex bg-rui-primary text-white p-2">
+        <RuiButton
+          variant="text"
+          icon
+          @click="close()"
         >
-          <RuiProgress
-            circular
-            variant="indeterminate"
-            color="primary"
-            size="50"
+          <RuiIcon
+            class="text-white"
+            name="lu-x"
           />
+        </RuiButton>
 
-          <div class="pt-6">
-            {{ t('dashboard.snapshot.edit.dialog.fetch.loading') }}
-          </div>
+        <h5 class="pl-2 text-h5 flex items-center">
+          <i18n-t
+            keypath="dashboard.snapshot.edit.dialog.title"
+            tag="span"
+          >
+            <template #date>
+              <DateDisplay :timestamp="timestamp" />
+            </template>
+          </i18n-t>
+        </h5>
+      </div>
+
+      <div v-if="snapshotData">
+        <RuiStepper
+          :steps="steps"
+          :step="step"
+          class="py-4 border-b-2 border-default"
+        />
+        <RuiTabItems v-model="step">
+          <RuiTabItem :value="1">
+            <EditBalancesSnapshotTable
+              v-model="snapshotData"
+              :timestamp="timestamp"
+              @update:step="step = $event"
+              @update:model-value="save()"
+            />
+          </RuiTabItem>
+          <RuiTabItem :value="2">
+            <EditLocationDataSnapshotTable
+              :model-value="locationDataSnapshot"
+              :timestamp="timestamp"
+              @update:step="step = $event"
+              @update:model-value="updateAndSave($event)"
+            />
+          </RuiTabItem>
+          <RuiTabItem :value="3">
+            <EditSnapshotTotal
+              :model-value="locationDataSnapshot"
+              :balances-snapshot="balancesSnapshot"
+              :timestamp="timestamp"
+              @update:step="step = $event"
+              @update:model-value="updateAndComplete($event)"
+            />
+          </RuiTabItem>
+        </RuiTabItems>
+      </div>
+      <div
+        v-else
+        class="flex flex-col justify-center items-center py-6 bg-white dark:bg-rui-grey-800"
+      >
+        <RuiProgress
+          circular
+          variant="indeterminate"
+          color="primary"
+          size="50"
+        />
+
+        <div class="pt-6">
+          {{ t('dashboard.snapshot.edit.dialog.fetch.loading') }}
         </div>
-      </RuiCard>
-    </AppBridge>
+      </div>
+    </RuiCard>
   </RuiDialog>
 </template>
-
-<style module lang="scss">
-.asset-select {
-  max-width: 640px;
-}
-
-.raise {
-  position: relative;
-  z-index: 2;
-}
-</style>

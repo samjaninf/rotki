@@ -1,4 +1,4 @@
-import { cloneDeep } from 'lodash-es';
+import { cloneDeep } from 'es-toolkit';
 import type { PiniaPluginContext, StoreGeneric } from 'pinia';
 
 export function StoreResetPlugin({ store }: PiniaPluginContext): void {
@@ -33,6 +33,5 @@ export function StoreTrackPlugin({ store }: PiniaPluginContext): void {
  * Resets the state of all the installed pinia stores.
  */
 export function resetState(): void {
-  for (const store of storeMap.values())
-    store.$reset();
+  for (const store of storeMap.values()) store.$reset();
 }

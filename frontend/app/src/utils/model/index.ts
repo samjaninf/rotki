@@ -1,4 +1,20 @@
-import { kebabCase } from 'lodash-es';
+import { kebabCase } from 'es-toolkit';
+import type BigNumber from 'bignumber.js';
+import type { Ref, WritableComputedRef } from 'vue';
+
+export function useBigNumberModel(model: WritableComputedRef<BigNumber | null | undefined>): WritableComputedRef<string> {
+  return computed<string>({
+    get() {
+      const modelVal = get(model);
+      if (!modelVal || modelVal.isNaN())
+        return '';
+      return modelVal.toString();
+    },
+    set(value: string) {
+      set(model, value ? bigNumberify(value) : null);
+    },
+  });
+}
 
 export function usePropVModel<
   P extends object,
@@ -6,9 +22,7 @@ export function usePropVModel<
   S extends P[K] extends object ? keyof P[K] : never,
   Name extends string,
 >(props: P, key: K, subKey: S, emit?: (name: Name, ...args: any[]) => void): WritableComputedRef<P[K][S]> {
-  const eventName = (
-    key === 'value' ? 'input' : `update:${kebabCase(key.toString())}`
-  ) as Name;
+  const eventName = (key === 'value' ? 'input' : `update:${kebabCase(key.toString())}`) as Name;
   return computed({
     get() {
       return props[key][subKey];
@@ -21,36 +35,44 @@ export function usePropVModel<
 
 export function useSimplePropVModel<
   T,
-  P extends { value: T },
-  S extends P['value'] extends object ? keyof P['value'] : never,
+  P extends { modelValue: T },
+  S extends P['modelValue'] extends object ? keyof P['modelValue'] : never,
   Name extends string,
->(props: P, subKey: S, emit?: (name: Name, ...args: any[]) => void): WritableComputedRef<P['value'][S]> {
-  return usePropVModel(props, 'value', subKey, emit);
+>(props: P, subKey: S, emit?: (name: Name, ...args: any[]) => void): WritableComputedRef<P['modelValue'][S]> {
+  return usePropVModel(props, 'modelValue', subKey, emit);
 }
 
-export function useSimpleVModel<T, P extends { value: T }, Name extends string>(props: P, emit?: (name: Name, ...args: any[]) => void): WritableComputedRef<P['value']> {
-  return useVModel(props, 'value', emit, {
-    eventName: 'input',
+export function nullDefined<T>(comp: WritableComputedRef<T | null>): WritableComputedRef<T | undefined> {
+  return computed<T | undefined>({
+    get() {
+      return get(comp) ?? undefined;
+    },
+    set(value?: T | undefined) {
+      set(comp, value ?? null);
+    },
   });
 }
 
-/**
- * Like useVModel but event is update:kebab-case
- * @param props
- * @param key
- * @param emit
- */
-export function useKebabVModel<
+export function refOptional<T>(comp: WritableComputedRef<T | undefined | null>, defaultValue: T): WritableComputedRef<T> {
+  return computed<T>({
+    get() {
+      return get(comp) ?? defaultValue;
+    },
+    set(value?: T) {
+      set(comp, value ?? undefined);
+    },
+  });
+}
+
+export function useRefPropVModel<
   P extends object,
   K extends keyof P,
-  Name extends string,
->(props: P, key: K, emit?: (name: Name, ...args: any[]) => void): WritableComputedRef<P[K]> {
-  return useVModel(props, key, emit, {
-    eventName: `update:${kebabCase(key.toString())}`,
-  });
-}
-
-export function useRefPropVModel<P extends object, K extends keyof P>(obj: Ref<P>, key: K): WritableComputedRef<P[K]> {
+>(obj: Ref<P>, key: K, options: {
+  transform?: (value: NonNullable<P[K]>) => NonNullable<P[K]>;
+} = {}): WritableComputedRef<P[K]> {
+  const {
+    transform = (value: P[K]): P[K] => value,
+  } = options;
   return computed<P[K]>({
     get() {
       return get(obj)[key];
@@ -58,7 +80,7 @@ export function useRefPropVModel<P extends object, K extends keyof P>(obj: Ref<P
     set(value?: P[K]) {
       set(obj, {
         ...get(obj),
-        [key]: value,
+        [key]: value ? transform(value) : value,
       });
     },
   });

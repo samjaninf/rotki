@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
 import type { CostBasis, MatchedAcquisitions, MatchedAcquisitionsEvent } from '@/types/reports';
-import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library-compat';
 
 type Acquisition = Omit<MatchedAcquisitions, 'event'> & MatchedAcquisitionsEvent;
 
@@ -20,49 +23,47 @@ const { t } = useI18n();
 
 const { costBasis, currency } = toRefs(props);
 
-const sort = ref<DataTableSortData>({
-  column: 'time',
-  direction: 'asc' as const,
+const sort = ref<DataTableSortData<Acquisition>>({
+  column: 'timestamp',
+  direction: 'asc',
 });
 
-const css = useCssModule();
-
-const cols = computed<DataTableColumn[]>(() => [
+const cols = computed<DataTableColumn<Acquisition>[]>(() => [
   {
-    label: t('cost_basis_table.headers.amount'),
+    align: 'end',
     key: 'amount',
-    align: 'end',
+    label: t('cost_basis_table.headers.amount'),
     sortable: true,
   },
   {
-    label: t('cost_basis_table.headers.full_amount'),
+    align: 'end',
     key: 'fullAmount',
-    align: 'end',
+    label: t('cost_basis_table.headers.full_amount'),
     sortable: true,
   },
   {
-    label: t('cost_basis_table.headers.remaining_amount'),
+    align: 'end',
     key: 'remainingAmount',
-    align: 'end',
+    label: t('cost_basis_table.headers.remaining_amount'),
     sortable: true,
   },
   {
+    align: 'end',
+    key: 'rate',
     label: t('cost_basis_table.headers.rate', {
       currency: get(currency),
     }),
-    key: 'rate',
-    align: 'end',
     sortable: true,
   },
   {
-    label: t('common.datetime'),
+    align: 'end',
     key: 'timestamp',
-    align: 'end',
+    label: t('common.datetime'),
     sortable: true,
   },
   {
-    label: t('cost_basis_table.headers.taxable'),
     key: 'taxable',
+    label: t('cost_basis_table.headers.taxable'),
     sortable: true,
   },
 ]);
@@ -80,19 +81,16 @@ const matchedAcquisitions = computed<Acquisition[]>(() => {
       ...event,
     };
   });
-},
-);
+});
 </script>
 
 <template>
-  <div
-    class="relative"
-  >
+  <div class="relative">
     <div
       v-if="showGroupLine"
-      :class="css.group"
+      :class="$style.group"
     >
-      <div :class="css.group__line" />
+      <div :class="$style.group__line" />
     </div>
 
     <div
@@ -123,11 +121,11 @@ const matchedAcquisitions = computed<Acquisition[]>(() => {
         no-padding
       >
         <RuiDataTable
-          :class="css.table"
+          v-model:sort="sort"
+          :class="$style.table"
           :rows="matchedAcquisitions"
           :cols="cols"
-          :sort.sync="sort"
-          row-attr="id"
+          row-attr="amount"
           outlined
         >
           <template #item.amount="{ row }">
@@ -170,16 +168,10 @@ const matchedAcquisitions = computed<Acquisition[]>(() => {
 
 <style module lang="scss">
 .group {
-  position: absolute;
-  width: 2px;
-  top: -1rem;
-  bottom: -1rem;
-  left: .8125rem;
+  @apply absolute w-0.5 -top-[1px] -bottom-4 left-[0.8125rem];
 
   &__line {
-    height: 100%;
-    transform: translateX(-50%);
-    border-left: 2px dashed var(--v-primary-base);
+    @apply border-l-2 border-dashed border-rui-primary h-full transform -translate-x-1/2;
   }
 }
 </style>

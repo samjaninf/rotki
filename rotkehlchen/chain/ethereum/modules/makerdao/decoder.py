@@ -4,7 +4,12 @@ from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import CryptoAsset
 from rotkehlchen.chain.ethereum.constants import RAY_DIGITS
 from rotkehlchen.chain.ethereum.defi.defisaver_proxy import HasDSProxy
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value, token_normalized_value
+from rotkehlchen.chain.ethereum.utils import (
+    asset_normalized_value,
+    token_normalized_value,
+    token_normalized_value_decimals,
+)
+from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.decoding.constants import (
     CPT_SDAI,
     ERC20_OR_ERC721_TRANSFER,
@@ -36,6 +41,7 @@ from rotkehlchen.constants.assets import (
     A_LINK,
     A_LRC,
     A_MANA,
+    A_MKR,
     A_PAX,
     A_RENBTC,
     A_SAI,
@@ -53,7 +59,7 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int, shift_num_right_by
+from rotkehlchen.utils.misc import bytes_to_address, shift_num_right_by
 
 from .constants import (
     CPT_DSR,
@@ -62,6 +68,7 @@ from .constants import (
     MAKERDAO_ICON,
     MAKERDAO_LABEL,
     MAKERDAO_MIGRATION_ADDRESS,
+    MKR_ADDRESS,
 )
 
 if TYPE_CHECKING:
@@ -79,6 +86,8 @@ POT_EXIT = b'\x7f\x86a\xa1\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x
 NEWCDP = b"\xd6\xbe\x0b\xc1xe\x8a8/\xf4\xf9\x1c\x8ch\xb5B\xaakqh[\x8f\xe4'\x96k\x87t\\>\xa7\xa2"
 CDPMANAGER_MOVE = b'\xf9\xf3\r\xb6\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # noqa: E501
 CDPMANAGER_FROB = b'E\xe6\xbd\xcd\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # noqa: E501
+
+BURN_MKR = b'\xcc\x16\xf5\xdb\xb4\x872\x80\x81\\\x1e\xe0\x9d\xbd\x06sl\xff\xcc\x18D\x12\xcfzq\xa0\xfd\xb7]9|\xa5'  # noqa: E501
 
 
 class MakerdaoDecoder(DecoderInterface, HasDSProxy):
@@ -164,7 +173,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
             vault_type: str,
     ) -> DecodingOutput:
         if context.tx_log.topics[0] == GENERIC_JOIN:
-            raw_amount = hex_or_bytes_to_int(context.tx_log.topics[3])
+            raw_amount = int.from_bytes(context.tx_log.topics[3])
             amount = asset_normalized_value(
                 amount=raw_amount,
                 asset=vault_asset,
@@ -181,7 +190,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
                     return DEFAULT_DECODING_OUTPUT
 
         elif context.tx_log.topics[0] == GENERIC_EXIT:
-            raw_amount = hex_or_bytes_to_int(context.tx_log.topics[3])
+            raw_amount = int.from_bytes(context.tx_log.topics[3])
             amount = asset_normalized_value(
                 amount=raw_amount,
                 asset=vault_asset,
@@ -201,8 +210,8 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
     def decode_makerdao_debt_payback(self, context: DecoderContext) -> DecodingOutput:
         if context.tx_log.topics[0] == GENERIC_JOIN:
-            join_user_address = hex_or_bytes_to_address(context.tx_log.topics[2])
-            raw_amount = hex_or_bytes_to_int(context.tx_log.topics[3])
+            join_user_address = bytes_to_address(context.tx_log.topics[2])
+            raw_amount = int.from_bytes(context.tx_log.topics[3])
             amount = token_normalized_value(
                 token_amount=raw_amount,
                 token=self.dai,
@@ -226,7 +235,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
     def decode_pot_for_dsr(self, context: DecoderContext) -> DecodingOutput:
         if context.tx_log.topics[0] == POT_JOIN:
-            potjoin_user_address = hex_or_bytes_to_address(context.tx_log.topics[1])
+            potjoin_user_address = bytes_to_address(context.tx_log.topics[1])
             user = self._get_address_or_proxy(potjoin_user_address)
             if user is None:
                 return DEFAULT_DECODING_OUTPUT
@@ -235,7 +244,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
             daijoin_log = None
             for event_log in context.all_logs:
                 if event_log.address == self.makerdao_dai_join.address and event_log.topics[0] == GENERIC_JOIN:  # noqa: E501
-                    daijoin_user_address = hex_or_bytes_to_address(event_log.topics[1])
+                    daijoin_user_address = bytes_to_address(event_log.topics[1])
                     if daijoin_user_address != potjoin_user_address:
                         continue  # not a match
 
@@ -245,7 +254,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
             if daijoin_log is None:
                 return DEFAULT_DECODING_OUTPUT  # no matching daijoin for potjoin
 
-            raw_amount = hex_or_bytes_to_int(daijoin_log.topics[3])
+            raw_amount = int.from_bytes(daijoin_log.topics[3])
             amount = token_normalized_value(
                 token_amount=raw_amount,
                 token=self.dai,
@@ -263,7 +272,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
                     return DEFAULT_DECODING_OUTPUT
 
         elif context.tx_log.topics[0] == POT_EXIT:
-            pot_exit_address = hex_or_bytes_to_address(context.tx_log.topics[1])
+            pot_exit_address = bytes_to_address(context.tx_log.topics[1])
             user = self._get_address_or_proxy(pot_exit_address)
             if user is None:
                 return DEFAULT_DECODING_OUTPUT
@@ -272,7 +281,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
             daiexit_log = None
             for event_log in context.all_logs:
                 if event_log.address == self.makerdao_dai_join.address and event_log.topics[0] == GENERIC_EXIT:  # noqa: E501
-                    daiexit_user_address = hex_or_bytes_to_address(event_log.topics[2])
+                    daiexit_user_address = bytes_to_address(event_log.topics[2])
                     if daiexit_user_address != user:
                         continue  # not a match
 
@@ -282,7 +291,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
             if daiexit_log is None:
                 return DEFAULT_DECODING_OUTPUT  # no matching daiexit for potexit
 
-            raw_amount = hex_or_bytes_to_int(daiexit_log.topics[3])
+            raw_amount = int.from_bytes(daiexit_log.topics[3])
             amount = token_normalized_value(
                 token_amount=raw_amount,
                 token=self.dai,
@@ -305,11 +314,11 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
     def decode_proxy_creation(self, context: DecoderContext) -> DecodingOutput:
         if context.tx_log.topics[0] == b'%\x9b0\xca9\x88\\m\x80\x1a\x0b]\xbc\x98\x86@\xf3\xc2^/7S\x1f\xe18\xc5\xc5\xaf\x89U\xd4\x1b':  # noqa: E501
-            owner_address = hex_or_bytes_to_address(context.tx_log.topics[2])
+            owner_address = bytes_to_address(context.tx_log.topics[2])
             if not self.base.is_tracked(owner_address):
                 return DEFAULT_DECODING_OUTPUT
 
-            proxy_address = hex_or_bytes_to_address(context.tx_log.data[0:32])
+            proxy_address = bytes_to_address(context.tx_log.data[0:32])
             notes = f'Create DSR proxy {proxy_address} with owner {owner_address}'
             event = self.base.make_event_from_transaction(
                 transaction=context.transaction,
@@ -327,14 +336,14 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_vault_creation(self, context: DecoderContext) -> DecodingOutput:
-        owner_address = self._get_address_or_proxy(hex_or_bytes_to_address(context.tx_log.topics[2]))  # noqa: E501
+        owner_address = self._get_address_or_proxy(bytes_to_address(context.tx_log.topics[2]))
         if owner_address is None:
             return DEFAULT_DECODING_OUTPUT
 
         if not self.base.is_tracked(owner_address):
             return DEFAULT_DECODING_OUTPUT
 
-        cdp_id = hex_or_bytes_to_int(context.tx_log.topics[3])
+        cdp_id = int.from_bytes(context.tx_log.topics[3])
         notes = f'Create MakerDAO vault with id {cdp_id} and owner {owner_address}'
         self.base.make_event_from_transaction(
             transaction=context.transaction,
@@ -352,8 +361,8 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
     def _decode_vault_debt_generation(self, context: DecoderContext) -> DecodingOutput:
         """Decode vault debt generation by parsing a lognote for cdpmanager move"""
-        cdp_id = hex_or_bytes_to_int(context.tx_log.topics[2])
-        destination = hex_or_bytes_to_address(context.tx_log.topics[3])
+        cdp_id = int.from_bytes(context.tx_log.topics[2])
+        destination = bytes_to_address(context.tx_log.topics[3])
 
         owner = self._get_address_or_proxy(destination)
         if owner is None:
@@ -362,7 +371,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
         # now we need to get the rad and since it's the 3rd argument its not in the indexed topics
         # but it's part of the data location after the first 132 bytes.
         # also need to shift by ray since it's in rad
-        raw_amount = shift_num_right_by(hex_or_bytes_to_int(context.tx_log.data[132:164]), RAY_DIGITS)  # noqa: E501
+        raw_amount = shift_num_right_by(int.from_bytes(context.tx_log.data[132:164]), RAY_DIGITS)
         amount = token_normalized_value(
             token_amount=raw_amount,
             token=self.dai,
@@ -388,8 +397,8 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
         Used to find the vault id of a collateral deposit
         """
-        cdp_id = hex_or_bytes_to_int(context.tx_log.topics[2])
-        dink = hex_or_bytes_to_int(context.tx_log.topics[3])
+        cdp_id = int.from_bytes(context.tx_log.topics[2])
+        dink = int.from_bytes(context.tx_log.topics[3])
 
         action_item = None
         for item in context.action_items:
@@ -455,11 +464,11 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
     def decode_sdai_events(self, context: DecoderContext) -> DecodingOutput:
         if context.tx_log.topics[0] == SDAI_DEPOSIT:  # DAI -> SDAI: owner receives sdai
-            owner_address = self._get_address_or_proxy(hex_or_bytes_to_address(context.tx_log.topics[2]))  # noqa: E501
+            owner_address = self._get_address_or_proxy(bytes_to_address(context.tx_log.topics[2]))
             to_address = owner_address
             from_address: ChecksumEvmAddress | None = self.sdai.evm_address
         elif context.tx_log.topics[0] == SDAI_REDEEM:  # SDAI -> DAI: owner deposits sdai
-            owner_address = self._get_address_or_proxy(hex_or_bytes_to_address(context.tx_log.topics[3]))  # noqa: E501
+            owner_address = self._get_address_or_proxy(bytes_to_address(context.tx_log.topics[3]))
             from_address = owner_address
             to_address = self.sdai.evm_address
         else:
@@ -469,7 +478,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
             return DEFAULT_DECODING_OUTPUT
 
         amount = asset_normalized_value(
-            amount=hex_or_bytes_to_int(context.tx_log.data[32:64]),
+            amount=int.from_bytes(context.tx_log.data[32:64]),
             asset=self.sdai,
         )
         if amount == ZERO:
@@ -515,7 +524,7 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
     def decode_saidai_migration(self, context: DecoderContext) -> DecodingOutput:
         if context.tx_log.topics[0] == ERC20_OR_ERC721_TRANSFER:
-            to_address = hex_or_bytes_to_address(context.tx_log.topics[2])
+            to_address = bytes_to_address(context.tx_log.topics[2])
             if to_address != MAKERDAO_MIGRATION_ADDRESS:
                 return DEFAULT_DECODING_OUTPUT
 
@@ -553,6 +562,28 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
 
         return DEFAULT_DECODING_OUTPUT
 
+    def _decode_burn_event(self, context: DecoderContext) -> DecodingOutput:
+        if context.tx_log.topics[0] != BURN_MKR:
+            return DEFAULT_DECODING_OUTPUT
+
+        amount = token_normalized_value_decimals(
+            token_amount=int.from_bytes(context.tx_log.data[0:32]),
+            token_decimals=DEFAULT_TOKEN_DECIMALS,
+        )
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.NONE,
+            asset=A_MKR,
+            balance=Balance(amount=amount),
+            location_label=bytes_to_address(context.tx_log.topics[1]),
+            notes=f'Burn {amount} MKR tokens',
+            address=MKR_ADDRESS,
+            counterparty=CPT_MAKERDAO_MIGRATION,
+        )
+        return DecodingOutput(event=event)
+
     # -- DecoderInterface methods
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
@@ -588,6 +619,8 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
             string_to_evm_address('0x89d24A6b4CcB1B6fAA2625fE562bDD9a23260359'): (self.decode_saidai_migration,),  # noqa: E501
             self.makerdao_cdp_manager.address: (self.decode_cdp_manager_events,),
             self.sdai.evm_address: (self.decode_sdai_events,),
+            MKR_ADDRESS: (self._decode_burn_event,),
+
         }
 
     @staticmethod
@@ -595,15 +628,15 @@ class MakerdaoDecoder(DecoderInterface, HasDSProxy):
         return (
             CounterpartyDetails(
                 identifier=CPT_VAULT,
-                label=MAKERDAO_LABEL,
+                label=f'{MAKERDAO_LABEL} vault',
                 image=MAKERDAO_ICON,
             ), CounterpartyDetails(
                 identifier=CPT_DSR,
-                label=MAKERDAO_LABEL,
+                label=f'{MAKERDAO_LABEL} DSR',
                 image=MAKERDAO_ICON,
             ), CounterpartyDetails(
                 identifier=CPT_MAKERDAO_MIGRATION,
-                label=MAKERDAO_LABEL,
+                label=f'{MAKERDAO_LABEL} migration',
                 image=MAKERDAO_ICON,
             ), SDAI_CPT_DETAILS,
         )

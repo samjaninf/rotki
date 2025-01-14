@@ -43,16 +43,17 @@ VELO_V1_TOKEN = evm_address_to_identifier(
 )
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0x78C13393Aee675DD7ED07ce992210750D1F5dB88']])
-def test_add_liquidity_v2(optimism_transaction_decoder, optimism_accounts):
+def test_add_liquidity_v2(optimism_transaction_decoder, optimism_accounts, load_global_caches):
     """Check that adding liquidity to a velodrome v2 pool is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0xa1cf038ca08b51971314b4f8e006b455f2a82f113899e5eb7818ac1528605bfc')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1693573631000)
     expected_events = [
@@ -67,7 +68,7 @@ def test_add_liquidity_v2(optimism_transaction_decoder, optimism_accounts):
             balance=Balance(FVal('0.000054658008447046')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000054658008447046 ETH for gas',
+            notes='Burn 0.000054658008447046 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=68,
@@ -128,16 +129,17 @@ def test_add_liquidity_v2(optimism_transaction_decoder, optimism_accounts):
     assert EvmToken(WETH_OP_LP_TOKEN).protocol == VELODROME_POOL_PROTOCOL
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0xE1343a4b5e64d47B0c0f208d05Fb4B5973443818']])
-def test_add_liquidity_v1(optimism_transaction_decoder, optimism_accounts):
+def test_add_liquidity_v1(optimism_transaction_decoder, optimism_accounts, load_global_caches):
     """Check that adding liquidity to a velodrome v1 pool is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0x779c2c762ed7ca5d2236ac548f9e9bdc723a8bc9d6d8feba9e3baea9456bbac9')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1685968046000)
     pool = string_to_evm_address('0x6fE665F19517Cd6076866dB0548177d0E628156a')
@@ -154,7 +156,7 @@ def test_add_liquidity_v1(optimism_transaction_decoder, optimism_accounts):
             balance=Balance(FVal('0.00016522650722948')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.00016522650722948 ETH for gas',
+            notes='Burn 0.00016522650722948 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=1,
@@ -203,9 +205,10 @@ def test_add_liquidity_v1(optimism_transaction_decoder, optimism_accounts):
     assert EvmToken(lp_token_identifier).protocol == VELODROME_POOL_PROTOCOL
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0x78C13393Aee675DD7ED07ce992210750D1F5dB88']])
-def test_remove_liquidity_v2(optimism_transaction_decoder, optimism_accounts):
+def test_remove_liquidity_v2(optimism_transaction_decoder, optimism_accounts, load_global_caches):
     """Check that removing liquidity from a velodrome v2 pool is properly decoded."""
     get_or_create_evm_token(  # the token is needed for the approval event to be created
         userdb=optimism_transaction_decoder.evm_inquirer.database,
@@ -218,8 +221,8 @@ def test_remove_liquidity_v2(optimism_transaction_decoder, optimism_accounts):
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1694677251000)
     expected_events = [
@@ -234,7 +237,7 @@ def test_remove_liquidity_v2(optimism_transaction_decoder, optimism_accounts):
             balance=Balance(FVal('0.000024369543627752')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000024369543627752 ETH for gas',
+            notes='Burn 0.000024369543627752 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=33,
@@ -294,16 +297,17 @@ def test_remove_liquidity_v2(optimism_transaction_decoder, optimism_accounts):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0xe435BEbA6DEE3D6F99392ab9568777EB8165719d']])
-def test_remove_liquidity_v1(optimism_transaction_decoder, optimism_accounts):
+def test_remove_liquidity_v1(optimism_transaction_decoder, optimism_accounts, load_global_caches):
     """Check that removing liquidity from a velodrome v1 pool is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0x9b564c266aea871c14fbe120d060d1713f0ba524452906af3592360594b946f6')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1695202305000)
     pool = string_to_evm_address('0x47029bc8f5CBe3b464004E87eF9c9419a48018cd')
@@ -319,7 +323,7 @@ def test_remove_liquidity_v1(optimism_transaction_decoder, optimism_accounts):
             balance=Balance(FVal('0.000037049807135563')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000037049807135563 ETH for gas',
+            notes='Burn 0.000037049807135563 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=39,
@@ -379,16 +383,17 @@ def test_remove_liquidity_v1(optimism_transaction_decoder, optimism_accounts):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0x78C13393Aee675DD7ED07ce992210750D1F5dB88']])
-def test_swap_eth_to_token_v2(optimism_accounts, optimism_transaction_decoder):
+def test_swap_eth_to_token_v2(optimism_accounts, optimism_transaction_decoder, load_global_caches):
     """Check that swapping eth to token in velodrome v2 is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0x8d65dc5a77aaceabac3b80fd28f8fa3cd45143748c2d31598706580f68d724da')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1693572877000)
     expected_events = [
@@ -403,7 +408,7 @@ def test_swap_eth_to_token_v2(optimism_accounts, optimism_transaction_decoder):
             balance=Balance(FVal('0.000044146364876824')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000044146364876824 ETH for gas',
+            notes='Burn 0.000044146364876824 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=1,
@@ -419,7 +424,7 @@ def test_swap_eth_to_token_v2(optimism_accounts, optimism_transaction_decoder):
             notes=f'Swap 0.01 ETH in {CPT_VELODROME}',
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=83,
+            sequence_index=2,
             timestamp=timestamp,
             location=Location.OPTIMISM,
             event_type=HistoryEventType.TRADE,
@@ -435,16 +440,17 @@ def test_swap_eth_to_token_v2(optimism_accounts, optimism_transaction_decoder):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0xB1D34002ee676516787fd8CDb9C549a415F68aA8']])
-def test_swap_eth_to_token_v1(optimism_accounts, optimism_transaction_decoder):
+def test_swap_eth_to_token_v1(optimism_accounts, optimism_transaction_decoder, load_global_caches):
     """Check that swapping eth to token in velodrome v1 is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0xaa6b816c09863eab80f6184ab4112d7fea3a813c194dcebf08b6d4e13df22354')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1695194435000)
     expected_events = [
@@ -459,7 +465,7 @@ def test_swap_eth_to_token_v1(optimism_accounts, optimism_transaction_decoder):
             balance=Balance(FVal('0.000184626805145159')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000184626805145159 ETH for gas',
+            notes='Burn 0.000184626805145159 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=1,
@@ -475,7 +481,7 @@ def test_swap_eth_to_token_v1(optimism_accounts, optimism_transaction_decoder):
             notes=f'Swap 0.0000857 ETH in {CPT_VELODROME}',
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=14,
+            sequence_index=2,
             timestamp=timestamp,
             location=Location.OPTIMISM,
             event_type=HistoryEventType.TRADE,
@@ -491,16 +497,17 @@ def test_swap_eth_to_token_v1(optimism_accounts, optimism_transaction_decoder):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0x2359497cc3F8F11A80d775715367d5CB3D0fD274']])
-def test_swap_token_to_eth_v2(optimism_accounts, optimism_transaction_decoder):
+def test_swap_token_to_eth_v2(optimism_accounts, optimism_transaction_decoder, load_global_caches):
     """Check that swapping token to eth in velodrome v2 is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0x15c46045b9a4b03d15f0260f6518563f9a050fd693712330d9c05bedef833886')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1695108881000)
     expected_events = [
@@ -515,7 +522,7 @@ def test_swap_token_to_eth_v2(optimism_accounts, optimism_transaction_decoder):
             balance=Balance(FVal('0.000059095022720367')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000059095022720367 ETH for gas',
+            notes='Burn 0.000059095022720367 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=97,
@@ -559,16 +566,17 @@ def test_swap_token_to_eth_v2(optimism_accounts, optimism_transaction_decoder):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0xeEf53a1f4eb3846f33C3E549D6FDF130fa4f8b27']])
-def test_swap_token_to_eth_v1(optimism_accounts, optimism_transaction_decoder):
+def test_swap_token_to_eth_v1(optimism_accounts, optimism_transaction_decoder, load_global_caches):
     """Check that swapping token to eth in velodrome v1 is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0x10d52ec5cf06d1b5b48a346334c8f0e6ef83bd281c371d762d3c163e37f629d8')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1695155023000)
     expected_events = [
@@ -583,7 +591,7 @@ def test_swap_token_to_eth_v1(optimism_accounts, optimism_transaction_decoder):
             balance=Balance(FVal('0.000076204005061914')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000076204005061914 ETH for gas',
+            notes='Burn 0.000076204005061914 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=1,
@@ -615,18 +623,19 @@ def test_swap_token_to_eth_v1(optimism_accounts, optimism_transaction_decoder):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
-@pytest.mark.parametrize('optimism_accounts', [['0x78C13393Aee675DD7ED07ce992210750D1F5dB88']])
-def test_swap_tokens_v2(optimism_accounts, optimism_transaction_decoder):
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
+@pytest.mark.parametrize('optimism_accounts', [['0x60583f22aDA7B1352bB2faF694b3eAaf942696DD']])
+def test_swap_tokens_v2(optimism_accounts, optimism_transaction_decoder, load_global_caches):
     """Check that swapping tokens in velodrome v2 is properly decoded."""
-    evmhash = deserialize_evm_tx_hash('0x0cca192bce4a72059c255e5000a0ba1e716f1059d2a388167165e41d9269aa24')  # noqa: E501
+    evmhash = deserialize_evm_tx_hash('0x8c36e51bc4d3deec6a4c06a59179083adfd9caa8a5ad7e957e639d5792c9e139')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
-    timestamp = TimestampMS(1694638139000)
+    timestamp = TimestampMS(1697106165000)
     expected_events = [
         EvmEvent(
             tx_hash=evmhash,
@@ -636,63 +645,64 @@ def test_swap_tokens_v2(optimism_accounts, optimism_transaction_decoder):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(FVal('0.000051606343716023')),
+            balance=Balance(FVal('0.000034672969663309')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000051606343716023 ETH for gas',
+            notes='Burn 0.000034672969663309 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=96,
+            sequence_index=92,
             timestamp=timestamp,
             location=Location.OPTIMISM,
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.APPROVE,
-            asset=A_OP,
+            asset=Asset('eip155:10/erc20:0x8aE125E8653821E851F12A49F7765db9a9ce7384'),
             balance=Balance(ZERO),
             location_label=user_address,
             address=ROUTER_V2,
-            notes=f'Revoke OP spending approval of {user_address} by {ROUTER_V2}',
+            notes=f'Revoke DOLA spending approval of {user_address} by {ROUTER_V2}',
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=97,
+            sequence_index=93,
             timestamp=timestamp,
             location=Location.OPTIMISM,
             event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.SPEND,
-            asset=A_OP,
-            balance=Balance(FVal('1.5')),
+            asset=Asset('eip155:10/erc20:0x8aE125E8653821E851F12A49F7765db9a9ce7384'),
+            balance=Balance(FVal('1177.178869111912387354')),
             location_label=user_address,
             counterparty=CPT_VELODROME,
-            address=WETH_OP_POOL_ADDRESS,
-            notes=f'Swap 1.5 OP in {CPT_VELODROME}',
+            address=string_to_evm_address('0x1f8b46abe1EAbF5A60CbBB5Fb2e4a6A46fA0b6e6'),
+            notes=f'Swap 1177.178869111912387354 DOLA in {CPT_VELODROME}',
         ), EvmEvent(
             tx_hash=evmhash,
-            sequence_index=109,
+            sequence_index=94,
             timestamp=timestamp,
             location=Location.OPTIMISM,
             event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.RECEIVE,
-            asset=Asset(VELO_V2_TOKEN),
-            balance=Balance(FVal('50.633275729041219862')),
+            asset=Asset('eip155:10/erc20:0xb396b31599333739A97951b74652c117BE86eE1D'),
+            balance=Balance(FVal('1122.945013439390360367')),
             location_label=user_address,
             counterparty=CPT_VELODROME,
-            address=string_to_evm_address('0x0af32614EEa68B8D2232B9592FbdB6512ab6DA73'),
-            notes=f'Receive 50.633275729041219862 VELO as the result of a swap in {CPT_VELODROME}',
+            address=string_to_evm_address('0xBf75051F6e6dF9fEcF90d9bebbBB08a85950858C'),
+            notes=f'Receive 1122.945013439390360367 DUSD as the result of a swap in {CPT_VELODROME}',  # noqa: E501
         ),
     ]
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0xC6d5Ad3C4002A1b48d87b83939698660516ae142']])
-def test_swap_tokens_v1(optimism_accounts, optimism_transaction_decoder):
+def test_swap_tokens_v1(optimism_accounts, optimism_transaction_decoder, load_global_caches):
     """Check that swapping tokens in velodrome v1 is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0x398538615367f778e9bb7fd95b3f96ee52e2192880b6f6331f91530ae4c829d9')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1695193815000)
     expected_events = [
@@ -707,7 +717,7 @@ def test_swap_tokens_v1(optimism_accounts, optimism_transaction_decoder):
             balance=Balance(FVal('0.00003955388723844')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.00003955388723844 ETH for gas',
+            notes='Burn 0.00003955388723844 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=1,
@@ -739,9 +749,10 @@ def test_swap_tokens_v1(optimism_accounts, optimism_transaction_decoder):
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0x78C13393Aee675DD7ED07ce992210750D1F5dB88']])
-def test_stake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_decoder):
+def test_stake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_decoder, load_global_caches):  # noqa: E501
     """Check that depositing lp tokens to a velodrome v2 gauge is properly decoded."""
     get_or_create_evm_token(  # the token is needed for the approval event to be created
         userdb=optimism_transaction_decoder.evm_inquirer.database,
@@ -754,8 +765,8 @@ def test_stake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_deco
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1694639877000)
     expected_events = [
@@ -770,7 +781,7 @@ def test_stake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_deco
             balance=Balance(FVal('0.000019177994860846')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000019177994860846 ETH for gas',
+            notes='Burn 0.000019177994860846 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=19,
@@ -803,16 +814,17 @@ def test_stake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_deco
     assert EvmToken(WETH_OP_LP_TOKEN).protocol == VELODROME_POOL_PROTOCOL
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0x78C13393Aee675DD7ED07ce992210750D1F5dB88']])
-def test_unstake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_decoder):
+def test_unstake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_decoder, load_global_caches):  # noqa: E501
     """Check that withdrawing lp tokens from a velodrome v2 gauge is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0xe774e27053cab2c9cc293d6b1010d024a9a6af57fb6645ca52f0c5a26d117eeb')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1694676717000)
     expected_events = [
@@ -827,7 +839,7 @@ def test_unstake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_de
             balance=Balance(FVal('0.00001849989800651')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.00001849989800651 ETH for gas',
+            notes='Burn 0.00001849989800651 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=85,
@@ -847,16 +859,17 @@ def test_unstake_lp_token_to_gauge_v2(optimism_accounts, optimism_transaction_de
     assert events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_VELODROME]])
 @pytest.mark.parametrize('optimism_accounts', [['0xf9AEb52bB4eF74E1987dd295E4Df326d41D0d0fF']])
-def test_get_reward_from_gauge_v2(optimism_accounts, optimism_transaction_decoder):
+def test_get_reward_from_gauge_v2(optimism_accounts, optimism_transaction_decoder, load_global_caches):  # noqa: E501
     """Check claiming rewards from a velodrome v2 gauge is properly decoded."""
     evmhash = deserialize_evm_tx_hash('0x9d0eae3c2d2cda853e77a2571a7c702507beb015c08b40406e03baa4b1dde505')  # noqa: E501
     user_address = optimism_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=optimism_transaction_decoder.evm_inquirer,
-        database=optimism_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1695116021000)
     gauge_address = string_to_evm_address('0x84195De69B8B131ddAa4Be4F75633fCD7F430b7c')
@@ -872,7 +885,7 @@ def test_get_reward_from_gauge_v2(optimism_accounts, optimism_transaction_decode
             balance=Balance(FVal('0.000024794371949528')),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes='Burned 0.000024794371949528 ETH for gas',
+            notes='Burn 0.000024794371949528 ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=35,

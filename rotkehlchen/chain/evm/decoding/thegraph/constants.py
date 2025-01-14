@@ -1,4 +1,8 @@
+from collections.abc import Sequence
 from typing import Final
+
+from eth_typing import ABIEvent
+
 from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 
 CPT_THEGRAPH: Final = 'thegraph'
@@ -8,37 +12,32 @@ THEGRAPH_CPT_DETAILS: Final = CounterpartyDetails(
     image='thegraph.svg',
 )
 
-GRAPH_DELEGATION_TRANSFER_ABI: Final = [
+GRAPH_DELEGATION_TRANSFER_ABI: Final[Sequence[ABIEvent]] = [
     {
-        'anonymous': 'false',
+        'anonymous': False,
         'inputs': [
             {
-                'indexed': 'true',
-                'internalType': 'address',
+                'indexed': True,
                 'name': 'delegator',
                 'type': 'address',
             },
             {
-                'indexed': 'true',
-                'internalType': 'address',
+                'indexed': True,
                 'name': 'l2Delegator',
                 'type': 'address',
             },
             {
-                'indexed': 'true',
-                'internalType': 'address',
+                'indexed': True,
                 'name': 'indexer',
                 'type': 'address',
             },
             {
-                'indexed': 'false',
-                'internalType': 'address',
+                'indexed': False,
                 'name': 'l2Indexer',
                 'type': 'address',
             },
             {
-                'indexed': 'false',
-                'internalType': 'uint256',
+                'indexed': False,
                 'name': 'transferredDelegationTokens',
                 'type': 'uint256',
             },

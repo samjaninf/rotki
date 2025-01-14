@@ -11,7 +11,7 @@ from enum import auto
 from http import HTTPStatus
 from json import JSONDecodeError
 from pathlib import Path
-from subprocess import PIPE, Popen  # noqa: S404
+from subprocess import PIPE, Popen, check_output  # noqa: S404
 from typing import TYPE_CHECKING, Any
 
 import py
@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from vcr import VCR
 
 
+# Added here to prevent a warning about polars and forking which does not affect us
+os.environ['POLARS_ALLOW_FORKING_THREAD'] = '1'
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
@@ -104,7 +106,7 @@ if sys.platform == 'darwin':
         with suppress(AttributeError):
             delattr(request.config._tmpdirhandler, '_basetemp')
 
-    @pytest.fixture()
+    @pytest.fixture
     def tmpdir(request, tmpdir_factory):
         """Return a temporary directory path object
         which is unique to each test function invocation,
@@ -147,8 +149,8 @@ def _fixture_profiler(request):
             profiler_instance = TraceSampler(flame)
             yield
 
-    if profiler_instance is not None:
-        profiler_instance.stop()
+            if profiler_instance is not None:
+                profiler_instance.stop()
 
 
 def requires_env(allowed_envs: list[TestEnvironment]):
@@ -160,14 +162,14 @@ def requires_env(allowed_envs: list[TestEnvironment]):
 
     return pytest.mark.skipif(
         'CI' in os.environ and env not in allowed_envs,
-        reason=f'Not suitable envrionment {env} for current test',
+        reason=f'Not suitable environment {env} for current test',
     )
 
 
 def get_cassette_dir(request: pytest.FixtureRequest) -> Path:
     """
     Directory structure for cassettes in each test file resembles the file's path
-    e.g. for tests in           `tests/unit/decoders/test_aave.py`
+    e.g. for tests in       `tests/unit/decoders/test_aave.py`
          cassettes are in   `cassettes/unit/decoders/test_aave/`
     """
     return Path(request.node.path).relative_to(TESTS_ROOT_DIR).with_suffix('')
@@ -216,6 +218,20 @@ def vcr_fixture(vcr: 'VCR') -> 'VCR':
 
         return r1.uri == r2.uri and r1.method == r2.method  # normal check
 
+    def alchemy_api_matcher(r1, r2):
+        """Match Alchemy price API paths, ignoring API key."""
+        if (
+            (base_url := 'https://api.g.alchemy.com/prices/v1/') and
+            r1.uri.startswith(base_url) and
+            r2.uri.startswith(base_url)
+        ):
+            # Extract everything after API key by finding second '/' after base_url
+            path1 = r1.uri[r1.uri.find('/', len(base_url)) + 1:]
+            path2 = r2.uri[r2.uri.find('/', len(base_url)) + 1:]
+            return path1 == path2 and r1.method == r2.method
+        return r1.uri == r2.uri and r1.method == r2.method
+
+    vcr.register_matcher('alchemy_api_matcher', alchemy_api_matcher)
     vcr.register_matcher('beaconchain_matcher', beaconchain_matcher)
     return vcr
 
@@ -243,6 +259,30 @@ def vcr_config() -> dict[str, Any]:
     }
 
 
+def get_branch_distance(branch1: str, branch2: str) -> int:
+    """Get the distance between branch1 and branch2 in number of commits"""
+    merge_base = check_output(
+        args=f'git merge-base {branch1} {branch2}',
+        shell=True,
+    ).decode('utf-8').strip()
+    distance_to_branch1 = int(check_output(
+        args=f'git rev-list --count {merge_base}..{branch1}',
+        shell=True,
+    ).decode('utf-8').strip())
+    distance_to_branch2 = int(check_output(
+        args=f'git rev-list --count {merge_base}..{branch2}',
+        shell=True,
+    ).decode('utf-8').strip())
+    return distance_to_branch1 + distance_to_branch2
+
+
+def find_closest_branch(target_branch: str) -> str:
+    """Find the branch among develop and bugfixes that is closer to target_branch"""
+    all_branches = ('develop', 'bugfixes', 'master')
+    distances = {branch: get_branch_distance(branch, target_branch) for branch in all_branches}
+    return min(distances, key=distances.get)  # type: ignore
+
+
 @pytest.fixture(scope='session', name='vcr_base_dir')
 def fixture_vcr_base_dir() -> Path:
     """Determine the base dir for vcr cassettes
@@ -250,16 +290,13 @@ def fixture_vcr_base_dir() -> Path:
     """
     depth_arg = ''  # In local environment we fetch all history to avoid making the local repo a shallow clone  # noqa: E501
     if 'CI' in os.environ:
-        current_branch = os.environ.get('GITHUB_HEAD_REF')  # get branch from github actions
-        root_dir = Path(os.environ['CASSETTES_DIR'])
-        depth_arg = '--depth=1'  # If we are in CI environment we fetch with depth 1 to reduce fetching time  # noqa: E501
-        if current_branch is None or (current_branch is not None and current_branch == ''):
-            # This is needed when the job doesn't happen due to a PR for example is executed
-            # in a cron job inside github
-            current_branch = os.environ.get('GITHUB_REF_NAME')
-    else:
-        current_branch = os.environ.get('VCR_BRANCH')
-        root_dir = default_data_directory().parent / 'test-caching'
+        # the CI action Ensure VCR branch is fully rebased handles it. Do nothing
+        # Also important since running this with xdist and -n X then this runs X
+        # times and causes the CI to fail dueto inconsistencies and multi cloning
+        return Path(os.environ['CASSETTES_DIR']) / 'cassettes'
+
+    current_branch = os.environ.get('VCR_BRANCH')
+    root_dir = default_data_directory().parent / 'test-caching'
     base_dir = root_dir / 'cassettes'
 
     # Clone repo if needed
@@ -275,7 +312,7 @@ def fixture_vcr_base_dir() -> Path:
         current_branch = os.popen('git rev-parse --abbrev-ref HEAD').read().rstrip('\n')
     log.debug(f'At VCR setup, {current_branch=} {root_dir=}')
 
-    checkout_proc = Popen(f'cd "{root_dir}" && git fetch {depth_arg} origin && git checkout {current_branch}', shell=True, stdout=PIPE, stderr=PIPE)  # noqa: E501
+    checkout_proc = Popen(f'cd "{root_dir}" && git fetch {depth_arg} origin && git checkout {current_branch}', env=dict(os.environ, LANG='en_US.UTF-8'), shell=True, stdout=PIPE, stderr=PIPE)  # noqa: E501
     _, stderr = checkout_proc.communicate(timeout=SUBPROCESS_TIMEOUT)
 
     if (
@@ -283,7 +320,8 @@ def fixture_vcr_base_dir() -> Path:
         b'Already on' not in stderr and
         b'Switched to' not in stderr
     ):
-        default_branch = os.environ.get('GITHUB_BASE_REF', os.environ.get('DEFAULT_VCR_BRANCH', 'develop'))  # noqa: E501
+        fallback_branch = find_closest_branch(current_branch)  # either master, develop or bugfixes but always the closest  # noqa: E501
+        default_branch = os.environ.get('GITHUB_BASE_REF', os.environ.get('DEFAULT_VCR_BRANCH', fallback_branch))  # noqa: E501
         if default_branch == '' and 'CI' in os.environ:
             # In the case of the CI when the job is executed and not due to a PR then
             # GITHUB_BASE_REF is set to ''
@@ -303,11 +341,11 @@ def fixture_vcr_base_dir() -> Path:
 
     log.debug(f'VCR setup: Checked out test-caching {current_branch} branch')
 
-    # see if we have any uncomitted work
+    # see if we have any uncommitted work
     for diff_type in ('diff', 'diff --staged'):
         diff_result = os.popen(f'cd "{root_dir}" && git {diff_type}').read()
         if diff_result != '':
-            log.debug('VCR setup: There is uncomitted work at the test-caching repository. Not modifying it')  # noqa: E501
+            log.debug('VCR setup: There is uncommitted work at the test-caching repository. Not modifying it')  # noqa: E501
             return base_dir
 
     # see if the branch is ahead of origin, meaning local is being worked on

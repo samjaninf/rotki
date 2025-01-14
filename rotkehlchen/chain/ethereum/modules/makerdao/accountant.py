@@ -10,13 +10,13 @@ from rotkehlchen.constants.assets import A_DAI
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import get_event_type_identifier
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.types import ChecksumEvmAddress
 
 from .constants import CPT_DSR, CPT_VAULT
 
 if TYPE_CHECKING:
     from rotkehlchen.accounting.pot import AccountingPot
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
+    from rotkehlchen.types import ChecksumEvmAddress
 
 
 class MakerdaoAccountant(ModuleAccountantInterface):
@@ -46,6 +46,7 @@ class MakerdaoAccountant(ModuleAccountantInterface):
         if self.vault_balances[cdp_id] < ZERO:
             loss = -1 * self.vault_balances[cdp_id]
             pot.add_out_event(
+                originating_event_id=event.identifier,
                 event_type=AccountingEventType.TRANSACTION_EVENT,
                 notes=f'Lost {loss} DAI as debt during payback to CDP {cdp_id}',
                 location=event.location,
@@ -64,7 +65,7 @@ class MakerdaoAccountant(ModuleAccountantInterface):
             event: 'EvmEvent',
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
-        address = cast(ChecksumEvmAddress, event.location_label)  # should always exist
+        address = cast('ChecksumEvmAddress', event.location_label)  # should always exist
         self.dsr_balances[address] += event.balance.amount
         return 1
 
@@ -74,7 +75,7 @@ class MakerdaoAccountant(ModuleAccountantInterface):
             event: 'EvmEvent',
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
-        address = cast(ChecksumEvmAddress, event.location_label)  # should always exist
+        address = cast('ChecksumEvmAddress', event.location_label)  # should always exist
         self.dsr_balances[address] -= event.balance.amount
         if self.dsr_balances[address] < ZERO:
             profit = -1 * self.dsr_balances[address]

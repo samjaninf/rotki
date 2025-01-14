@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { useBreakpoint } from '@rotki/ui-library-compat';
 import { TaskType } from '@/types/task-type';
+import { useTaskStore } from '@/store/tasks';
+import { useTransactionQueryStatus } from '@/composables/history/events/query-status/tx-query-status';
 import type { EvmTransactionQueryData } from '@/types/websocket-messages';
 
 const props = defineProps<{ item: EvmTransactionQueryData }>();
@@ -12,7 +13,13 @@ const { isSmAndDown } = useBreakpoint();
 
 const { item } = toRefs(props);
 
-const transactionsLoading = isTaskRunning(TaskType.TX);
+const transactionsLoading = computed(() => {
+  const data = get(item);
+  return get(isTaskRunning(TaskType.TX, {
+    address: data.address,
+    chain: data.evmChain,
+  }));
+});
 
 const stepList = computed(() => [
   t('transactions.query_status.statuses.querying_transactions'),
@@ -20,10 +27,12 @@ const stepList = computed(() => [
   t('transactions.query_status.statuses.querying_evm_tokens_transactions'),
 ]);
 
-const steps = computed(() => get(stepList).map((step, index) => ({
-  title: toSentenceCase(step),
-  loading: isStepInProgress(index),
-})));
+const steps = computed(() =>
+  get(stepList).map((step, index) => ({
+    loading: isStepInProgress(index),
+    title: toSentenceCase(step),
+  })),
+);
 
 const hasProgress = computed(() => get(steps).some(step => step.loading));
 

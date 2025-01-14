@@ -31,7 +31,7 @@ class Aavev2Accountant(ModuleAccountantInterface):
             event: 'EvmEvent',
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
-        self.assets_borrowed[(string_to_evm_address(event.location_label), event.asset)] += event.balance.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
+        self.assets_borrowed[string_to_evm_address(event.location_label), event.asset] += event.balance.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
         return 1
 
     def _process_payback(
@@ -41,7 +41,7 @@ class Aavev2Accountant(ModuleAccountantInterface):
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
         """
-        Process payback events. If the payed back amount is higher that the borrowed amount,
+        Process payback events. If the paid back amount is higher that the borrowed amount,
         a loss event is added to the accounting pot.
         """
         key = (string_to_evm_address(event.location_label), event.asset)  # type: ignore[arg-type]  # location_label can't be None here
@@ -50,6 +50,7 @@ class Aavev2Accountant(ModuleAccountantInterface):
             loss = -1 * self.assets_borrowed[key]
             resolved_asset = event.asset.resolve_to_asset_with_symbol()
             pot.add_out_event(
+                originating_event_id=event.identifier,
                 event_type=AccountingEventType.TRANSACTION_EVENT,
                 notes=f'Lost {loss} {resolved_asset.symbol} as debt during payback to Aave v2 loan for {event.location_label}',  # noqa: E501
                 location=event.location,
@@ -68,7 +69,7 @@ class Aavev2Accountant(ModuleAccountantInterface):
             event: 'EvmEvent',
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
-        self.assets_supplied[(string_to_evm_address(event.location_label), event.asset)] += event.balance.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
+        self.assets_supplied[string_to_evm_address(event.location_label), event.asset] += event.balance.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
         return 1
 
     def _process_withdraw(

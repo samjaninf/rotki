@@ -1,4 +1,5 @@
-import type { AsyncComponent } from 'vue';
+import type { RuiIcons } from '@rotki/ui-library';
+import type { Component } from 'vue';
 
 export const SOURCES = [
   'cointracking',
@@ -21,6 +22,7 @@ export const SOURCES = [
   'rotki_trades',
   'bittrex',
   'kucoin',
+  'blockpit',
 ] as const;
 
 export type ImportSourceType = (typeof SOURCES)[number];
@@ -29,6 +31,6 @@ export interface ImportSource {
   key: string;
   label: string;
   logo?: string;
-  icon?: string;
-  form: AsyncComponent;
+  icon?: RuiIcons;
+  form: Component;
 }

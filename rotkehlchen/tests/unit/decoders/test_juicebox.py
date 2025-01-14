@@ -14,17 +14,13 @@ from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
-def test_donation(database, ethereum_inquirer, ethereum_accounts):
+def test_donation(ethereum_inquirer, ethereum_accounts):
     tx_hash = deserialize_evm_tx_hash(
         '0xf7873b900aa9bb0453b70bc57c7eef54af37346c58edfd4768eb74567279e06e',
     )
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address = ethereum_accounts[0]
     timestamp = TimestampMS(1706095919000)
     donated_amount, gas_fees = '2', '0.00306450894012447'
@@ -38,7 +34,7 @@ def test_donation(database, ethereum_inquirer, ethereum_accounts):
         asset=A_ETH,
         balance=Balance(amount=FVal(gas_fees)),
         location_label=user_address,
-        notes=f'Burned {gas_fees} ETH for gas',
+        notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
         tx_hash=tx_hash,
@@ -85,17 +81,13 @@ def test_donation(database, ethereum_inquirer, ethereum_accounts):
     assert expected_events == events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [['0x15b850a67A6ceDd218e368f1Cab11403f45a42f4']])
-def test_fund_raising(database, ethereum_inquirer, ethereum_accounts):
+def test_fund_raising(ethereum_inquirer, ethereum_accounts):
     tx_hash = deserialize_evm_tx_hash(
         '0xd4b8b0857d4cce83f0ce7310a0ed1a8f6360bae331bb4e8bd9217b1370b05bee',
     )
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hash,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address = ethereum_accounts[0]
     timestamp = TimestampMS(1706711399000)
     paid_amount, gas_fees = '0.4', '0.003792515741532086'
@@ -109,7 +101,7 @@ def test_fund_raising(database, ethereum_inquirer, ethereum_accounts):
         asset=A_ETH,
         balance=Balance(amount=FVal(gas_fees)),
         location_label=user_address,
-        notes=f'Burned {gas_fees} ETH for gas',
+        notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
         tx_hash=tx_hash,

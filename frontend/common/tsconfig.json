@@ -1,11 +1,14 @@
 {
-  "extends": "../tsconfig.json",
   "compilerOptions": {
-    "target": "es2020",
-    "declaration": true,
-    "declarationDir": "./lib",
-    "outDir": "./lib"
+    "module": "NodeNext"
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["lib/**", "node_modules/**", "**/.*"]
+  "references": [
+    {
+      "path": "tsconfig.lib.json"
+    },
+    {
+      "path": "tsconfig.node.json"
+    }
+  ],
+  "files": []
 }

@@ -1,13 +1,29 @@
-import type {
-  CreateAccountPayload,
-  LoginCredentials,
-} from '@/types/login';
+import { wait } from '@shared/utils';
+import { setLastLogin } from '@/utils/account-management';
+import { useMainStore } from '@/store/main';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useWebsocketStore } from '@/store/websocket';
+import { useSessionStore } from '@/store/session';
+import { useBackendManagement } from '@/composables/backend';
+import { usePremiumReminder } from '@/composables/premium';
+import { useAppNavigation } from '@/composables/navigation';
+import { useLoggedUserIdentifier } from '@/composables/user/use-logged-user-identifier';
+import type { CreateAccountPayload, LoginCredentials } from '@/types/login';
+import type { Ref } from 'vue';
 
-export function useAccountManagement() {
+interface UseAccountManagementReturn {
+  loading: Ref<boolean>;
+  error: Ref<string>;
+  errors: Ref<string[]>;
+  createNewAccount: (payload: CreateAccountPayload) => Promise<void>;
+  userLogin: ({ password, resumeFromBackup, syncApproval, username }: LoginCredentials) => Promise<void>;
+}
+
+export function useAccountManagement(): UseAccountManagementReturn {
   const { t } = useI18n();
-  const loading: Ref<boolean> = ref(false);
-  const error: Ref<string> = ref('');
-  const errors: Ref<string[]> = ref([]);
+  const loading = ref<boolean>(false);
+  const error = ref<string>('');
+  const errors = ref<string[]>([]);
 
   const { showGetPremiumButton } = usePremiumReminder();
   const { navigateToDashboard } = useAppNavigation();
@@ -16,19 +32,18 @@ export function useAccountManagement() {
   const { createAccount, login } = sessionStore;
   const { connect } = useWebsocketStore();
   const authStore = useSessionAuthStore();
-  const { logged, canRequestData, upgradeVisible } = storeToRefs(authStore);
+  const { canRequestData, logged, upgradeVisible } = storeToRefs(authStore);
   const { clearUpgradeMessages } = authStore;
-  const { setupCache } = useAccountMigrationStore();
-  const { initTokens } = useNewlyDetectedTokens();
   const { isDevelop } = storeToRefs(useMainStore());
+  const loggedUserIdentifier = useLoggedUserIdentifier();
 
-  const createNewAccount = async (payload: CreateAccountPayload) => {
+  const createNewAccount = async (payload: CreateAccountPayload): Promise<void> => {
     set(loading, true);
     set(error, '');
     const username = payload.credentials.username;
     const userIdentifier = `${username}${get(isDevelop) ? '.dev' : ''}`;
-    setupCache(userIdentifier);
-    initTokens(userIdentifier);
+    set(loggedUserIdentifier, userIdentifier);
+
     await connect();
     const start = Date.now();
     const result = await createAccount(payload);
@@ -52,23 +67,17 @@ export function useAccountManagement() {
     set(loading, false);
   };
 
-  const userLogin = async ({
-    username,
-    password,
-    syncApproval,
-    resumeFromBackup,
-  }: LoginCredentials): Promise<void> => {
+  const userLogin = async ({ password, resumeFromBackup, syncApproval, username }: LoginCredentials): Promise<void> => {
     set(loading, true);
     const userIdentifier = `${username}${get(isDevelop) ? '.dev' : ''}`;
-    setupCache(userIdentifier);
-    initTokens(userIdentifier);
+    set(loggedUserIdentifier, userIdentifier);
     await connect();
 
     const result = await login({
-      username,
       password,
-      syncApproval: syncApproval || 'unknown',
       resumeFromBackup: resumeFromBackup || false,
+      syncApproval: syncApproval || 'unknown',
+      username,
     });
 
     if (!result.success && result.message)
@@ -84,22 +93,24 @@ export function useAccountManagement() {
   };
 
   return {
-    loading,
+    createNewAccount,
     error,
     errors,
-    createNewAccount,
+    loading,
     userLogin,
   };
 }
 
-export function useAutoLogin() {
-  const autolog: Ref<boolean> = ref(false);
+interface UseAutoLoginReturn { autolog: Ref<boolean> }
+
+export function useAutoLogin(): UseAutoLoginReturn {
+  const autolog = ref<boolean>(false);
 
   const sessionStore = useSessionStore();
   const { checkForAssetUpdate } = storeToRefs(sessionStore);
   const { login } = sessionStore;
   const { connected } = storeToRefs(useMainStore());
-  const { logged, canRequestData } = storeToRefs(useSessionAuthStore());
+  const { canRequestData, logged } = storeToRefs(useSessionAuthStore());
   const { resetSessionBackend } = useBackendManagement();
   const { showGetPremiumButton } = usePremiumReminder();
 
@@ -111,7 +122,7 @@ export function useAutoLogin() {
 
     set(autolog, true);
 
-    await login({ username: '', password: '' });
+    await login({ password: '', username: '' });
 
     if (get(logged)) {
       showGetPremiumButton();
@@ -126,3 +137,9 @@ export function useAutoLogin() {
     autolog,
   };
 }
+
+export const useRestartingStatus = createSharedComposable(() => {
+  const restarting = ref<boolean>(false);
+
+  return { restarting };
+});

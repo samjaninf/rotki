@@ -1,31 +1,20 @@
 <script setup lang="ts">
-const {
-  showAbout,
-  showNotificationBar,
-  showNotesSidebar,
-  showHelpBar,
-  showPinned,
-} = storeToRefs(useAreaVisibilityStore());
+import { useAreaVisibilityStore } from '@/store/session/visibility';
+import HelpSidebar from '@/components/help/HelpSidebar.vue';
+import UserNotesSidebar from '@/components/notes/UserNotesSidebar.vue';
+import PinnedSidebar from '@/components/PinnedSidebar.vue';
+import NotificationSidebar from '@/components/status/notifications/NotificationSidebar.vue';
+
+const { showAbout, showHelpBar, showNotesSidebar, showNotificationBar, showPinned }
+  = storeToRefs(useAreaVisibilityStore());
 </script>
 
 <template>
-  <div>
-    <NotificationSidebar
-      :visible="showNotificationBar"
-      @close="showNotificationBar = false"
-    />
-    <HelpSidebar
-      :visible="showHelpBar"
-      @update:visible="showHelpBar = $event"
-      @about="showAbout = true"
-    />
-    <PinnedSidebar
-      :visible="showPinned"
-      @update:visible="showPinned = $event"
-    />
-    <UserNotesSidebar
-      :visible="showNotesSidebar"
-      @update:visible="showNotesSidebar = $event"
-    />
-  </div>
+  <NotificationSidebar v-model="showNotificationBar" />
+  <PinnedSidebar v-model="showPinned" />
+  <UserNotesSidebar v-model="showNotesSidebar" />
+  <HelpSidebar
+    v-model="showHelpBar"
+    @about="showAbout = true"
+  />
 </template>

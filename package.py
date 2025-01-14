@@ -14,9 +14,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
-from setuptools_scm import get_version
-
 from packaging import version
+from setuptools_scm import get_version
 
 rotki_version = get_version()
 
@@ -216,7 +215,7 @@ class Environment:
         :returns: The backends os specific filename suffix.
         """
         if self.is_mac():
-            return 'macos'
+            return f"macos-{'x64' if self.is_x86_64() else 'arm64'}"
         if self.is_linux():
             return 'linux'
         if self.is_windows():
@@ -506,7 +505,7 @@ class MacPackaging:
         """
         backend_directory = self.__storage.backend_directory
         os.chdir(backend_directory)
-        zip_filename = f'{BACKEND_PREFIX}-{self.__environment.rotki_version}-macos.zip'
+        zip_filename = f'{BACKEND_PREFIX}-{self.__environment.rotki_version}-{self.__environment.backend_suffix()}.zip'  # noqa: E501
         ret_code = subprocess.call(
             f'zip -vr "{zip_filename}" {BACKEND_PREFIX}/ -x "*.DS_Store"',
             shell=True,
@@ -676,7 +675,8 @@ class BackendBuilder:
         self.__sanity_check()
         self.__package()
 
-        # When building for mac perfom_zip() is responsible for moving the packaged backend to dist
+        # When building for mac perform_zip() is
+        # responsible for moving the packaged backend to dist
         if mac is not None:
             backend_directory = self.__storage.backend_directory / BACKEND_PREFIX
             mac.sign(paths=backend_directory.glob('**/*'))

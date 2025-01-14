@@ -2,6 +2,9 @@
 import useVuelidate from '@vuelidate/core';
 import { helpers, required, sameAs } from '@vuelidate/validators';
 import { toMessages } from '@/utils/validation';
+import { usePremiumStore } from '@/store/session/premium';
+import { useSessionStore } from '@/store/session';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
 
 const currentPassword = ref('');
 const newPassword = ref('');
@@ -12,34 +15,18 @@ const { t } = useI18n();
 
 const rules = {
   currentPassword: {
-    required: helpers.withMessage(
-      t('change_password.validation.empty_password'),
-      required,
-    ),
+    required: helpers.withMessage(t('change_password.validation.empty_password'), required),
   },
   newPassword: {
-    required: helpers.withMessage(
-      t('change_password.validation.empty_password'),
-      required,
-    ),
+    required: helpers.withMessage(t('change_password.validation.empty_password'), required),
   },
   newPasswordConfirm: {
-    required: helpers.withMessage(
-      t('change_password.validation.empty_confirmation'),
-      required,
-    ),
-    same: helpers.withMessage(
-      t('change_password.validation.password_mismatch'),
-      sameAs(newPassword),
-    ),
+    required: helpers.withMessage(t('change_password.validation.empty_confirmation'), required),
+    same: helpers.withMessage(t('change_password.validation.password_mismatch'), sameAs(newPassword)),
   },
 };
 
-const v$ = useVuelidate(
-  rules,
-  { currentPassword, newPassword, newPasswordConfirm },
-  { $autoDirty: true },
-);
+const v$ = useVuelidate(rules, { currentPassword, newPassword, newPasswordConfirm }, { $autoDirty: true });
 
 const { premiumSync } = storeToRefs(usePremiumStore());
 const { changePassword } = useSessionStore();
@@ -62,24 +49,28 @@ async function change() {
 </script>
 
 <template>
-  <RuiCard>
-    <template #header>
+  <RuiAlert
+    v-if="premiumSync"
+    class="mt-6"
+    data-cy="premium-warning"
+    type="warning"
+  >
+    {{ t('change_password.sync_warning') }}
+  </RuiAlert>
+  <SettingsItem>
+    <template #title>
       {{ t('change_password.title') }}
     </template>
 
+    <template #subtitle>
+      {{ t('change_password.subtitle') }}
+    </template>
+
     <form>
-      <RuiAlert
-        v-if="premiumSync"
-        class="mb-4"
-        data-cy="premium-warning"
-        type="warning"
-      >
-        {{ t('change_password.sync_warning') }}
-      </RuiAlert>
       <RuiRevealableTextField
         v-model="currentPassword"
         color="primary"
-        class="user-security-settings__fields__current-password"
+        data-cy="current-password"
         :label="t('change_password.labels.password')"
         :error-messages="toMessages(v$.currentPassword)"
         variant="outlined"
@@ -87,26 +78,26 @@ async function change() {
       <RuiRevealableTextField
         v-model="newPassword"
         color="primary"
-        class="user-security-settings__fields__new-password"
+        data-cy="new-password"
         :label="t('change_password.labels.new_password')"
-        prepend-icon="lock-line"
+        prepend-icon="lu-lock-keyhole"
         :error-messages="toMessages(v$.newPassword)"
         variant="outlined"
       />
       <RuiRevealableTextField
         v-model="newPasswordConfirm"
         color="primary"
-        class="user-security-settings__fields__new-password-confirm"
+        data-cy="confirm-password"
         :label="t('change_password.labels.confirm_password')"
-        prepend-icon="repeat-2-line"
+        prepend-icon="lu-repeat"
         :error-messages="toMessages(v$.newPasswordConfirm)"
         variant="outlined"
       />
     </form>
 
-    <template #footer>
+    <div class="flex justify-end">
       <RuiButton
-        class="user-security-settings__buttons__change-password"
+        data-cy="change-password-button"
         color="primary"
         :loading="loading"
         :disabled="v$.$invalid || loading"
@@ -114,6 +105,6 @@ async function change() {
       >
         {{ t('change_password.button') }}
       </RuiButton>
-    </template>
-  </RuiCard>
+    </div>
+  </SettingsItem>
 </template>

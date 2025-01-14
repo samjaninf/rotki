@@ -1,4 +1,5 @@
 import typing
+
 from rotkehlchen.chain.evm.constants import EVM_ADDRESS_REGEX
 from rotkehlchen.chain.evm.decoding.weth.constants import (
     CHAIN_ID_TO_WETH_MAPPING,

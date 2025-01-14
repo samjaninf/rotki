@@ -1,4 +1,6 @@
-import { NotificationGroup, Priority } from '@rotki/common/lib/messages';
+import { NotificationGroup, type NotificationPayload, Priority } from '@rotki/common';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useNotificationsStore } from '@/store/notifications';
 
 describe('store::notifications/index', () => {
   beforeEach(() => {
@@ -169,5 +171,24 @@ describe('store::notifications/index', () => {
 
     // first action notification should be second
     expect(get(prioritized)[1]).toMatchObject(actionNotifications[0]);
+  });
+
+  it('should not notify a second time if a bulk notification with the same message exists', () => {
+    const notificationsStore = useNotificationsStore();
+    const { notify } = notificationsStore;
+
+    const getMessage = (): NotificationPayload => ({
+      priority: Priority.BULK,
+      message: 'there was a problem',
+      title: 'backend',
+      severity: Severity.WARNING,
+      category: NotificationCategory.DEFAULT,
+    });
+
+    notify(getMessage());
+    notify(getMessage());
+
+    expect(notificationsStore.data).toHaveLength(1);
+    expect(notificationsStore.data[0]).toMatchObject(getMessage());
   });
 });

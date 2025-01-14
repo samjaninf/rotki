@@ -1,34 +1,20 @@
 {
-  "extends": "../tsconfig.json",
   "compilerOptions": {
-    "baseUrl": ".",
-    "rootDir": ".",
-    "paths": {
-      "@/*": ["./src/*"]
+    "module": "NodeNext"
+  },
+  "references": [
+    {
+      "path": "./tsconfig.node.json"
     },
-    "types": [
-      "node",
-      "vuetify",
-      "vue-i18n",
-      "vite/client",
-      "vite-plugin-vue-layouts/client",
-      "unplugin-vue-define-options/macros-global"
-    ]
-  },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.d.ts",
-    "src/**/*.tsx",
-    "src/**/*.vue",
-    "components.d.ts"
-  ],
-  "exclude": ["node_modules/**", "**/.*"],
-  "ts-node": {
-    "compilerOptions": {
-      "module": "commonjs"
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.vitest.json"
+    },
+    {
+      "path": "./tests/e2e/specs/tsconfig.json"
     }
-  },
-  "vueCompilerOptions": {
-    "target": 2.7
-  }
+  ],
+  "files": []
 }
