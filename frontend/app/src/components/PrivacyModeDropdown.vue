@@ -1,33 +1,33 @@
 <script setup lang="ts">
+import { generateRandomScrambleMultiplier } from '@/utils/session';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { usePrivacyMode } from '@/composables/privacy';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+
 const { t } = useI18n();
+
+const isDemo = import.meta.env.VITE_DEMO_MODE !== undefined;
 
 const labels = [
   {
+    description: t('user_dropdown.change_privacy_mode.normal_mode.description'),
     title: t('user_dropdown.change_privacy_mode.normal_mode.label'),
-    description: t(
-      'user_dropdown.change_privacy_mode.normal_mode.description',
-    ),
   },
   {
+    description: t('user_dropdown.change_privacy_mode.semi_private_mode.description'),
     title: t('user_dropdown.change_privacy_mode.semi_private_mode.label'),
-    description: t(
-      'user_dropdown.change_privacy_mode.semi_private_mode.description',
-    ),
   },
   {
+    description: t('user_dropdown.change_privacy_mode.private_mode.description'),
     title: t('user_dropdown.change_privacy_mode.private_mode.label'),
-    description: t(
-      'user_dropdown.change_privacy_mode.private_mode.description',
-    ),
   },
 ];
 
-const { privacyModeIcon, privacyMode, togglePrivacyMode, changePrivacyMode }
-  = usePrivacyMode();
+const { changePrivacyMode, privacyMode, privacyModeIcon, togglePrivacyMode } = usePrivacyMode();
 
-const { scrambleData: enabled, scrambleMultiplier: multiplier } = storeToRefs(
-  useSessionSettingsStore(),
-);
+const { scrambleData: enabled, scrambleMultiplier: multiplier } = storeToRefs(useSessionSettingsStore());
 
 const scrambleData = ref<boolean>(false);
 const scrambleMultiplier = ref<string>('0');
@@ -42,24 +42,23 @@ function setData() {
 onMounted(setData);
 
 watch([enabled, multiplier], setData);
-
-const css = useCssModule();
 </script>
 
 <template>
   <div class="relative">
     <RuiMenu
-      menu-class="privacy-menu-content w-[22rem]"
+      data-cy="privacy-menu-content"
+      menu-class="w-[22rem]"
       :popper="{ placement: 'bottom-end' }"
     >
-      <template #activator="{ on }">
+      <template #activator="{ attrs }">
         <MenuTooltipButton
           :tooltip="t('user_dropdown.change_privacy_mode.label')"
           class-name="privacy-mode-dropdown"
           @click="togglePrivacyMode()"
         >
           <RuiBadge
-            :value="enabled"
+            :model-value="enabled && !isDemo"
             color="error"
             dot
             placement="top"
@@ -71,16 +70,15 @@ const css = useCssModule();
           </RuiBadge>
         </MenuTooltipButton>
         <RuiButton
-          data-cy="privacy-menu"
-          :class="css.expander"
+          :class="$style.expander"
           icon
           variant="text"
+          v-bind="{ ...attrs, 'data-cy': 'privacy-menu' }"
           size="sm"
-          v-on="on"
         >
           <RuiIcon
             size="16"
-            name="arrow-down-s-line"
+            name="lu-chevron-down"
           />
         </RuiButton>
       </template>
@@ -91,7 +89,7 @@ const css = useCssModule();
         >
           <RuiSlider
             id="privacy-mode-slider"
-            :value="privacyMode"
+            :model-value="privacyMode"
             class="h-40 w-8"
             data-cy="privacy-mode-dropdown__input"
             :step="1"
@@ -103,7 +101,7 @@ const css = useCssModule();
             slider-class="!bg-rui-grey-200 dark:!bg-rui-grey-800"
             tick-class="!bg-rui-grey-200 dark:!bg-rui-grey-800"
             vertical
-            @input="changePrivacyMode($event)"
+            @update:model-value="changePrivacyMode($event)"
           />
           <div class="flex-1 flex flex-col-reverse justify-stretch -my-7 select-none">
             <div
@@ -122,47 +120,44 @@ const css = useCssModule();
             </div>
           </div>
         </label>
-        <div class="flex items-center border-t border-default p-4">
+        <div class="border-t border-default p-4 flex flex-col gap-4">
           <SettingsOption
             #default="{ updateImmediate: updateScramble }"
-            :class="css.scrambler__toggle"
+            :class="$style.scrambler__toggle"
             setting="scrambleData"
             session-setting
           >
-            <RuiCheckbox
+            <RuiSwitch
               v-model="scrambleData"
               color="secondary"
               size="sm"
               data-cy="privacy-mode-scramble__toggle"
               hide-details
-              @input="updateScramble($event)"
+              @update:model-value="updateScramble($event)"
             >
-              <span class="text-white">
+              <span class="text-sm">
                 {{ t('user_dropdown.change_privacy_mode.scramble.label') }}
               </span>
-            </RuiCheckbox>
+            </RuiSwitch>
           </SettingsOption>
 
           <SettingsOption
             #default="{ updateImmediate: updateMultiplier }"
             setting="scrambleMultiplier"
-            :class="css.scrambler__input"
-            :error-message="t('frontend_settings.validation.scramble.error')"
+            :class="$style.scrambler__input"
+            :error-message="t('frontend_settings.scramble.validation.error')"
             session-setting
           >
-            <RuiTextField
+            <AmountInput
               v-model="scrambleMultiplier"
-              :label="t('frontend_settings.label.scramble_multiplier')"
+              :label="t('frontend_settings.scramble.multiplier.label')"
               :disabled="!scrambleData"
               variant="outlined"
               color="secondary"
-              min="0"
-              step="0.01"
-              type="number"
               data-cy="privacy-mode-scramble__multiplier"
               hide-details
               dense
-              @input="updateMultiplier($event || 1)"
+              @update:model-value="updateMultiplier($event || 1)"
             >
               <template #append>
                 <RuiButton
@@ -174,10 +169,10 @@ const css = useCssModule();
                   icon
                   @click="updateMultiplier(randomMultiplier())"
                 >
-                  <RuiIcon name="shuffle-line" />
+                  <RuiIcon name="lu-shuffle" />
                 </RuiButton>
               </template>
-            </RuiTextField>
+            </AmountInput>
           </SettingsOption>
         </div>
       </div>

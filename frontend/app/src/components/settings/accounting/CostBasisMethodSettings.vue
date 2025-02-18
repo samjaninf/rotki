@@ -1,18 +1,33 @@
 <script setup lang="ts">
-const rootAttrs = useAttrs();
+import { useCostBasisMethod } from '@/composables/reports';
+import ListItem from '@/components/common/ListItem.vue';
+import type { CostBasisMethod } from '@/types/user';
+
+defineOptions({
+  inheritAttrs: false,
+});
+
+const modelValue = defineModel<CostBasisMethod>({ required: true });
+
+defineProps<{
+  label: string;
+  successMessages: string[];
+  errorMessages: string[];
+}>();
+
 const { costBasisMethodData } = useCostBasisMethod();
 </script>
 
 <template>
   <RuiMenuSelect
-    v-bind="rootAttrs"
+    v-bind="$attrs"
+    v-model="modelValue"
+    :label="label"
+    :success-messages="successMessages"
+    :error-messages="errorMessages"
     :options="costBasisMethodData"
-    key-attr="identifier"
     variant="outlined"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
+    key-attr="identifier"
   >
     <template #selection="{ item }">
       <span class="font-medium uppercase">{{ item.identifier }}</span>

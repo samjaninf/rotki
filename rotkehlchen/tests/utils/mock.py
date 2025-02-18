@@ -2,7 +2,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, NamedTuple
-from unittest.mock import patch
+from unittest.mock import _patch, patch
 
 import requests
 from hexbytes import HexBytes
@@ -10,7 +10,6 @@ from hexbytes import HexBytes
 from rotkehlchen.types import SupportedBlockchain
 
 original_requests_get = requests.get
-MOCK_WEB3_LAST_BLOCK_INT = 16210873
 MOCK_WEB3_LAST_BLOCK_HEX = '0xf75bb9'
 
 MOCK_ROOT = Path(__file__).resolve().parent.parent / 'data' / 'mocks'
@@ -128,18 +127,21 @@ def patch_web3_request(given_web3, test_specific_mock_data):
     )
 
 
-ETHERSCAN_ACTION_RE = re.compile('.*action=(.*?)&(.*)')
-ETHERSCAN_ETH_CALL_RE = re.compile('&to=(.*)&data=(.*)&.*')
-ETHERSCAN_BLOCKNOBYTIME_RE = re.compile('&timestamp=(.*)&closest=(.*)&.*')
+ETHERSCAN_ACTION_RE = re.compile(r'.*action=(.*?)&(.*)')
+ETHERSCAN_ETH_CALL_RE = re.compile(r'&to=(.*)&data=(.*)&.*')
+ETHERSCAN_BLOCKNOBYTIME_RE = re.compile(r'&timestamp=(.*)&closest=(.*)&.*')
 
 
-def _mock_etherscan_eth_call(counter, url, eth_call_data):
-    match = ETHERSCAN_ETH_CALL_RE.search(url)
-    if match is None:
-        raise AssertionError(f'Could not parse etherscan query: {url} for eth call')
+def _mock_etherscan_eth_call(counter, url, params, eth_call_data):
+    if (
+        (contract_to := params.get('to')) is None or
+        (data := params.get('data')) is None
+    ):
+        raise AssertionError(
+            'Could not find parameters "to" and "data" '
+            f'in etherscan query: {url} {params} for eth call',
+        )
 
-    contract_to = match.group(1)
-    data = match.group(2)
     if eth_call_data is None:
         raise AssertionError(f'No eth_call mock data given in test for {contract_to=} and {data=}')
 
@@ -158,13 +160,16 @@ def _mock_etherscan_eth_call(counter, url, eth_call_data):
     return f'{{"id": {counter}, "jsonrpc": "2.0", "result": "{result}"}}'
 
 
-def _mock_etherscan_getblocknobytime(url, data):
-    match = ETHERSCAN_BLOCKNOBYTIME_RE.search(url)
-    if match is None:
-        raise AssertionError(f'Could not parse etherscan query: {url} for blocknobytime')
+def _mock_etherscan_getblocknobytime(url, params, data):
+    if (
+        (timestamp := params.get('timestamp')) is None or
+        (closest := params.get('closest')) is None
+    ):
+        raise AssertionError(
+            'Could not find parameters "timestamp" and "closest" '
+            f'in etherscan query: {url} {params} for blocknobytime',
+        )
 
-    timestamp = match.group(1)
-    closest = match.group(2)
     if data is None:
         raise AssertionError('No blocknobytime mock data given in test')
 
@@ -180,19 +185,17 @@ def patch_etherscan_request(etherscan, mock_data: dict[str, Any]):
     """Patches all requests going to the passed etherscan object with the given data"""
     counter = 0
 
-    def mock_etherscan_query(url, **kwargs):  # pylint: disable=unused-argument
+    def mock_etherscan_query(url, params, **kwargs):  # pylint: disable=unused-argument
         nonlocal counter
-        match = ETHERSCAN_ACTION_RE.search(url)
-        if match is None:
-            raise AssertionError(f'Could not parse etherscan query: {url}')
+        if (action := params.get('action')) is None:
+            raise AssertionError(f'Could not get action from etherscan query: {url} {params}')
 
-        action = match.group(1)
         if action == 'eth_call':
-            contents = _mock_etherscan_eth_call(counter, url, mock_data.get(action))
+            contents = _mock_etherscan_eth_call(counter, url, params, mock_data.get(action))
         elif action == 'getblocknobytime':
-            contents = _mock_etherscan_getblocknobytime(url, mock_data.get(action))
+            contents = _mock_etherscan_getblocknobytime(url, params, mock_data.get(action))
         else:
-            raise AssertionError(f'Unexpected action {action} at etherscan query parsing: {url}')
+            raise AssertionError(f'Unexpected action {action} at etherscan query parsing: {url} {params}')  # noqa: E501
 
         counter += 1
         return MockResponse(200, contents)
@@ -204,9 +207,9 @@ def patch_etherscan_request(etherscan, mock_data: dict[str, Any]):
     )
 
 
-BEACONCHAIN_ETH1_CALL_RE = re.compile('https://beaconcha.in/api/v1/validator/eth1/(.*)')
-BEACONCHAIN_VALIDATOR_CALL_RE = re.compile('https://beaconcha.in/api/v1/validator/(.*)')
-BEACONCHAIN_OTHER_CALL_RE = re.compile('https://beaconcha.in/api/v1/validator/(.*)/(.*)')
+BEACONCHAIN_ETH1_CALL_RE = re.compile(r'https://beaconcha.in/api/v1/validator/eth1/(.*)')
+BEACONCHAIN_VALIDATOR_CALL_RE = re.compile(r'https://beaconcha.in/api/v1/validator')
+BEACONCHAIN_OTHER_CALL_RE = re.compile(r'https://beaconcha.in/api/v1/validator/(.*)/(.*)')
 
 
 def patch_eth2_requests(eth2, mock_data):
@@ -229,9 +232,8 @@ def patch_eth2_requests(eth2, mock_data):
                 'validatorindex': entry[2],
             } for entry in validator_data]
 
-        elif (validator_match := BEACONCHAIN_VALIDATOR_CALL_RE.search(url)) is not None:
-            encoded_args = validator_match.group(1)
-            arg_len = len(encoded_args.split(','))
+        elif BEACONCHAIN_VALIDATOR_CALL_RE.search(url) is not None:
+            arg_len = len(kwargs['json']['indicesOrPubkey'].split(','))
             validator_data = mock_data.get('validator')
             assert len(validator_data) == arg_len, 'Mocked beaconchain validator response does not match arguments'  # noqa: E501
             response_data['data'] = validator_data
@@ -257,7 +259,7 @@ def patch_eth2_requests(eth2, mock_data):
         return MockResponse(200, json.dumps(response_data, separators=(',', ':')))
     return patch.object(
         eth2.beacon_inquirer.beaconchain.session,
-        'get',
+        'request',
         wraps=mock_beaconchain_query,
     )
 
@@ -277,7 +279,7 @@ def mock_proxies(stack, mocked_proxies):
     ))
 
 
-def mock_evm_chains_with_transactions():
+def mock_evm_chains_with_transactions() -> _patch:
     return patch(
         'rotkehlchen.tasks.manager.EVM_CHAINS_WITH_TRANSACTIONS',
         new=(SupportedBlockchain.ETHEREUM,),

@@ -174,7 +174,7 @@ def assert_pnl_totals_close(expected: PnlTotals, got: PnlTotals) -> None:
 
 def _check_boolean_settings(row: dict[str, Any], accountant: 'Accountant'):
     """Check boolean settings are exported correctly to the spreadsheet CSV"""
-    booleans = ('include_crypto2crypto', 'include_gas_costs', 'account_for_assets_movements', 'calculate_past_cost_basis')  # noqa: E501
+    booleans = ('include_crypto2crypto', 'include_gas_costs', 'calculate_past_cost_basis')
 
     for setting in booleans:
         if row['free_amount'] == setting:
@@ -393,3 +393,16 @@ def toggle_ignore_an_asset(
     with rotki.data.db.conn.read_ctx() as cursor:
         result = rotki.data.db.get_ignored_asset_ids(cursor)
     assert asset_to_ignore.identifier in result
+
+
+def get_calculated_asset_amount(cost_basis, asset: Asset) -> FVal | None:
+    """Get the amount of asset accounting has calculated we should have after
+    the history has been processed on a cost basis object
+    """
+    asset_events = cost_basis.get_events(asset)
+
+    amount = ZERO
+    for acquisition_event in asset_events.acquisitions_manager.get_acquisitions():
+        amount += acquisition_event.remaining_amount
+
+    return amount if amount != ZERO else None

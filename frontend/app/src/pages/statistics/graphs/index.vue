@@ -1,0 +1,22 @@
+<script setup lang="ts">
+import { PremiumStatistics } from '@/premium/premium';
+import { NoteLocation } from '@/types/notes';
+import { usePremium } from '@/composables/premium';
+import StatisticPlaceholder from '@/components/graphs/StatisticPlaceholder.vue';
+
+definePage({
+  meta: {
+    noteLocation: NoteLocation.STATISTICS,
+  },
+  name: 'statistics-graphs',
+});
+
+const premium = usePremium();
+</script>
+
+<template>
+  <div class="container">
+    <PremiumStatistics v-if="premium" />
+    <StatisticPlaceholder v-else />
+  </div>
+</template>

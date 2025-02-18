@@ -1,15 +1,32 @@
 <script setup lang="ts">
 import { Section } from '@/types/status';
-import type { DataTableColumn } from '@rotki/ui-library-compat';
-import type { ActionStatus } from '@/types/action';
-import type { IgnoredAssetsHandlingType } from '@/types/asset';
-import type { Module } from '@/types/modules';
-import type {
-  NonFungibleBalance,
-  NonFungibleBalanceWithLastPrice,
-  NonFungibleBalancesRequestPayload,
-} from '@/types/nfbalances';
+import { uniqueStrings } from '@/utils/data';
+import { useConfirmStore } from '@/store/confirm';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { useMessageStore } from '@/store/message';
+import { useStatusStore } from '@/store/status';
+import { useNotificationsStore } from '@/store/notifications';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useNonFungibleBalancesStore } from '@/store/balances/non-fungible';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useAssetPricesApi } from '@/composables/api/assets/prices';
+import LatestPriceFormDialog from '@/components/price-manager/latest/LatestPriceFormDialog.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import RowAppend from '@/components/helper/RowAppend.vue';
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import NftDetails from '@/components/helper/NftDetails.vue';
+import CollectionHandler from '@/components/helper/CollectionHandler.vue';
+import NonFungibleBalancesFilter from '@/components/accounts/balances/NonFungibleBalancesFilter.vue';
+import NftImageRenderingSettingMenu from '@/components/settings/general/nft/NftImageRenderingSettingMenu.vue';
+import ActiveModules from '@/components/defi/ActiveModules.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import type { ManualPriceFormPayload } from '@/types/prices';
+import type { NonFungibleBalance, NonFungibleBalancesRequestPayload } from '@/types/nfbalances';
+import type { Module } from '@/types/modules';
+import type { IgnoredAssetsHandlingType } from '@/types/asset';
+import type { ActionStatus } from '@/types/action';
+import type { DataTableColumn } from '@rotki/ui-library';
 
 defineProps<{ modules: Module[] }>();
 
@@ -20,53 +37,54 @@ const { t } = useI18n();
 const { notify } = useNotificationsStore();
 const { deleteLatestPrice } = useAssetPricesApi();
 
-const customPrice: Ref<Partial<ManualPriceFormPayload> | null> = ref(null);
+const openPriceDialog = ref<boolean>(false);
+const customPrice = ref<ManualPriceFormPayload | null>(null);
 
-const selected: Ref<string[]> = ref([]);
+const selected = ref<string[]>([]);
 const ignoredAssetsHandling = ref<IgnoredAssetsHandlingType>('exclude');
 
 const extraParams = computed(() => ({
   ignoredAssetsHandling: get(ignoredAssetsHandling),
 }));
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const tableHeaders = computed<DataTableColumn<NonFungibleBalance>[]>(() => [
   {
-    label: t('common.name'),
-    key: 'name',
     cellClass: 'text-no-wrap',
+    key: 'name',
+    label: t('common.name'),
     sortable: true,
   },
   {
-    label: t('non_fungible_balances.ignore'),
+    align: 'center',
     key: 'ignored',
-    align: 'center',
+    label: t('non_fungible_balances.ignore'),
     sortable: false,
   },
   {
-    label: t('non_fungible_balances.column.price_in_asset'),
+    align: 'end',
+    class: 'text-no-wrap',
     key: 'priceInAsset',
-    align: 'end',
-    width: '75%',
-    class: 'text-no-wrap',
+    label: t('non_fungible_balances.column.price_in_asset'),
     sortable: false,
+    width: '75%',
   },
   {
-    label: t('common.price_in_symbol', { symbol: get(currencySymbol) }),
-    key: 'lastPrice',
     align: 'end',
     class: 'text-no-wrap',
+    key: 'usdPrice',
+    label: t('common.price_in_symbol', { symbol: get(currencySymbol) }),
     sortable: true,
   },
   {
-    label: t('non_fungible_balances.column.custom_price'),
-    key: 'manuallyInput',
     class: 'text-no-wrap',
+    key: 'manuallyInput',
+    label: t('non_fungible_balances.column.custom_price'),
     sortable: false,
   },
   {
-    label: t('common.actions_text'),
-    key: 'actions',
     align: 'center',
+    key: 'actions',
+    label: t('common.actions_text'),
     sortable: false,
     width: '50',
   },
@@ -76,48 +94,51 @@ const { isLoading: isSectionLoading } = useStatusStore();
 const loading = isSectionLoading(Section.NON_FUNGIBLE_BALANCES);
 
 const { setMessage } = useMessageStore();
-const { isAssetIgnored, ignoreAsset, unignoreAsset } = useIgnoredAssetsStore();
+const { ignoreAsset, ignoreAssetWithConfirmation, isAssetIgnored, unignoreAsset } = useIgnoredAssetsStore();
 
 const {
-  state: balances,
-  isLoading,
   fetchData,
-  sort,
-  setPage,
+  isLoading,
   pagination,
+  setPage,
+  sort,
+  state: balances,
 } = usePaginationFilters<
   NonFungibleBalance,
-  NonFungibleBalancesRequestPayload,
-  NonFungibleBalanceWithLastPrice
->(null, true, useEmptyFilter, fetchNonFungibleBalances, {
+  NonFungibleBalancesRequestPayload
+>(fetchNonFungibleBalances, {
+  defaultSortBy: [{
+    column: 'usdPrice',
+    direction: 'desc',
+  }],
+  extraParams,
+  history: 'router',
   onUpdateFilters(query) {
     set(ignoredAssetsHandling, query.ignoredAssetsHandling || 'exclude');
   },
-  extraParams,
-  defaultSortBy: {
-    key: 'lastPrice',
-    ascending: [false],
-  },
 });
 
-const { setPostSubmitFunc, setOpenDialog } = useLatestPriceForm();
 const { show } = useConfirmStore();
 
 const isIgnored = (identifier: string) => isAssetIgnored(identifier);
 
-async function toggleIgnoreAsset(identifier: string) {
-  let success;
-  if (get(isIgnored(identifier))) {
-    const response = await unignoreAsset(identifier);
-    success = response.success;
+function refreshCallback() {
+  if (get(ignoredAssetsHandling) !== 'none') {
+    fetchData();
+  }
+}
+
+async function toggleIgnoreAsset(balance: NonFungibleBalance) {
+  const { id, name } = balance;
+  if (get(isIgnored(id))) {
+    const response = await unignoreAsset(id);
+    if (response.success) {
+      refreshCallback();
+    }
   }
   else {
-    const response = await ignoreAsset(identifier);
-    success = response.success;
+    await ignoreAssetWithConfirmation(id, name, refreshCallback);
   }
-
-  if (success && get(ignoredAssetsHandling) !== 'none')
-    await fetchData();
 }
 
 async function massIgnore(ignored: boolean) {
@@ -133,17 +154,16 @@ async function massIgnore(ignored: boolean) {
   if (ids.length === 0) {
     const choice = ignored ? 1 : 2;
     setMessage({
+      description: t('ignore.no_items.description', choice),
       success: false,
       title: t('ignore.no_items.title', choice),
-      description: t('ignore.no_items.description', choice),
     });
     return;
   }
 
   if (ignored)
     status = await ignoreAsset(ids);
-  else
-    status = await unignoreAsset(ids);
+  else status = await unignoreAsset(ids);
 
   if (status.success) {
     set(selected, []);
@@ -159,31 +179,31 @@ async function deletePrice(toDeletePrice: NonFungibleBalance) {
   }
   catch {
     notify({
-      title: t('assets.custom_price.delete.error.title'),
+      display: true,
       message: t('assets.custom_price.delete.error.message', {
         asset: toDeletePrice.name ?? toDeletePrice.id,
       }),
-      display: true,
+      title: t('assets.custom_price.delete.error.title'),
     });
   }
 }
 
 function setPriceForm(item: NonFungibleBalance) {
-  setOpenDialog(true);
   set(customPrice, {
     fromAsset: item.id,
-    toAsset: item.priceAsset,
     price: item.priceInAsset.toFixed(),
+    toAsset: item.priceAsset,
   });
+  set(openPriceDialog, true);
 }
 
 function showDeleteConfirmation(item: NonFungibleBalance) {
   show(
     {
-      title: t('assets.custom_price.delete.tooltip'),
       message: t('assets.custom_price.delete.message', {
         asset: !item ? '' : item.name ?? item.id,
       }),
+      title: t('assets.custom_price.delete.tooltip'),
     },
     () => deletePrice(item),
   );
@@ -192,8 +212,6 @@ function showDeleteConfirmation(item: NonFungibleBalance) {
 onMounted(async () => {
   await fetchData();
   await refreshNonFungibleBalances();
-
-  setPostSubmitFunc(fetchData);
 });
 
 watch(ignoredAssetsHandling, () => {
@@ -207,12 +225,7 @@ watch(loading, async (isLoading, wasLoading) => {
 </script>
 
 <template>
-  <TablePageLayout
-    :title="[
-      t('navigation_menu.accounts_balances'),
-      t('non_fungible_balances.title'),
-    ]"
-  >
+  <TablePageLayout :title="[t('navigation_menu.balances'), t('navigation_menu.balances_sub.non_fungible_balances')]">
     <template #buttons>
       <div class="flex flex-row items-center justify-end gap-2">
         <RuiTooltip>
@@ -224,7 +237,7 @@ watch(loading, async (isLoading, wasLoading) => {
               @click="refreshNonFungibleBalances(true)"
             >
               <template #prepend>
-                <RuiIcon name="refresh-line" />
+                <RuiIcon name="lu-refresh-ccw" />
               </template>
               {{ t('common.refresh') }}
             </RuiButton>
@@ -252,15 +265,13 @@ watch(loading, async (isLoading, wasLoading) => {
         <template #default="{ data, totalUsdValue }">
           <RuiDataTable
             v-model="selected"
+            v-model:sort.external="sort"
+            v-model:pagination.external="pagination"
             row-attr="id"
             outlined
             dense
             :cols="tableHeaders"
             :rows="data"
-            :sort.sync="sort"
-            :sort-modifiers="{ external: true }"
-            :pagination.sync="pagination"
-            :pagination-modifiers="{ external: true }"
             :loading="isLoading"
             show-select
           >
@@ -272,8 +283,8 @@ watch(loading, async (isLoading, wasLoading) => {
                 <RuiSwitch
                   color="primary"
                   hide-details
-                  :value="isIgnored(row.id).value"
-                  @input="toggleIgnoreAsset(row.id)"
+                  :model-value="isIgnored(row.id).value"
+                  @update:model-value="toggleIgnoreAsset(row)"
                 />
               </div>
             </template>
@@ -285,7 +296,7 @@ watch(loading, async (isLoading, wasLoading) => {
               />
               <span v-else>-</span>
             </template>
-            <template #item.lastPrice="{ row }">
+            <template #item.usdPrice="{ row }">
               <AmountDisplay
                 :price-asset="row.priceAsset"
                 :amount="row.priceInAsset"
@@ -333,8 +344,9 @@ watch(loading, async (isLoading, wasLoading) => {
     </RuiCard>
 
     <LatestPriceFormDialog
-      :value="customPrice"
-      edit-mode
+      v-model:open="openPriceDialog"
+      :editable-item="customPrice"
+      @refresh="fetchData()"
     />
   </TablePageLayout>
 </template>

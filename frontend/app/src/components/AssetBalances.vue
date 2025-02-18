@@ -1,121 +1,174 @@
 <script setup lang="ts">
-import { some } from 'lodash-es';
+import { some } from 'es-toolkit/compat';
 import { isEvmNativeToken } from '@/types/asset';
-import type { AssetBalance, AssetBalanceWithPrice } from '@rotki/common';
-import type {
-  DataTableColumn,
-  DataTableSortData,
-} from '@rotki/ui-library-compat';
+import { TableColumn } from '@/types/table-column';
+import { bigNumberSum, calculatePercentage } from '@/utils/calculation';
+import { sortAssetBalances } from '@/utils/balances';
+import { assetFilterByKeyword } from '@/utils/assets';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useStatisticsStore } from '@/store/statistics';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import EvmNativeTokenBreakdown from '@/components/EvmNativeTokenBreakdown.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import RowAppend from '@/components/helper/RowAppend.vue';
+import PercentageDisplay from '@/components/display/PercentageDisplay.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
+import type { AssetBalance, AssetBalanceWithPrice, BigNumber, Nullable } from '@rotki/common';
 
 defineOptions({
   name: 'AssetBalances',
 });
 
+const search = defineModel<string>('search', { default: '', required: false });
+
 const props = withDefaults(
   defineProps<{
     balances: AssetBalanceWithPrice[];
+    details?: {
+      groupId?: string;
+      chains?: string[];
+    };
     loading?: boolean;
     hideTotal?: boolean;
     hideBreakdown?: boolean;
     stickyHeader?: boolean;
+    isLiability?: boolean;
+    allBreakdown?: boolean;
+    visibleColumns?: TableColumn[];
   }>(),
   {
-    loading: false,
-    hideTotal: false,
+    allBreakdown: false,
+    details: undefined,
     hideBreakdown: false,
+    hideTotal: false,
+    isLiability: false,
+    loading: false,
     stickyHeader: false,
+    visibleColumns: () => [],
   },
 );
 
 const { t } = useI18n();
 
 const { balances } = toRefs(props);
-const expanded: Ref<AssetBalanceWithPrice[]> = ref([]);
+const expanded = ref<AssetBalanceWithPrice[]>([]);
 
-const total = computed(() =>
-  bigNumberSum(balances.value.map(({ usdValue }) => usdValue)),
-);
-
-const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
-const { assetInfo } = useAssetInfoRetrieval();
-
-const sort: Ref<DataTableSortData> = ref({
+const sort = ref<DataTableSortData<AssetBalanceWithPrice>>({
   column: 'usdValue',
   direction: 'desc' as const,
 });
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
-  {
-    label: t('common.asset'),
-    key: 'asset',
-    class: 'text-no-wrap w-full',
-    cellClass: 'py-0',
-    sortable: true,
-  },
-  {
-    label: t('common.price_in_symbol', {
-      symbol: get(currencySymbol),
-    }),
-    key: 'usdPrice',
-    align: 'end',
-    cellClass: 'py-0',
-    sortable: true,
-  },
-  {
-    label: t('common.amount'),
-    key: 'amount',
-    align: 'end',
-    cellClass: 'py-0',
-    sortable: true,
-  },
-  {
-    label: t('common.value_in_symbol', {
-      symbol: get(currencySymbol),
-    }),
-    key: 'usdValue',
-    align: 'end',
-    class: 'text-no-wrap',
-    cellClass: 'py-0',
-    sortable: true,
-  },
-]);
-
-const sortItems = getSortItems(asset => get(assetInfo(asset)));
-
-const sorted = computed(() => {
-  const sortBy = get(sort);
-  const data = [...get(balances)];
-  if (!Array.isArray(sortBy) && sortBy?.column) {
-    return sortItems(
-      data,
-      [sortBy.column as keyof AssetBalance],
-      [sortBy.direction === 'desc'],
-    );
-  }
-  return data;
-});
+const { assetInfo, assetName, assetSymbol } = useAssetInfoRetrieval();
+const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
+const statistics = useStatisticsStore();
+const { totalNetWorthUsd } = storeToRefs(statistics);
 
 const isExpanded = (asset: string) => some(get(expanded), { asset });
 
 function expand(item: AssetBalanceWithPrice) {
   set(expanded, isExpanded(item.asset) ? [] : [item]);
 }
+
+function getAssets(item: AssetBalanceWithPrice): string[] {
+  return item.breakdown?.map(entry => entry.asset) ?? [];
+}
+
+function assetFilter(item: Nullable<AssetBalance>) {
+  return assetFilterByKeyword(item, get(search), assetName, assetSymbol);
+}
+
+const filteredBalances = computed(() => get(balances).filter(assetFilter));
+
+const total = computed(() => bigNumberSum(get(filteredBalances).map(({ usdValue }) => usdValue)));
+
+function percentageOfTotalNetValue(value: BigNumber) {
+  return calculatePercentage(value, get(totalNetWorthUsd));
+}
+
+function percentageOfCurrentGroup(value: BigNumber) {
+  return calculatePercentage(value, get(total));
+}
+
+const tableHeaders = computed<DataTableColumn<AssetBalanceWithPrice>[]>(() => {
+  const headers: DataTableColumn<AssetBalanceWithPrice>[] = [
+    {
+      cellClass: 'py-0',
+      class: 'text-no-wrap w-full',
+      key: 'asset',
+      label: t('common.asset'),
+      sortable: true,
+    },
+    {
+      align: 'end',
+      cellClass: 'py-0',
+      key: 'usdPrice',
+      label: t('common.price_in_symbol', {
+        symbol: get(currencySymbol),
+      }),
+      sortable: true,
+    },
+    {
+      align: 'end',
+      cellClass: 'py-0',
+      key: 'amount',
+      label: t('common.amount'),
+      sortable: true,
+    },
+    {
+      align: 'end',
+      cellClass: 'py-0',
+      class: 'text-no-wrap',
+      key: 'usdValue',
+      label: t('common.value_in_symbol', {
+        symbol: get(currencySymbol),
+      }),
+      sortable: true,
+    },
+  ];
+
+  if (props.visibleColumns.includes(TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE)) {
+    headers.push({
+      align: 'end',
+      cellClass: 'py-0',
+      class: 'text-no-wrap',
+      key: 'percentageOfTotalNetValue',
+      label: t('dashboard_asset_table.headers.percentage_of_total_net_value'),
+    });
+  }
+
+  if (props.visibleColumns.includes(TableColumn.PERCENTAGE_OF_TOTAL_CURRENT_GROUP)) {
+    headers.push({
+      align: 'end',
+      cellClass: 'py-0',
+      class: 'text-no-wrap',
+      key: 'percentageOfTotalCurrentGroup',
+      label: t('dashboard_asset_table.headers.percentage_of_total_current_group', {
+        group: t('blockchain_balances.group_label'),
+      }),
+    });
+  }
+
+  return headers;
+});
+
+const sorted = computed<AssetBalanceWithPrice[]>(() => sortAssetBalances([...get(filteredBalances)], get(sort), assetInfo));
 </script>
 
 <template>
   <RuiDataTable
+    v-model:sort.external="sort"
     :cols="tableHeaders"
     :rows="sorted"
     :loading="loading"
     :expanded="expanded"
     :loading-text="t('asset_balances.loading')"
-    :sort.sync="sort"
-    :sort-modifiers="{ external: true }"
     :empty="{ description: t('data_table.no_data') }"
     :sticky-header="stickyHeader"
     row-attr="asset"
     single-expand
     outlined
+    dense
   >
     <template #item.asset="{ row }">
       <AssetDetails
@@ -148,6 +201,18 @@ function expand(item: AssetBalanceWithPrice) {
         :value="row.usdValue"
       />
     </template>
+    <template #item.percentageOfTotalNetValue="{ row }">
+      <PercentageDisplay
+        :value="percentageOfTotalNetValue(row.usdValue)"
+        :asset-padding="0.1"
+      />
+    </template>
+    <template #item.percentageOfTotalCurrentGroup="{ row }">
+      <PercentageDisplay
+        :value="percentageOfCurrentGroup(row.usdValue)"
+        :asset-padding="0.1"
+      />
+    </template>
     <template
       v-if="balances.length > 0 && !hideTotal"
       #body.append
@@ -169,17 +234,23 @@ function expand(item: AssetBalanceWithPrice) {
     <template #expanded-item="{ row }">
       <EvmNativeTokenBreakdown
         v-if="!hideBreakdown && isEvmNativeToken(row.asset)"
-        blockchain-only
+        :blockchain-only="!allBreakdown"
+        :assets="getAssets(row)"
+        :details="details"
         :identifier="row.asset"
-        class="bg-white dark:bg-[#1E1E1E]"
+        :is-liability="isLiability"
+        class="bg-white dark:bg-[#1E1E1E] my-2"
       />
       <AssetBalances
         v-else
         v-bind="props"
+        :visible-columns="[]"
         hide-total
         :balances="row.breakdown ?? []"
         :sticky-header="false"
-        class="bg-white dark:bg-[#1E1E1E]"
+        :is-liability="isLiability"
+        :all-breakdown="allBreakdown"
+        class="bg-white dark:bg-[#1E1E1E] my-2"
       />
     </template>
     <template #item.expand="{ row }">

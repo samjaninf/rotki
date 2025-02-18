@@ -2,25 +2,26 @@
 import useVuelidate from '@vuelidate/core';
 import { helpers, minValue, required } from '@vuelidate/validators';
 import { toMessages } from '@/utils/validation';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useValidation } from '@/composables/validation';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
 const oraclePenaltyThresholdCount = ref<string>('0');
 
-const { oraclePenaltyThresholdCount: frequency } = storeToRefs(
-  useGeneralSettingsStore(),
-);
+const { oraclePenaltyThresholdCount: frequency } = storeToRefs(useGeneralSettingsStore());
 
 const { t } = useI18n();
 
 const min = 1;
 const rules = {
   oraclePenaltyThresholdCount: {
-    required: helpers.withMessage(
-      t('oracle_cache_management.penalty.validation.oracle_penalty_threshold_count.non_empty'),
-      required,
-    ),
     min: helpers.withMessage(
       t('oracle_cache_management.penalty.validation.oracle_penalty_threshold_count.invalid_period', { min }),
       minValue(min),
+    ),
+    required: helpers.withMessage(
+      t('oracle_cache_management.penalty.validation.oracle_penalty_threshold_count.non_empty'),
+      required,
     ),
   },
 };
@@ -40,25 +41,31 @@ onMounted(() => {
 
 <template>
   <SettingsOption
-    #default="{ error, success, update }"
     setting="oraclePenaltyThresholdCount"
     :transform="transform"
     @finished="resetBalanceSaveFrequency()"
   >
-    <RuiTextField
-      v-model="oraclePenaltyThresholdCount"
-      variant="outlined"
-      color="primary"
-      :min="min"
-      class="mt-2"
-      :label="t('oracle_cache_management.penalty.labels.oracle_penalty_threshold_count')"
-      :hint="t('oracle_cache_management.penalty.hints.oracle_penalty_threshold_count')"
-      type="number"
-      :success-messages="success"
-      :error-messages="
-        error || toMessages(v$.oraclePenaltyThresholdCount)
-      "
-      @input="callIfValid($event, update)"
-    />
+    <template #title>
+      {{ t('oracle_cache_management.penalty.labels.oracle_penalty_threshold_count') }}
+    </template>
+    <template #subtitle>
+      {{ t('oracle_cache_management.penalty.hints.oracle_penalty_threshold_count') }}
+    </template>
+    <template
+      #default="{ error, success, update }"
+    >
+      <RuiTextField
+        v-model="oraclePenaltyThresholdCount"
+        variant="outlined"
+        color="primary"
+        :min="min"
+        class="mt-2"
+        :label="t('oracle_cache_management.penalty.labels.oracle_penalty_threshold_count')"
+        type="number"
+        :success-messages="success"
+        :error-messages="error || toMessages(v$.oraclePenaltyThresholdCount)"
+        @update:model-value="callIfValid($event, update)"
+      />
+    </template>
   </SettingsOption>
 </template>

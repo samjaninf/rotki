@@ -1,5 +1,11 @@
 import { HistoricPrices } from '@/types/prices';
 import { TaskType } from '@/types/task-type';
+import { isTaskCancelled } from '@/utils';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { usePriceApi } from '@/composables/api/balances/price';
+import { useItemCache } from '@/composables/item-cache';
 import type { BigNumber } from '@rotki/common';
 import type { TaskMeta } from '@/types/task';
 
@@ -10,7 +16,7 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
   const { t } = useI18n();
   const { notify } = useNotificationsStore();
 
-  const createKey = (fromAsset: string, timestamp: number | string) => `${fromAsset}#${timestamp}`;
+  const createKey = (fromAsset: string, timestamp: number | string): string => `${fromAsset}#${timestamp}`;
 
   const fetchHistoricPrices = async (keys: string[]) => {
     const taskType = TaskType.FETCH_HISTORIC_PRICE;
@@ -26,14 +32,13 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
       targetAsset,
     });
 
-    let data = { targetAsset: '', assets: {} };
+    let data = { assets: {}, targetAsset: '' };
 
     try {
       const { result } = await awaitTask<HistoricPrices, TaskMeta>(
         taskId,
         taskType,
         {
-          title: t('actions.balances.historic_fetch_price.task.title'),
           description: t(
             'actions.balances.historic_fetch_price.task.description',
             {
@@ -42,6 +47,7 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
             },
             2,
           ),
+          title: t('actions.balances.historic_fetch_price.task.title'),
         },
         true,
       );
@@ -50,53 +56,63 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
     catch (error: any) {
       if (!isTaskCancelled(error)) {
         notify({
-          title: t('actions.balances.historic_fetch_price.task.title'),
+          display: true,
           message: t('actions.balances.historic_fetch_price.error.message', {
             message: error.message,
           }),
-          display: true,
+          title: t('actions.balances.historic_fetch_price.task.title'),
         });
       }
     }
 
     const response = HistoricPrices.parse(data);
 
-    return function* () {
+    return function* (): Generator<{ key: string; item: BigNumber }, void> {
       for (const assetTimestamp of assetsTimestamp) {
         const [fromAsset, timestamp] = assetTimestamp;
         const key = createKey(fromAsset, timestamp);
 
         const item = response.assets?.[fromAsset]?.[timestamp];
-        yield { key, item };
+        yield { item, key };
       }
     };
   };
 
-  const {
-    cache,
-    isPending,
-    retrieve,
-    reset,
-    deleteCacheKey,
-  } = useItemCache<BigNumber>(keys => fetchHistoricPrices(keys));
+  const { cache, deleteCacheKey, isPending, reset, retrieve } = useItemCache<BigNumber>(async keys =>
+    fetchHistoricPrices(keys),
+  );
 
-  const historicPriceInCurrentCurrency = (
-    fromAsset: string,
-    timestamp: number,
-  ): ComputedRef<BigNumber> => computed(() => {
-    const key = createKey(fromAsset, timestamp);
+  const historicPriceInCurrentCurrency = (fromAsset: string, timestamp: number): ComputedRef<BigNumber> =>
+    computed(() => {
+      const key = createKey(fromAsset, timestamp);
 
-    if (get(isPending(key)))
-      return NoPrice;
+      if (get(isPending(key)))
+        return NoPrice;
 
-    return get(retrieve(key)) || NoPrice;
-  });
+      return get(retrieve(key)) || NoPrice;
+    });
 
-  const resetHistoricalPricesData = (
-    items: { fromAsset: string; timestamp: number }[],
-  ) => {
+  const resetHistoricalPricesData = (items: { fromAsset: string; timestamp: number }[]): void => {
+    const oneHourInMs = 60 * 60;
+    const keysToBeDeleted = new Set<string>();
+    const cacheKeys = Object.keys(get(cache));
+
     items.forEach((item) => {
-      const key = createKey(item.fromAsset, item.timestamp);
+      const targetTime = item.timestamp;
+      const lowerBound = targetTime - oneHourInMs;
+      const upperBound = targetTime + oneHourInMs;
+
+      // Do deletion for (timestamp - 1 hour) and (timestamp + 1 hour)
+      cacheKeys.forEach((cacheKey) => {
+        const [cacheAsset, cacheTimestamp] = cacheKey.split('#');
+        const cacheTime = parseInt(cacheTimestamp, 10);
+
+        if (cacheAsset === item.fromAsset && cacheTime >= lowerBound && cacheTime <= upperBound)
+          keysToBeDeleted.add(cacheKey);
+      });
+    });
+
+    keysToBeDeleted.forEach((key) => {
       deleteCacheKey(key);
     });
   };
@@ -107,17 +123,14 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
 
   return {
     cache,
-    isPending,
-    retrieve,
-    reset,
     createKey,
     historicPriceInCurrentCurrency,
+    isPending,
+    reset,
     resetHistoricalPricesData,
+    retrieve,
   };
 });
 
-if (import.meta.hot) {
-  import.meta.hot.accept(
-    acceptHMRUpdate(useHistoricCachePriceStore, import.meta.hot),
-  );
-}
+if (import.meta.hot)
+  import.meta.hot.accept(acceptHMRUpdate(useHistoricCachePriceStore, import.meta.hot));

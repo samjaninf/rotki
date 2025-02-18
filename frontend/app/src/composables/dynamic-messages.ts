@@ -1,33 +1,23 @@
 import { AxiosError, type AxiosResponse } from 'axios';
+import { checkIfDevelopment } from '@shared/utils';
 import { api } from '@/services/rotkehlchen-api';
-import {
-  DashboardSchema,
-  type VisibilityPeriod,
-  WelcomeSchema,
-} from '@/types/dynamic-messages';
+import { DashboardSchema, type VisibilityPeriod, WelcomeSchema } from '@/types/dynamic-messages';
 import { camelCaseTransformer } from '@/services/axios-tranformers';
+import { logger } from '@/utils/logging';
 
 export const serializer = {
-  read: (v: any) => (v ? JSON.parse(v) : null),
-  write: (v: any) => JSON.stringify(v),
+  read: (v: any): any => (v ? JSON.parse(v) : null),
+  write: (v: any): string => JSON.stringify(v),
 };
 
 export const useDynamicMessages = createSharedComposable(() => {
   const branch = checkIfDevelopment() ? 'develop' : 'main';
-  const welcomeMessages = useSessionStorage<WelcomeSchema>(
-    'rotki.messages.welcome',
-    null,
-    {
-      serializer,
-    },
-  );
-  const dashboardMessages = useSessionStorage<DashboardSchema>(
-    'rotki.messages.dashboard',
-    null,
-    {
-      serializer,
-    },
-  );
+  const welcomeMessages = useSessionStorage<WelcomeSchema>('rotki.messages.welcome', null, {
+    serializer,
+  });
+  const dashboardMessages = useSessionStorage<DashboardSchema>('rotki.messages.dashboard', null, {
+    serializer,
+  });
 
   const welcomeHeader = computed(() => {
     if (!isDefined(welcomeMessages))
@@ -41,17 +31,14 @@ export const useDynamicMessages = createSharedComposable(() => {
     };
   });
 
-  const getValidMessages = <T extends { period: VisibilityPeriod }>(
-    messages: T[],
-  ): T[] => {
+  const getValidMessages = <T extends { period: VisibilityPeriod }>(messages: T[]): T[] => {
     const now = Date.now() / 1000;
 
     return messages.filter(x => x.period.start <= now && x.period.end > now);
   };
 
-  const getFirstValidMessage = <T extends { period: VisibilityPeriod }>(
-    messages: T[],
-  ): T | null => getValidMessages(messages)[0] ?? null;
+  const getFirstValidMessage = <T extends { period: VisibilityPeriod }>(messages: T[]): T | null =>
+    getValidMessages(messages)[0] ?? null;
 
   const welcomeMessage = computed(() => {
     if (!isDefined(welcomeMessages))
@@ -75,7 +62,7 @@ export const useDynamicMessages = createSharedComposable(() => {
     return getValidMessages(get(dashboardMessages));
   });
 
-  const getData = <T>(response: AxiosResponse<T>) => {
+  const getData = <T>(response: AxiosResponse<T>): T => {
     if (typeof response.data === 'string')
       return camelCaseTransformer(JSON.parse(response.data));
 
@@ -112,16 +99,16 @@ export const useDynamicMessages = createSharedComposable(() => {
     }
   };
 
-  const fetchMessages = async () => {
+  const fetchMessages = async (): Promise<void> => {
     set(welcomeMessages, await getWelcomeData());
     set(dashboardMessages, await getDashboardData());
   };
 
   return {
+    activeDashboardMessages,
+    activeWelcomeMessages,
     fetchMessages,
     welcomeHeader,
     welcomeMessage,
-    activeWelcomeMessages,
-    activeDashboardMessages,
   };
 });

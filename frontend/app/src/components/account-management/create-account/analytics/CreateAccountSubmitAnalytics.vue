@@ -1,22 +1,17 @@
 <script lang="ts" setup>
-const props = defineProps<{
-  loading: boolean;
-  submitUsageAnalytics: boolean;
-}>();
+const usageAnalytics = defineModel<boolean>('submitUsageAnalytics', { required: true });
 
-const emit = defineEmits<{
-  (e: 'update:submit-usage-analytics', value: boolean): void;
+defineProps<{
+  loading: boolean;
 }>();
 
 const { t } = useI18n();
-
-const usageAnalytics = useKebabVModel(props, 'submitUsageAnalytics', emit);
 </script>
 
 <template>
   <div class="space-y-8">
-    <i18n
-      path="create_account.usage_analytics.description"
+    <i18n-t
+      keypath="create_account.usage_analytics.description"
       class="text-center text-rui-text-secondary whitespace-break-spaces"
       tag="div"
     />

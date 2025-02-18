@@ -13,8 +13,8 @@ from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import EvmTransactionsFilterQuery
-from rotkehlchen.externalapis.etherscan import EtherscanHasChainActivity
-from rotkehlchen.globaldb.migrations.migration1 import ILK_REGISTRY_ABI
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.externalapis.etherscan import HasChainActivity
 from rotkehlchen.serialization.deserialize import deserialize_evm_transaction
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import (
@@ -46,23 +46,23 @@ def fixture_temp_etherscan(function_scope_messages_aggregator, tmpdir_factory, s
     if not api_key:
         api_key = '8JT7WQBB2VQP5C3416Y8X3S8GBA3CVZKP4'
 
-    db.add_external_service_credentials(credentials=[  # pylint: disable=no-value-for-parameter
-        ExternalServiceApiCredentials(service=ExternalService.ETHERSCAN, api_key=api_key),
-    ])
-    etherscan = EthereumEtherscan(database=db, msg_aggregator=function_scope_messages_aggregator)
-    return etherscan
+    with db.user_write() as write_cursor:
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,
+            credentials=[
+                ExternalServiceApiCredentials(service=ExternalService.ETHERSCAN, api_key=api_key),
+            ])
+
+    return EthereumEtherscan(database=db, msg_aggregator=function_scope_messages_aggregator)
 
 
-def patch_etherscan(etherscan):
+def patch_etherscan(etherscan, response_msg):
     count = 0
 
-    def mock_requests_get(_url, timeout):  # pylint: disable=unused-argument
+    def mock_requests_get(*args, **kwargs):  # pylint: disable=unused-argument
         nonlocal count
         if count == 0:
-            response = (
-                '{"status":"0","message":"NOTOK",'
-                '"result":"Max rate limit reached, please use API Key for higher rate limit"}'
-            )
+            response = f'{{"status":"0","message":"NOTOK","result":"{response_msg}"}}'
         else:
             response = '{"jsonrpc":"2.0","id":1,"result":"0x1337"}'
 
@@ -74,21 +74,36 @@ def patch_etherscan(etherscan):
 
 def test_maximum_rate_limit_reached(temp_etherscan, **kwargs):  # pylint: disable=unused-argument
     """
-    Test that we can handle etherscan's rate limit repsponse properly
+    Test that we can handle etherscan's rate limit response properly
 
     Regression test for https://github.com/rotki/rotki/issues/772"
     """
-    etherscan = temp_etherscan
-
-    etherscan_patch = patch_etherscan(etherscan)
+    etherscan_patch = patch_etherscan(
+        etherscan=temp_etherscan,
+        response_msg='Max calls per sec rate limit reached (5/sec)',
+    )
 
     with etherscan_patch:
-        result = etherscan.eth_call(
+        result = temp_etherscan.eth_call(
             '0x4678f0a6958e4D2Bc4F1BAF7Bc52E8F3564f3fE4',
             '0xc455279100000000000000000000000027a2eaaa8bebea8d23db486fb49627c165baacb5',
         )
 
     assert result == '0x1337'
+
+
+def test_maximum_daily_rate_limit_reached(temp_etherscan, **kwargs):  # pylint: disable=unused-argument
+    """Test that etherscan's daily rate limit raises a RemoteError"""
+    etherscan_patch = patch_etherscan(
+        etherscan=temp_etherscan,
+        response_msg='Max daily rate limit reached. 110000 (100%) of 100000 day/limit',
+    )
+
+    with pytest.raises(RemoteError), etherscan_patch:
+        temp_etherscan.eth_call(
+            '0x4678f0a6958e4D2Bc4F1BAF7Bc52E8F3564f3fE4',
+            '0xc455279100000000000000000000000027a2eaaa8bebea8d23db486fb49627c165baacb5',
+        )
 
 
 def test_deserialize_transaction_from_etherscan():
@@ -217,15 +232,15 @@ def test_etherscan_get_transactions_genesis_block(eth_transactions):
 def test_etherscan_get_contract_abi(temp_etherscan):
     """Test the contract abi fetching from etherscan"""
     abi = temp_etherscan.get_contract_abi('0x5a464C28D19848f44199D003BeF5ecc87d090F87')
-    assert abi == json.loads(ILK_REGISTRY_ABI)
+    assert abi == json.loads('[{"inputs":[{"internalType":"address","name":"vat_","type":"address"},{"internalType":"address","name":"dog_","type":"address"},{"internalType":"address","name":"cat_","type":"address"},{"internalType":"address","name":"spot_","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"AddIlk","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"usr","type":"address"}],"name":"Deny","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"what","type":"bytes32"},{"indexed":false,"internalType":"address","name":"data","type":"address"}],"name":"File","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"what","type":"bytes32"},{"indexed":false,"internalType":"address","name":"data","type":"address"}],"name":"File","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"what","type":"bytes32"},{"indexed":false,"internalType":"uint256","name":"data","type":"uint256"}],"name":"File","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"what","type":"bytes32"},{"indexed":false,"internalType":"string","name":"data","type":"string"}],"name":"File","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"NameError","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"usr","type":"address"}],"name":"Rely","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"RemoveIlk","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"SymbolError","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"UpdateIlk","type":"event"},{"inputs":[{"internalType":"address","name":"adapter","type":"address"}],"name":"add","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"cat","outputs":[{"internalType":"contract CatLike","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"class","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"count","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"dec","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"usr","type":"address"}],"name":"deny","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"dog","outputs":[{"internalType":"contract DogLike","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"},{"internalType":"bytes32","name":"what","type":"bytes32"},{"internalType":"uint256","name":"data","type":"uint256"}],"name":"file","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"},{"internalType":"bytes32","name":"what","type":"bytes32"},{"internalType":"string","name":"data","type":"string"}],"name":"file","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"what","type":"bytes32"},{"internalType":"address","name":"data","type":"address"}],"name":"file","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"},{"internalType":"bytes32","name":"what","type":"bytes32"},{"internalType":"address","name":"data","type":"address"}],"name":"file","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"gem","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"pos","type":"uint256"}],"name":"get","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"ilkData","outputs":[{"internalType":"uint96","name":"pos","type":"uint96"},{"internalType":"address","name":"join","type":"address"},{"internalType":"address","name":"gem","type":"address"},{"internalType":"uint8","name":"dec","type":"uint8"},{"internalType":"uint96","name":"class","type":"uint96"},{"internalType":"address","name":"pip","type":"address"},{"internalType":"address","name":"xlip","type":"address"},{"internalType":"string","name":"name","type":"string"},{"internalType":"string","name":"symbol","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"info","outputs":[{"internalType":"string","name":"name","type":"string"},{"internalType":"string","name":"symbol","type":"string"},{"internalType":"uint256","name":"class","type":"uint256"},{"internalType":"uint256","name":"dec","type":"uint256"},{"internalType":"address","name":"gem","type":"address"},{"internalType":"address","name":"pip","type":"address"},{"internalType":"address","name":"join","type":"address"},{"internalType":"address","name":"xlip","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"join","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"list","outputs":[{"internalType":"bytes32[]","name":"","type":"bytes32[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"start","type":"uint256"},{"internalType":"uint256","name":"end","type":"uint256"}],"name":"list","outputs":[{"internalType":"bytes32[]","name":"","type":"bytes32[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"pip","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"pos","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"_ilk","type":"bytes32"},{"internalType":"address","name":"_join","type":"address"},{"internalType":"address","name":"_gem","type":"address"},{"internalType":"uint256","name":"_dec","type":"uint256"},{"internalType":"uint256","name":"_class","type":"uint256"},{"internalType":"address","name":"_pip","type":"address"},{"internalType":"address","name":"_xlip","type":"address"},{"internalType":"string","name":"_name","type":"string"},{"internalType":"string","name":"_symbol","type":"string"}],"name":"put","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"usr","type":"address"}],"name":"rely","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"remove","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"removeAuth","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"spot","outputs":[{"internalType":"contract SpotLike","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"update","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"vat","outputs":[{"internalType":"contract VatLike","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"wards","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"xlip","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"}]')  # noqa: E501
     assert temp_etherscan.get_contract_abi('0x9531C059098e3d194fF87FebB587aB07B30B1306') is None
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_has_activity(temp_etherscan):
     """Test to check if an address has any activity on ethereum mainnet"""
-    assert temp_etherscan.has_activity('0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5') == EtherscanHasChainActivity.TRANSACTIONS  # noqa: E501
-    assert temp_etherscan.has_activity('0x725E35e01bbEDadd6ac13cE1c4a98bA4Cf00dF21') == EtherscanHasChainActivity.TRANSACTIONS  # noqa: E501
-    assert temp_etherscan.has_activity('0x3C69Bc9B9681683890ad82953Fe67d13Cd91D5EE') == EtherscanHasChainActivity.BALANCE  # noqa: E501
-    assert temp_etherscan.has_activity('0x014cd0535b2Ea668150a681524392B7633c8681c') == EtherscanHasChainActivity.TOKENS  # noqa: E501
-    assert temp_etherscan.has_activity('0x6c66149E65c517605e0a2e4F707550ca342f9c1B') == EtherscanHasChainActivity.NONE  # noqa: E501
+    assert temp_etherscan.has_activity('0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5') == HasChainActivity.TRANSACTIONS  # noqa: E501
+    assert temp_etherscan.has_activity('0x725E35e01bbEDadd6ac13cE1c4a98bA4Cf00dF21') == HasChainActivity.TRANSACTIONS  # noqa: E501
+    assert temp_etherscan.has_activity('0x3C69Bc9B9681683890ad82953Fe67d13Cd91D5EE') == HasChainActivity.BALANCE  # noqa: E501
+    assert temp_etherscan.has_activity('0x014cd0535b2Ea668150a681524392B7633c8681c') == HasChainActivity.TOKENS  # noqa: E501
+    assert temp_etherscan.has_activity('0x6c66149E65c517605e0a2e4F707550ca342f9c1B') == HasChainActivity.NONE  # noqa: E501

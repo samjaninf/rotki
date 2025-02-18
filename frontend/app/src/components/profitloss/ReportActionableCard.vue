@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { useConfirmStore } from '@/store/confirm';
+import { useReportsStore } from '@/store/reports';
+import { useAreaVisibilityStore } from '@/store/session/visibility';
 import type { Nullable } from '@rotki/common';
-import type {
-  EditableMissingPrice,
-  SelectedReport,
-} from '@/types/reports';
+import type { EditableMissingPrice, MissingAcquisition, MissingPrice, SelectedReport } from '@/types/reports';
 import type { Pinned } from '@/types/session';
 import type { DialogType } from '@/types/dialogs';
+import type { Component } from 'vue';
 
 const props = withDefaults(
   defineProps<{
@@ -24,13 +25,11 @@ const emit = defineEmits<{
 const ReportMissingAcquisitions = defineAsyncComponent(
   () => import('@/components/profitloss/ReportMissingAcquisitions.vue'),
 );
-const ReportMissingPrices = defineAsyncComponent(
-  () => import('@/components/profitloss/ReportMissingPrices.vue'),
-);
+const ReportMissingPrices = defineAsyncComponent(() => import('@/components/profitloss/ReportMissingPrices.vue'));
 
 const { t } = useI18n();
-const { report, isPinned } = toRefs(props);
-const { pinned } = storeToRefs(useAreaVisibilityStore());
+const { isPinned, report } = toRefs(props);
+const { pinned, showPinned } = storeToRefs(useAreaVisibilityStore());
 
 function setDialog(dialog: boolean) {
   emit('set-dialog', dialog);
@@ -72,8 +71,8 @@ function pinSection() {
   const pinned: Pinned = {
     name: 'report-actionable-card',
     props: {
-      report: get(report),
       isPinned: true,
+      report: get(report),
     },
   };
 
@@ -81,37 +80,41 @@ function pinSection() {
   setDialog(false);
 }
 
-const stepperContents = computed(() => {
+const stepperContents = computed<
+  {
+    key: string;
+    title: string;
+    hint: string;
+    selector: Component;
+    items: MissingAcquisition[] | MissingPrice[];
+  }[]
+>(() => {
   const contents = [];
 
-  const missingAcquisitionsLength = get(
-    actionableItemsLength,
-  ).missingAcquisitionsLength;
+  const missingAcquisitionsLength = get(actionableItemsLength).missingAcquisitionsLength;
 
   if (missingAcquisitionsLength > 0) {
     contents.push({
+      hint: t('profit_loss_report.actionable.missing_acquisitions.hint'),
+      items: get(actionableItems).missingAcquisitions,
       key: 'missingAcquisitions',
+      selector: ReportMissingAcquisitions,
       title: t('profit_loss_report.actionable.missing_acquisitions.title', {
         total: missingAcquisitionsLength,
-      }).toString(),
-      hint: t(
-        'profit_loss_report.actionable.missing_acquisitions.hint',
-      ).toString(),
-      selector: ReportMissingAcquisitions,
-      items: get(actionableItems).missingAcquisitions,
+      }),
     });
   }
 
   const missingPricesLength = get(actionableItemsLength).missingPricesLength;
   if (missingPricesLength >= 0) {
     contents.push({
+      hint: t('profit_loss_report.actionable.missing_prices.hint'),
+      items: get(actionableItems).missingPrices,
       key: 'missingPrices',
+      selector: ReportMissingPrices,
       title: t('profit_loss_report.actionable.missing_prices.title', {
         total: missingPricesLength,
-      }).toString(),
-      hint: t('profit_loss_report.actionable.missing_prices.hint').toString(),
-      selector: ReportMissingPrices,
-      items: get(actionableItems).missingPrices,
+      }),
     });
   }
 
@@ -126,12 +129,8 @@ const { show } = useConfirmStore();
 
 function showFinishDialog() {
   let type: DialogType = 'success';
-  let title = t(
-    'profit_loss_report.actionable.missing_prices.all_prices_filled',
-  );
-  let message = toSentenceCase(
-    t('profit_loss_report.actionable.missing_prices.regenerate_report_nudge'),
-  );
+  let title = t('profit_loss_report.actionable.missing_prices.all_prices_filled');
+  let message = toSentenceCase(t('profit_loss_report.actionable.missing_prices.regenerate_report_nudge'));
 
   const filledMissingPricesVal = get(filledMissingPrices);
   const skippedMissingPricesVal = get(skippedMissingPrices);
@@ -139,18 +138,13 @@ function showFinishDialog() {
   if (filledMissingPricesVal === 0) {
     type = 'warning';
     title = t('profit_loss_report.actionable.missing_prices.no_filled_prices');
-    message = t(
-      'profit_loss_report.actionable.missing_prices.skipped_all_events_confirmation',
-    );
+    message = t('profit_loss_report.actionable.missing_prices.skipped_all_events_confirmation');
   }
   else if (skippedMissingPricesVal) {
     type = 'warning';
-    title = t(
-      'profit_loss_report.actionable.missing_prices.total_skipped_prices',
-      {
-        total: skippedMissingPricesVal,
-      },
-    );
+    title = t('profit_loss_report.actionable.missing_prices.total_skipped_prices', {
+      total: skippedMissingPricesVal,
+    });
     message = `${t('profit_loss_report.actionable.missing_prices.if_sure')} ${t(
       'profit_loss_report.actionable.missing_prices.regenerate_report_nudge',
     )}`;
@@ -162,25 +156,22 @@ function showFinishDialog() {
 
   show(
     {
-      type,
-      title,
       message,
       primaryAction,
+      title,
+      type,
     },
     () => {
       if (filledMissingPricesVal)
         regenerateReport();
-      else
-        ignoreIssues();
+      else ignoreIssues();
     },
   );
 }
 
 function submitActionableItems(missingPrices: EditableMissingPrice[]) {
   const total = missingPrices.length;
-  const filled = missingPrices.filter(
-    (missingPrice: EditableMissingPrice) => !!missingPrice.price,
-  ).length;
+  const filled = missingPrices.filter((missingPrice: EditableMissingPrice) => !!missingPrice.price).length;
   set(totalMissingPrices, total);
   set(filledMissingPrices, filled);
   set(skippedMissingPrices, total - filled);
@@ -202,8 +193,11 @@ function regenerateReport() {
 function close() {
   if (get(isPinned))
     setPinned(null);
-  else
-    setDialog(false);
+  else setDialog(false);
+}
+
+function closePinnedSidebar() {
+  set(showPinned, false);
 }
 </script>
 
@@ -223,7 +217,20 @@ function close() {
       >
         <RuiIcon
           class="text-white"
-          name="close-line"
+          name="lu-x"
+        />
+      </RuiButton>
+      <RuiButton
+        v-else
+        variant="text"
+        size="sm"
+        icon
+        @click="closePinnedSidebar()"
+      >
+        <RuiIcon
+          class="text-white"
+          name="lu-chevron-right"
+          size="20"
         />
       </RuiButton>
 
@@ -258,12 +265,12 @@ function close() {
               v-if="isPinned"
               size="20"
               class="text-white"
-              name="unpin-line"
+              name="lu-pin-off"
             />
             <RuiIcon
               v-else
               class="text-white"
-              name="pushpin-line"
+              name="lu-pin"
             />
           </RuiButton>
         </template>
@@ -293,6 +300,7 @@ function close() {
         :items="content.items"
         :report="report"
         :is-pinned="isPinned"
+        @pin="pinSection()"
       >
         <template
           v-if="step === index + 1"

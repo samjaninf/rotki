@@ -1,6 +1,12 @@
 <script setup lang="ts">
+import { startPromise } from '@shared/utils';
+import { useSessionStore } from '@/store/session';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useMainStore } from '@/store/main';
+import { useInterop } from '@/composables/electron-interop';
+
 const mainStore = useMainStore();
-const { version, updateNeeded } = storeToRefs(mainStore);
+const { updateNeeded, version } = storeToRefs(mainStore);
 const { getVersion } = mainStore;
 const { isPackaged, openUrl } = useInterop();
 const { versionUpdateCheckFrequency } = storeToRefs(useFrontendSettingsStore());
@@ -17,19 +23,14 @@ function openUpdatePopup() {
 function update() {
   if (isPackaged)
     openUpdatePopup();
-  else
-    openLink();
+  else openLink();
 }
 
 const period = get(versionUpdateCheckFrequency) * 60 * 60 * 1000;
 
-const { pause, resume, isActive } = useIntervalFn(
-  () => {
-    startPromise(getVersion());
-  },
-  period,
-  { immediate: false },
-);
+const { isActive, pause, resume } = useIntervalFn(() => {
+  startPromise(getVersion());
+}, period, { immediate: false });
 
 function setVersionUpdateCheckInterval() {
   if (isActive)
@@ -59,7 +60,7 @@ const { t } = useI18n();
         icon
         @click="update()"
       >
-        <RuiIcon name="arrow-up-circle-line" />
+        <RuiIcon name="lu-circle-arrow-up" />
       </RuiButton>
     </template>
     {{ t('update_indicator.version', { appVersion }) }}

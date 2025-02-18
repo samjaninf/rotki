@@ -1,11 +1,20 @@
-export function useRandomStepper(steps: number, interval: number = 10000) {
+import type { Ref } from 'vue';
+
+interface UseRandomStepperReturn {
+  onNavigate: (newStep: number) => Promise<void>;
+  onPause: () => void;
+  onResume: () => void;
+  step: Ref<number>;
+  steps: number;
+}
+
+export function useRandomStepper(steps: number, interval: number = 10000): UseRandomStepperReturn {
   const step = ref(1);
 
-  function setRandomStep() {
+  function setRandomStep(): void {
     let newStep = get(step);
     if (steps > 1) {
-      while (newStep === get(step))
-        newStep = Math.ceil(Math.random() * steps);
+      while (newStep === get(step)) newStep = Math.ceil(Math.random() * steps);
     }
 
     set(step, newStep);
@@ -13,10 +22,10 @@ export function useRandomStepper(steps: number, interval: number = 10000) {
 
   const { pause, resume } = useIntervalFn(setRandomStep, interval);
 
-  function onNavigate(newStep: number) {
+  async function onNavigate(newStep: number): Promise<void> {
     pause();
     set(step, newStep);
-    nextTick(resume);
+    await nextTick(resume);
   }
 
   onMounted(() => {
@@ -25,10 +34,10 @@ export function useRandomStepper(steps: number, interval: number = 10000) {
   });
 
   return {
-    step,
-    steps,
     onNavigate,
     onPause: pause,
     onResume: resume,
+    step,
+    steps,
   };
 }

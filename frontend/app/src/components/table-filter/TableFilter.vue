@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { AssetInfo } from '@rotki/common/lib/data';
+import { logger } from '@/utils/logging';
+import { compareTextByKeyword } from '@/utils/assets';
+import { splitSearch } from '@/utils/search';
+import SavedFilterManagement from '@/components/table-filter/SavedFilterManagement.vue';
+import FilterDropdown from '@/components/table-filter/FilterDropdown.vue';
+import SuggestedItem from '@/components/table-filter/SuggestedItem.vue';
 import type {
   MatchedKeyword,
   MatchedKeywordWithBehaviour,
@@ -7,17 +12,22 @@ import type {
   SearchMatcher,
   Suggestion,
 } from '@/types/filtering';
+import type { AssetInfo } from '@rotki/common';
+
+defineOptions({
+  inheritAttrs: false,
+});
 
 const props = withDefaults(
   defineProps<{
     matches: MatchedKeywordWithBehaviour<any>;
     matchers: SearchMatcher<any, any>[];
-    location?: SavedFilterLocation | null;
+    location?: SavedFilterLocation;
     disabled?: boolean;
   }>(),
   {
-    location: null,
     disabled: false,
+    location: undefined,
   },
 );
 
@@ -29,32 +39,34 @@ const { matchers, matches } = toRefs(props);
 
 const input = ref();
 const selection = ref<Suggestion[]>([]);
+
 const search = ref('');
 const selectedSuggestion = ref(0);
 const suggestedFilter = ref<Suggestion>({
-  index: 0,
-  total: 0,
   asset: false,
+  index: 0,
   key: '',
+  total: 0,
   value: '',
 });
 const validKeys = computed(() => get(matchers).map(({ key }) => key));
 
 const selectedMatcher = computed(() => {
   const searchKey = splitSearch(get(search));
+
+  // If searchKey.exclude is not defined it means user hasn't put any matcher symbol
+  // So we shouldn't set the selectedMatcher yet.
+  if (searchKey.exclude === undefined)
+    return undefined;
+
   const key = get(validKeys).find(value => value === searchKey.key);
-  return matcherForKey(key) ?? null;
+  return matcherForKey(key) ?? undefined;
 });
 
 const usedKeys = computed(() => get(selection).map(entry => entry.key));
 
-function removeSelection(item: Suggestion) {
-  updateMatches(get(selection).filter(sel => sel !== item));
-}
-
 function clickItem(item: Suggestion) {
   if (typeof item.value !== 'boolean') {
-    removeSelection(item);
     selectItem(item);
   }
 }
@@ -71,18 +83,17 @@ function setSearchToMatcherKey(matcher: SearchMatcher<any>) {
   const boolean = 'boolean' in matcher;
   if (boolean) {
     applyFilter({
-      key: matcher.key,
       asset: false,
-      value: true,
       index: 0,
+      key: matcher.key,
       total: 1,
+      value: true,
     });
     return;
   }
-  const allowExclusion = 'string' in matcher && matcher.allowExclusion;
-  const filter = `${matcher.key}${allowExclusion ? '' : '='}`;
+  const filter = `${matcher.key}=`;
   set(search, filter);
-  get(input).focus();
+  get(input)?.focus?.();
 }
 
 function updateMatches(pairs: Suggestion[]) {
@@ -113,8 +124,7 @@ function updateMatches(pairs: Suggestion[]) {
       }
     }
     else if ('asset' in matcher) {
-      transformedKeyword
-        = typeof entry.value !== 'string' ? entry.value.identifier : entry.value;
+      transformedKeyword = typeof entry.value !== 'string' ? entry.value.identifier : entry.value;
     }
     else {
       transformedKeyword = true;
@@ -147,10 +157,7 @@ function applyFilter(filter: Suggestion) {
   const matcher = matcherForKey(key);
   assert(matcher);
 
-  if (
-    index >= 0
-    && (!matcher.multiple || newSelection[index].exclude !== filter.exclude)
-  )
+  if (index >= 0 && (!matcher.multiple || newSelection[index].exclude !== filter.exclude))
     newSelection = newSelection.filter(item => item.key !== key);
 
   newSelection.push(filter);
@@ -159,11 +166,8 @@ function applyFilter(filter: Suggestion) {
   set(search, '');
 }
 
-const filteredMatchers: ComputedRef<SearchMatcher<any>[]> = computed(() => {
-  const filteredByUsedKeys = get(matchers).filter(
-    ({ key, multiple }) =>
-      (!get(usedKeys).includes(key) || multiple),
-  );
+const filteredMatchers = computed<SearchMatcher<any>[]>(() => {
+  const filteredByUsedKeys = get(matchers).filter(({ key, multiple }) => !get(usedKeys).includes(key) || multiple);
 
   const searchVal = get(search);
   if (!searchVal)
@@ -171,7 +175,7 @@ const filteredMatchers: ComputedRef<SearchMatcher<any>[]> = computed(() => {
 
   const searchToken = getTextToken(searchVal);
   return filteredByUsedKeys
-    .filter(({ key }) => getTextToken(key).includes(searchVal))
+    .filter(({ key }) => getTextToken(key).includes(searchToken))
     .sort((a, b) => compareTextByKeyword(getTextToken(a.key), getTextToken(b.key), searchToken));
 });
 
@@ -179,7 +183,8 @@ async function applySuggestion() {
   const selectedIndex = get(selectedSuggestion);
   if (!get(selectedMatcher)) {
     const filteredMatchersVal = get(filteredMatchers);
-    if (filteredMatchersVal.length >= selectedIndex)
+
+    if (filteredMatchersVal.length > selectedIndex)
       setSearchToMatcherKey(filteredMatchersVal[selectedIndex]);
 
     return;
@@ -187,10 +192,10 @@ async function applySuggestion() {
 
   const filter = get(suggestedFilter);
   if (filter.value) {
-    nextTick(() => applyFilter(filter));
+    await nextTick(() => applyFilter(filter));
   }
   else {
-    const { key, value: keyword, exclude } = splitSearch(get(search));
+    const { exclude, key, value: keyword } = splitSearch(get(search));
 
     const matcher = matcherForKey(key);
     let asset = false;
@@ -204,25 +209,18 @@ async function applySuggestion() {
         asset = true;
       }
       else if (!('boolean' in matcher)) {
-        logger.debug(
-          'Matcher doesn\'t have asset=true, string=true, or boolean=true.',
-          selectedMatcher,
-        );
+        logger.debug('Matcher doesn\'t have asset=true, string=true, or boolean=true.', selectedMatcher);
       }
 
-      if (
-        suggestedItems.length === 0
-        && 'validate' in matcher
-        && matcher.validate(keyword)
-      ) {
-        nextTick(() =>
+      if (suggestedItems.length === 0 && 'validate' in matcher && matcher.validate(keyword)) {
+        await nextTick(() =>
           applyFilter({
-            key,
             asset,
-            value: keyword,
-            index: 0,
-            total: 1,
             exclude,
+            index: 0,
+            key,
+            total: 1,
+            value: keyword,
           }),
         );
       }
@@ -251,9 +249,7 @@ watch(search, () => {
 });
 
 function moveSuggestion(up: boolean) {
-  const total = get(selectedMatcher)
-    ? get(suggestedFilter).total
-    : get(filteredMatchers).length;
+  const total = get(selectedMatcher) ? get(suggestedFilter).total : get(filteredMatchers).length;
 
   let position = get(selectedSuggestion);
   const move = up ? -1 : 1;
@@ -264,8 +260,7 @@ function moveSuggestion(up: boolean) {
     set(selectedSuggestion, 0);
   else if (position < 0)
     set(selectedSuggestion, total - 1);
-  else
-    set(selectedSuggestion, position);
+  else set(selectedSuggestion, position);
 }
 
 // TODO: This is too specific for custom asset, move it!
@@ -279,12 +274,22 @@ function getDisplayValue(suggestion: Suggestion) {
 
 function getSuggestionText(suggestion: Suggestion) {
   const operator = suggestion.exclude ? '!=' : '=';
-  return `${suggestion.key}${operator}${getDisplayValue(suggestion)}`;
+  const startSelection = suggestion.key.length + operator.length;
+  const value = getDisplayValue(suggestion);
+  return {
+    endSelection: startSelection + value.length,
+    startSelection,
+    text: `${suggestion.key}${operator}${value}`,
+  };
 }
 
-function selectItem(suggestion: Suggestion) {
-  nextTick(() => {
-    set(search, getSuggestionText(suggestion));
+async function selectItem(suggestion: Suggestion) {
+  await nextTick(async () => {
+    const suggestionText = getSuggestionText(suggestion);
+    set(search, suggestionText.text);
+    await nextTick(() => {
+      get(input)?.setSelectionRange?.(suggestionText.startSelection, suggestionText.endSelection);
+    });
   });
 }
 
@@ -304,9 +309,7 @@ function restoreSelection(matches: MatchedKeywordWithBehaviour<any>): void {
     values.forEach((value) => {
       let deserializedValue = null;
       if (asset) {
-        const prevAssetSelection = oldSelection.find(
-          ({ key }) => key === foundMatchers.key,
-        );
+        const prevAssetSelection = oldSelection.find(({ key }) => key === foundMatchers.key);
         if (prevAssetSelection)
           deserializedValue = prevAssetSelection.value;
       }
@@ -322,18 +325,17 @@ function restoreSelection(matches: MatchedKeywordWithBehaviour<any>): void {
             normalizedValue = value.substring(1);
             exclude = true;
           }
-          deserializedValue
-            = foundMatchers.deserializer?.(normalizedValue) || normalizedValue;
+          deserializedValue = foundMatchers.deserializer?.(normalizedValue) || normalizedValue;
         }
       }
 
       newSelection.push({
-        key: foundMatchers.key,
-        value: deserializedValue,
         asset,
-        total: 1,
-        index: 0,
         exclude,
+        index: 0,
+        key: foundMatchers.key,
+        total: 1,
+        value: deserializedValue,
       });
     });
   });
@@ -349,17 +351,16 @@ watch(matches, (matches) => {
   restoreSelection(matches);
 });
 
-const slots = useSlots();
 const { t } = useI18n();
 </script>
 
 <template>
   <RuiTooltip
     :popper="{ placement: 'top' }"
-    :disabled="!disabled || !slots.tooltip"
+    :disabled="!disabled || !$slots.tooltip"
     :open-delay="400"
     :close-delay="1000"
-    class="block flex-1"
+    class="block flex-1 max-w-full"
     tooltip-class="max-w-[12rem]"
   >
     <template #activator>
@@ -367,39 +368,34 @@ const { t } = useI18n();
         class="flex items-center gap-2"
         data-cy="table-filter"
       >
-        <VCombobox
+        <RuiAutoComplete
           ref="input"
-          :value="selection"
-          outlined
+          v-model:search-input="search"
+          :model-value="selection"
+          variant="outlined"
           dense
-          chips
           :disabled="disabled"
-          small-chips
-          deletable-chips
           :label="t('table_filter.label')"
-          solo
-          flat
-          multiple
           clearable
           hide-details
-          :menu-props="{ maxHeight: '390px' }"
-          prepend-inner-icon="mdi-filter-variant"
-          :search-input.sync="search"
-          @input="updateMatches($event)"
+          custom-value
+          :options="[]"
+          return-object
+          disable-interaction
+          v-bind="$attrs"
+          @update:model-value="updateMatches($event)"
           @keydown.enter="applySuggestion()"
-          @keydown.up.prevent
-          @keydown.up="moveSuggestion(true)"
-          @keydown.down.prevent
-          @keydown.down="moveSuggestion(false)"
+          @keydown.up.prevent="moveSuggestion(true)"
+          @keydown.down.prevent="moveSuggestion(false)"
         >
-          <template #selection="{ item }">
+          <template #selection="{ item, chipAttrs }">
             <RuiChip
               tile
               size="sm"
-              class="font-medium !py-0 m-0.5"
+              class="font-medium !py-0"
               clickable
               closeable
-              @click:close="removeSelection(item)"
+              v-bind="chipAttrs"
               @click="clickItem(item)"
             >
               <SuggestedItem
@@ -410,19 +406,17 @@ const { t } = useI18n();
           </template>
           <template #no-data>
             <FilterDropdown
+              :matches="matches"
               :matchers="filteredMatchers"
-              :used="usedKeys"
               :keyword="search"
               :selected-matcher="selectedMatcher"
-              :selection="selection"
               :selected-suggestion="selectedSuggestion"
-              :location="location"
               @apply-filter="applyFilter($event)"
               @suggest="suggestedFilter = $event"
               @click="setSearchToMatcherKey($event)"
             />
           </template>
-        </VCombobox>
+        </RuiAutoComplete>
 
         <SavedFilterManagement
           v-if="location"

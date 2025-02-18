@@ -1,5 +1,6 @@
 import random
 import warnings as test_warnings
+from collections.abc import Sequence
 from contextlib import ExitStack
 from http import HTTPStatus
 from unittest.mock import patch
@@ -28,6 +29,7 @@ from rotkehlchen.types import ChecksumEvmAddress, Price, deserialize_evm_tx_hash
 TEST_ACC1 = '0x2bddEd18E2CA464355091266B7616956944ee7eE'
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [[TEST_ACC1]])
 @pytest.mark.parametrize('ethereum_modules', [['compound']])
 def test_query_compound_balances(
@@ -91,7 +93,6 @@ def test_query_compound_balances(
     '0x478768685e023B8AF2815369b353b786713fDEa4',
     '0x3eab2E72fA768C3cB8ab071929AC3C8aed6CbFA6',
     '0x1107F797c1af4982b038Eb91260b3f9A90eecee9',
-    '0x577e1290fE9561A9654b7b42B1C10c7Ea90c8a07',
 ]])
 @pytest.mark.parametrize('have_decoders', [[True]])
 @pytest.mark.parametrize('ethereum_modules', [['compound']])
@@ -111,8 +112,8 @@ def test_query_compound_v3_balances(
         ],
     )
     compound_v3_balances = Compoundv3Balances(
-        database=chain_aggregator.database,
         evm_inquirer=chain_aggregator.ethereum.node_inquirer,
+        tx_decoder=chain_aggregator.ethereum.transactions_decoder,
     )
     unique_borrows, underlying_tokens = compound_v3_balances._extract_unique_borrowed_tokens()
 
@@ -124,7 +125,9 @@ def test_query_compound_v3_balances(
             for token, addresses in unique_borrows.items()
         }, underlying_tokens
 
-    def mock_query_tokens(addresses):
+    def mock_query_tokens(
+            addresses: Sequence[ChecksumEvmAddress],
+    ) -> tuple[dict[ChecksumEvmAddress, dict[EvmToken, FVal]], dict[EvmToken, Price]]:
         return ({
             ethereum_accounts[0]: {c_usdc_v3: FVal('333349.851793')},
             ethereum_accounts[1]: {c_usdc_v3: FVal('0.32795')},
@@ -152,55 +155,44 @@ def test_query_compound_v3_balances(
         ethereum_accounts[0]: {
             'lending': {
                 c_usdc_v3.identifier: {
-                    'apy': '6.42%',
+                    'apy': '18.62%',
                     'balance': get_balance('333349.851793'),
                 },
             }, 'rewards': {
                 A_COMP.identifier: {
                     'apy': None,
-                    'balance': get_balance('2.356445'),
+                    'balance': get_balance('12.317773'),
                 },
             },
         }, ethereum_accounts[1]: {
             'lending': {
                 c_usdc_v3.identifier: {
-                    'apy': '6.42%',
+                    'apy': '18.62%',
                     'balance': get_balance('0.32795'),
                 },
             }, 'rewards': {
                 A_COMP.identifier: {
                     'apy': None,
-                    'balance': get_balance('0'),
+                    'balance': get_balance('0.000016'),
                 },
             },
         }, ethereum_accounts[2]: {
             'borrowing': {
                 c_usdc_v3.identifier: {
-                    'apy': '8.63%',
-                    'balance': get_balance('166903.418564'),
+                    'apy': '21.26%',
+                    'balance': get_balance('22378.61881'),
                 },
             }, 'lending': {}, 'rewards': {
                 A_COMP.identifier: {
                     'apy': None,
-                    'balance': get_balance('0.22238'),
-                },
-            },
-        }, ethereum_accounts[3]: {
-            'borrowing': {
-                c_usdc_v3.identifier: {
-                    'apy': '8.63%',
-                    'balance': get_balance('257.564495'),
-                },
-            }, 'rewards': {
-                A_COMP.identifier: {
-                    'apy': None,
-                    'balance': get_balance('0.000038'),
+                    'balance': get_balance('0.212129'),
                 },
             },
         },
     }
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [[TEST_ACC1]])
 @pytest.mark.parametrize('ethereum_modules', [['makerdao_dsr']])
 def test_query_compound_balances_module_not_activated(
@@ -265,7 +257,7 @@ def test_events_compound(rotkehlchen_api_server: 'APIServer') -> None:
             '0xF59D4937BF1305856C3a267bB07791507a3377Ee': {
                 'eip155:1/erc20:0xc00e94Cb662C3520282E6f5717214004A7f26888': {
                     'amount': '0.003613066320816938',
-                    'usd_value': '0.0010221689306641185',
+                    'usd_value': '0.0039537892977049775',
                 },
             },
         },

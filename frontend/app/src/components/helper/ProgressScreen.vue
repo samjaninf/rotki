@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import FullSizeContent from '@/components/common/FullSizeContent.vue';
+
 const props = withDefaults(
   defineProps<{
     progress?: string;
@@ -22,9 +24,7 @@ const { t } = useI18n();
 
 <template>
   <FullSizeContent>
-    <div
-      class="flex flex-col items-center justify-center mb-10 w-full md:w-5/6"
-    >
+    <div class="flex flex-col items-center justify-center mb-10 w-full md:w-5/6">
       <template v-if="progress">
         <div class="text-4xl mb-8">
           {{ t('progress_screen.progress', { progress }) }}

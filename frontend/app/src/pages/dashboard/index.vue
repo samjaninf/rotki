@@ -3,6 +3,35 @@ import { TaskType } from '@/types/task-type';
 import { Routes } from '@/router/routes';
 import { Module } from '@/types/modules';
 import { DashboardTableType } from '@/types/settings/frontend-settings';
+import { NoteLocation } from '@/types/notes';
+import { useManualBalancesStore } from '@/store/balances/manual';
+import { useExchangeBalancesStore } from '@/store/balances/exchanges';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useTaskStore } from '@/store/tasks';
+import { useModules } from '@/composables/session/modules';
+import { useDynamicMessages } from '@/composables/dynamic-messages';
+import { useRefresh } from '@/composables/balances/refresh';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
+import NftBalanceTable from '@/components/dashboard/NftBalanceTable.vue';
+import DashboardAssetTable from '@/components/dashboard/DashboardAssetTable.vue';
+import LiquidityProviderBalanceTable from '@/components/dashboard/liquity-provider/LiquidityProviderBalanceTable.vue';
+import PriceRefresh from '@/components/helper/PriceRefresh.vue';
+import ManualBalanceCardList from '@/components/dashboard/ManualBalanceCardList.vue';
+import SummaryCardCreateButton from '@/components/dashboard/summary-card/SummaryCardCreateButton.vue';
+import SummaryCard from '@/components/dashboard/summary-card/SummaryCard.vue';
+import BlockchainBalanceCardList from '@/components/dashboard/blockchain-balance/BlockchainBalanceCardList.vue';
+import BlockchainBalanceRefreshBehaviourMenu
+  from '@/components/dashboard/blockchain-balance/BlockchainBalanceRefreshBehaviourMenu.vue';
+import ExchangeBox from '@/components/dashboard/ExchangeBox.vue';
+import OverallBalances from '@/components/dashboard/OverallBalances.vue';
+import DynamicMessageDisplay from '@/components/dashboard/DynamicMessageDisplay.vue';
+
+definePage({
+  meta: {
+    noteLocation: NoteLocation.DASHBOARD,
+  },
+  name: 'dashboard',
+});
 
 const { t } = useI18n();
 const { isTaskRunning } = useTaskStore();
@@ -23,9 +52,7 @@ const isQueryingBlockchain = isTaskRunning(TaskType.QUERY_BLOCKCHAIN_BALANCES);
 const isLoopringLoading = isTaskRunning(TaskType.L2_LOOPRING);
 const isTokenDetecting = isTaskRunning(TaskType.FETCH_DETECTED_TOKENS);
 
-const isBlockchainLoading = computed<boolean>(
-  () => get(isQueryingBlockchain) || get(isLoopringLoading),
-);
+const isBlockchainLoading = computed<boolean>(() => get(isQueryingBlockchain) || get(isLoopringLoading));
 
 const isExchangeLoading = isTaskRunning(TaskType.QUERY_EXCHANGE_BALANCES);
 
@@ -33,11 +60,7 @@ const isAllBalancesLoading = isTaskRunning(TaskType.QUERY_BALANCES);
 
 const isManualBalancesLoading = isTaskRunning(TaskType.MANUAL_BALANCES);
 
-const isAnyLoading = logicOr(
-  isBlockchainLoading,
-  isExchangeLoading,
-  isAllBalancesLoading,
-);
+const isAnyLoading = logicOr(isBlockchainLoading, isExchangeLoading, isAllBalancesLoading);
 
 const { refreshBalance } = useRefresh();
 
@@ -45,10 +68,7 @@ const { isModuleEnabled } = useModules();
 const nftEnabled = isModuleEnabled(Module.NFTS);
 
 const { activeDashboardMessages } = useDynamicMessages();
-const dismissedMessage = useSessionStorage(
-  'rotki.messages.dash.dismissed',
-  false,
-);
+const dismissedMessage = useSessionStorage('rotki.messages.dash.dismissed', false);
 const Type = DashboardTableType;
 </script>
 
@@ -59,7 +79,7 @@ const Type = DashboardTableType;
   >
     <DynamicMessageDisplay
       v-if="activeDashboardMessages.length > 0 && !dismissedMessage"
-      class="!-mt-4"
+      class="!-mt-6 mb-4"
       :messages="activeDashboardMessages"
       @dismiss="dismissedMessage = true"
     />
@@ -74,12 +94,17 @@ const Type = DashboardTableType;
               :name="t('dashboard.exchange_balances.title')"
               can-refresh
               :is-loading="isExchangeLoading"
-              :navigates-to="Routes.ACCOUNTS_BALANCES_EXCHANGE"
+              :navigates-to="Routes.BALANCES_EXCHANGE"
               @refresh="refreshBalance($event)"
             >
               <SummaryCardCreateButton
                 v-if="exchanges.length === 0"
-                :to="`#${Routes.API_KEYS_EXCHANGES}?add=true`"
+                :to="{
+                  path: '/api-keys/exchanges',
+                  query: {
+                    add: 'true',
+                  },
+                }"
               >
                 {{ t('dashboard.exchange_balances.add') }}
               </SummaryCardCreateButton>
@@ -101,7 +126,7 @@ const Type = DashboardTableType;
               :name="t('dashboard.blockchain_balances.title')"
               :is-loading="isBlockchainLoading || isTokenDetecting"
               can-refresh
-              :navigates-to="Routes.ACCOUNTS_BALANCES"
+              :navigates-to="Routes.BALANCES"
               @refresh="refreshBalance($event)"
             >
               <template #refreshMenu>
@@ -109,7 +134,12 @@ const Type = DashboardTableType;
               </template>
               <SummaryCardCreateButton
                 v-if="blockchainTotals.length === 0"
-                :to="`#${Routes.ACCOUNTS_BALANCES}?add=true`"
+                :to="{
+                  path: '/accounts/evm',
+                  query: {
+                    add: 'true',
+                  },
+                }"
               >
                 {{ t('dashboard.blockchain_balances.add') }}
               </SummaryCardCreateButton>
@@ -131,12 +161,17 @@ const Type = DashboardTableType;
               :tooltip="t('dashboard.manual_balances.card_tooltip')"
               :is-loading="isManualBalancesLoading"
               can-refresh
-              :navigates-to="Routes.ACCOUNTS_BALANCES_MANUAL"
-              @refresh="fetchManualBalances()"
+              :navigates-to="Routes.BALANCES_MANUAL"
+              @refresh="fetchManualBalances(true)"
             >
               <SummaryCardCreateButton
                 v-if="manualBalanceByLocation.length === 0"
-                :to="`#${Routes.ACCOUNTS_BALANCES_MANUAL}?add=true`"
+                :to="{
+                  path: '/balances/manual/assets',
+                  query: {
+                    add: 'true',
+                  },
+                }"
               >
                 {{ t('dashboard.manual_balances.add') }}
               </SummaryCardCreateButton>

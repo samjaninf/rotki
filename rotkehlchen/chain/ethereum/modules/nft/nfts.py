@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, Optional
 from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.chain.evm.decoding.uniswap.v3.types import AddressToUniswapV3LPBalances
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.db.filtering import NFTFilterQuery
@@ -56,27 +55,24 @@ NFT_DB_READ_TUPLE = tuple[
 ]
 
 
-def _deserialize_nft_price(
-        last_price: str | None,
-        last_price_asset: str | None,
-) -> tuple[FVal, Asset, FVal]:
+def _deserialize_nft_price(last_price: str, last_price_asset: str) -> tuple[FVal, Asset, FVal]:
     """Deserialize last price and last price asset from a DB entry
-    TODO: Both last_price and last_price_asset are optional in the current DB schema
-    but they are not used as such and should not be. We need to change the schema.
     """
     price_in_asset = deserialize_fval_or_zero(value=last_price, name='price_in_asset', location='nft_tuple')  # noqa: E501
-    price_asset = Asset(last_price_asset)  # type: ignore  # due to the asset schema problem
     # find_usd_price should be fast here since in most cases price should be cached
-    usd_price = price_in_asset * Inquirer.find_usd_price(price_asset)
+    usd_price = price_in_asset * Inquirer.find_usd_price(price_asset := Asset(last_price_asset))
     return price_in_asset, price_asset, usd_price
 
 
-def _deserialize_nft_from_db(entry: NFT_DB_READ_TUPLE) -> dict[str, Any]:
-    """From a db tuple extract the information required by the API for a NFT"""
-    price_in_asset, price_asset, usd_price = _deserialize_nft_price(
-        last_price=entry[2],
-        last_price_asset=entry[3],
-    )
+def _deserialize_nft_from_db(
+        entry: NFT_DB_READ_TUPLE,
+        price_tuple: tuple[FVal, Asset, FVal],
+) -> dict[str, Any]:
+    """From a db tuple extract the information required by the API for an NFT.
+    It requires a tuple with the price in the asset used to value the nft,
+    the asset used to value the nft and the usd price of the nft.
+    """
+    price_in_asset, price_asset, usd_price = price_tuple
     return {
         'id': entry[0],
         'name': entry[1],
@@ -172,29 +168,42 @@ class Nfts(EthereumModule, CacheableMixIn, LockableQueryMixIn):
 
     def get_db_nft_balances(self, filter_query: 'NFTFilterQuery') -> dict[str, Any]:
         """Filters (with `filter_query`) and returns cached nft balances in the nfts table"""
-        query, bindings = filter_query.prepare()
         total_usd_value = ZERO
+        query, bindings = filter_query.prepare(with_pagination=False)
+        with self.db.conn.read_ctx() as cursor:
+            entries_total = cursor.execute('SELECT COUNT(*) FROM nfts').fetchone()[0]
+            entries_found = 0
+            usd_price_tuples = {}  # store the queried prices and calculated usd price
+            cursor.execute(
+                'SELECT last_price, last_price_asset, identifier FROM nfts ' + query,
+                bindings,
+            )
+            for db_entry in cursor:  # we do this query because the previous one is limited to the page and we need to query the total usd price  # noqa: E501
+                price_in_asset, price_asset, usd_price = _deserialize_nft_price(
+                    last_price=db_entry[0],
+                    last_price_asset=db_entry[1],
+                )
+                usd_price_tuples[db_entry[2]] = (price_in_asset, price_asset, usd_price)  # save all the prices to reuse them when creating the response  # noqa: E501
+                total_usd_value += usd_price
+                entries_found += 1
+
+        with self.db.user_write() as write_ctx:
+            write_ctx.executemany(
+                'UPDATE nfts SET usd_price=? WHERE identifier=?',
+                [(float(price_tuple[2]), ident) for ident, price_tuple in usd_price_tuples.items()],  # noqa: E501
+            )  # update the usd price since the consumer of the api always sorts by usd price
+
+        query, bindings = filter_query.prepare()
         with self.db.conn.read_ctx() as cursor:
             cursor.execute(  # this sometimes causes https://github.com/rotki/rotki/issues/5432
                 'SELECT identifier, name, last_price, last_price_asset, manual_price, is_lp, '
                 'image_url, collection_name FROM nfts ' + query,
                 bindings,
             )
-            entries = [_deserialize_nft_from_db(x) for x in cursor]
-            query, bindings = filter_query.prepare(with_pagination=False)
-            cursor.execute(
-                'SELECT last_price, last_price_asset FROM nfts ' + query,
-                bindings,
-            )
-            entries_found = 0
-            for db_entry in cursor:
-                _, _, usd_price = _deserialize_nft_price(
-                    last_price=db_entry[0],
-                    last_price_asset=db_entry[1],
-                )
-                total_usd_value += usd_price
-                entries_found += 1
-            entries_total = cursor.execute('SELECT COUNT(*) FROM nfts').fetchone()[0]
+            entries = [
+                _deserialize_nft_from_db(entry=x, price_tuple=usd_price_tuples[x[0]])
+                for x in cursor
+            ]
 
         return {
             'entries': entries,
@@ -206,11 +215,9 @@ class Nfts(EthereumModule, CacheableMixIn, LockableQueryMixIn):
     def query_balances(
             self,
             addresses: Sequence[ChecksumEvmAddress],
-            uniswap_nfts: AddressToUniswapV3LPBalances | None,
     ) -> None:
         """Queries NFT balances for the specified addresses and saves them to the db.
         Doesn't return anything. The actual opensea querying part is protected by a lock.
-        If `uniswap_nfts` is not None then the worth of the LPs are used as the value of the NFTs.
 
         May raise:
         - RemoteError
@@ -221,18 +228,12 @@ class Nfts(EthereumModule, CacheableMixIn, LockableQueryMixIn):
         queried_addresses = sorted(set(accounts.eth) & set(addresses))  # Sorting for consistency in tests  # noqa: E501
         nft_results, _ = self._get_all_nft_data(queried_addresses, ignore_cache=True)
         db_data: list[NFT_DB_WRITE_TUPLE] = []
-        # get uniswap v3 lp balances and update nfts that are LPs with their worth.
         for address, nfts in nft_results.items():
             for nft in nfts:
-                # get the lps for the address and check if the nft is a LP,
-                # then replace the worth with LP value.
-                uniswap_v3_lps = uniswap_nfts.get(address) if uniswap_nfts is not None else None
-                uniswap_v3_lp = next((entry for entry in uniswap_v3_lps if entry.nft_id == nft.token_identifier), None) if uniswap_v3_lps is not None else None  # noqa: E501
                 collection_name = nft.collection.name if nft.collection is not None else None
-                if uniswap_v3_lp is not None:
-                    db_data.append((nft.token_identifier, nft.name, str(uniswap_v3_lp.user_balance.usd_value), 'USD', False, address, True, nft.image_url, collection_name))  # noqa: E501
-                else:
-                    db_data.append((nft.token_identifier, nft.name, str(nft.price_in_asset), nft.price_asset.identifier, False, address, False, nft.image_url, collection_name))  # noqa: E501
+                if collection_name == 'Uniswap V3 Positions':  # skip all uniswap v3 positions - they are handled by UniswapV3Balances now.  # noqa: E501
+                    continue
+                db_data.append((nft.token_identifier, nft.name, str(nft.price_in_asset), nft.price_asset.identifier, False, address, False, nft.image_url, collection_name))  # noqa: E501
 
         # Update DB cache
         fresh_nfts_identifiers = [x[0] for x in db_data]

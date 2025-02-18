@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
@@ -17,7 +16,7 @@ from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import (
     BLUR_AIRDROP_2_CLAIM,
@@ -29,7 +28,6 @@ from .constants import (
     BLUR_WITHDRAWN,
     CPT_BLUR,
 )
-
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -49,10 +47,10 @@ class BlurDecoder(DecoderInterface):
 
     def _decode_stake(self, context: DecoderContext) -> DecodingOutput:
         """Decode staking event in the Blur protocol"""
-        if not self.base.is_tracked(user_address := hex_or_bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
+        if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1])):
             return DEFAULT_DECODING_OUTPUT
 
-        stake_amount = hex_or_bytes_to_int(context.tx_log.data[:32])
+        stake_amount = int.from_bytes(context.tx_log.data[:32])
         stake_amount_norm = token_normalized_value_decimals(
             token_amount=stake_amount,
             token_decimals=DEFAULT_TOKEN_DECIMALS,
@@ -75,7 +73,7 @@ class BlurDecoder(DecoderInterface):
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=Asset(BLUR_IDENTIFIER),
-            balance=Balance(amount=stake_amount_norm),
+            amount=stake_amount_norm,
             location_label=user_address,
             notes=f'Stake {stake_amount_norm} BLUR',
             counterparty=CPT_BLUR,
@@ -86,11 +84,11 @@ class BlurDecoder(DecoderInterface):
 
     def _decode_unstake(self, context: DecoderContext) -> DecodingOutput:
         """Decode unstaking event in the Blur protocol"""
-        if not self.base.is_tracked(user_address := hex_or_bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
+        if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1])):
             return DEFAULT_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data[:32]),
+            token_amount=int.from_bytes(context.tx_log.data[:32]),
             token_decimals=DEFAULT_TOKEN_DECIMALS,
         )
         for event in context.decoded_events:
@@ -98,7 +96,7 @@ class BlurDecoder(DecoderInterface):
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.asset.identifier == BLUR_IDENTIFIER and
-                event.balance.amount == amount and
+                event.amount == amount and
                 event.location_label == user_address
             ):
                 event.event_type = HistoryEventType.STAKING
@@ -114,10 +112,10 @@ class BlurDecoder(DecoderInterface):
         if context.tx_log.topics[0] != BLUR_AIRDROP_2_CLAIM:
             return DEFAULT_DECODING_OUTPUT
 
-        if self.base.is_tracked(user := hex_or_bytes_to_address(context.tx_log.topics[1])) is False:  # noqa: E501
+        if self.base.is_tracked(user := bytes_to_address(context.tx_log.topics[1])) is False:
             return DEFAULT_DECODING_OUTPUT
 
-        claim_amount = hex_or_bytes_to_int(context.tx_log.data[:32])
+        claim_amount = int.from_bytes(context.tx_log.data[:32])
         claim_amount_norm = token_normalized_value_decimals(
             token_amount=claim_amount,
             token_decimals=DEFAULT_TOKEN_DECIMALS,
@@ -128,7 +126,7 @@ class BlurDecoder(DecoderInterface):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.AIRDROP,
             asset=Asset(BLUR_IDENTIFIER),
-            balance=Balance(amount=claim_amount_norm),
+            amount=claim_amount_norm,
             location_label=user,
             notes=f'Claim {claim_amount_norm} BLUR from Blur airdrop',
             counterparty=CPT_BLUR,

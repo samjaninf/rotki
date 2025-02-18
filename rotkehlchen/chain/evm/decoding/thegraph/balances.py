@@ -19,8 +19,8 @@ from rotkehlchen.types import Location
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset
+    from rotkehlchen.chain.evm.decoding.decoder import EVMTransactionDecoder
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.types import ChecksumEvmAddress
 
 logger = logging.getLogger(__name__)
@@ -30,14 +30,14 @@ log = RotkehlchenLogsAdapter(logger)
 class ThegraphCommonBalances(ProtocolWithBalance):
     def __init__(
             self,
-            database: 'DBHandler',
             evm_inquirer: 'EvmNodeInquirer',
+            tx_decoder: 'EVMTransactionDecoder',
             native_asset: 'Asset',
             staking_contract: 'ChecksumEvmAddress',
     ):
         super().__init__(
-            database=database,
             evm_inquirer=evm_inquirer,
+            tx_decoder=tx_decoder,
             counterparty=CPT_THEGRAPH,
             deposit_event_types={(HistoryEventType.STAKING, HistoryEventSubType.DEPOSIT_ASSET)},
         )

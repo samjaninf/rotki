@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import type { BigNumber } from '@rotki/common';
 
 withDefaults(
@@ -9,9 +10,9 @@ withDefaults(
     fiat?: boolean;
   }>(),
   {
+    fiat: false,
     loading: false,
     value: () => Zero,
-    fiat: false,
   },
 );
 </script>

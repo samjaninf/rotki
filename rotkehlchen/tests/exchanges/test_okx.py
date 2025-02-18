@@ -4,19 +4,22 @@ from unittest.mock import patch
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_okx
 from rotkehlchen.constants.assets import A_ETH, A_SOL, A_USDC, A_USDT
+from rotkehlchen.constants.misc import ONE
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
-from rotkehlchen.exchanges.data_structures import AssetMovement, Trade
-from rotkehlchen.exchanges.okx import Okx
+from rotkehlchen.exchanges.data_structures import Trade
+from rotkehlchen.exchanges.okx import Okx, OkxEndpoint
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.tests.utils.constants import A_XMR
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import (
     AssetAmount,
-    AssetMovementCategory,
     Fee,
     Location,
     Price,
     Timestamp,
+    TimestampMS,
     TradeType,
 )
 
@@ -28,7 +31,7 @@ def test_name():
 
 
 def test_assets_are_known(mock_okx: Okx, globaldb):
-    currencies = mock_okx._api_query('currencies')
+    currencies = mock_okx._api_query(OkxEndpoint.CURRENCIES)
     okx_assets = {currency['ccy'] for currency in currencies['data']}
 
     for okx_asset in okx_assets:
@@ -59,6 +62,9 @@ def test_okx_api_signature(mock_okx: Okx):
 
 def test_okx_query_balances(mock_okx: Okx):
     def mock_okx_balances(method, url):     # pylint: disable=unused-argument
+        if '/api/v5/asset/balances' in url:
+            return MockResponse(200, '{"code":"0","data":[{"availBal":"25","bal":"25","ccy":"USDT","frozenBal":"0"},{"availBal":"30","bal":"30","ccy":"USDC","frozenBal":"0"}],"msg":""}')  # noqa: E501
+
         return MockResponse(
             200,
             """
@@ -170,10 +176,11 @@ def test_okx_query_balances(mock_okx: Okx):
 
     assert msg == ''
     assert balances is not None
-    assert len(balances) == 3
+    assert len(balances) == 4
     assert (balances[A_XMR.resolve_to_asset_with_oracles()]).amount == FVal('0.027846')
     assert (balances[A_SOL.resolve_to_asset_with_oracles()]).amount == FVal('299.9920000068')
-    assert (balances[A_USDT.resolve_to_asset_with_oracles()]).amount == FVal('50.00000065312')
+    assert (balances[A_USDT.resolve_to_asset_with_oracles()]).amount == FVal('75.00000065312')
+    assert (balances[A_USDC.resolve_to_asset_with_oracles()]).amount == FVal('30')
 
     warnings = mock_okx.msg_aggregator.consume_warnings()
     errors = mock_okx.msg_aggregator.consume_errors()
@@ -537,7 +544,7 @@ def test_okx_query_trades(mock_okx: Okx):
         Trade(
             timestamp=Timestamp(1665846604),
             location=Location.OKX,
-            base_asset=Asset('eip155:1/erc20:0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+            base_asset=Asset('eip155:1/erc20:0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
             quote_asset=A_USDT,
             trade_type=TradeType.SELL,
             amount=AssetAmount(FVal(30009.966)),
@@ -550,39 +557,39 @@ def test_okx_query_trades(mock_okx: Okx):
         Trade(
             timestamp=Timestamp(1665641177),
             location=Location.OKX,
-            base_asset=Asset('eip155:1/erc20:0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+            base_asset=Asset('eip155:1/erc20:0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
             quote_asset=A_USDT,
             trade_type=TradeType.BUY,
             amount=AssetAmount(FVal(10)),
             rate=Price(FVal(0.06174)),
             fee=Fee(FVal(0.01)),
-            fee_currency=Asset('eip155:1/erc20:0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+            fee_currency=Asset('eip155:1/erc20:0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
             link='555555555555555555',
             notes=None,
         ),
         Trade(
             timestamp=Timestamp(1665641133),
             location=Location.OKX,
-            base_asset=Asset('eip155:1/erc20:0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+            base_asset=Asset('eip155:1/erc20:0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
             quote_asset=A_USDT,
             trade_type=TradeType.BUY,
             amount=AssetAmount(FVal(24)),
             rate=Price(FVal(0.06174)),
             fee=Fee(FVal(0.024)),
-            fee_currency=Asset('eip155:1/erc20:0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+            fee_currency=Asset('eip155:1/erc20:0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
             link='555555555555555555',
             notes=None,
         ),
         Trade(
             timestamp=Timestamp(1665641100),
             location=Location.OKX,
-            base_asset=Asset('eip155:1/erc20:0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+            base_asset=Asset('eip155:1/erc20:0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
             quote_asset=A_USDT,
             trade_type=TradeType.BUY,
             amount=AssetAmount(FVal(30000)),
             rate=Price(FVal(0.06174)),
             fee=Fee(FVal(24)),
-            fee_currency=Asset('eip155:1/erc20:0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+            fee_currency=Asset('eip155:1/erc20:0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
             link='555555555555555555',
             notes=None,
         ),
@@ -619,7 +626,7 @@ def test_okx_query_trades(mock_okx: Okx):
             quote_asset=A_USDT,
             trade_type=TradeType.SELL,
             amount=AssetAmount(FVal(3600)),
-            rate=Price(FVal(1)),
+            rate=Price(ONE),
             fee=Fee(FVal(3.6)),
             fee_currency=A_USDT,
             link='555555555555555555',
@@ -632,7 +639,7 @@ def test_okx_query_trades(mock_okx: Okx):
             quote_asset=A_USDT,
             trade_type=TradeType.SELL,
             amount=AssetAmount(FVal(850)),
-            rate=Price(FVal(1)),
+            rate=Price(ONE),
             fee=Fee(FVal(0.85)),
             fee_currency=A_USDT,
             link='555555555555555555',
@@ -643,7 +650,7 @@ def test_okx_query_trades(mock_okx: Okx):
     assert trades == expected_trades
 
 
-def test_okx_query_deposits_withdrawals(mock_okx: Okx):
+def test_okx_query_deposits_withdrawals(mock_okx: 'Okx') -> None:
     def mock_okx_deposits_withdrawals(method, url):     # pylint: disable=unused-argument
         if 'deposit' in url:
             data = """
@@ -734,7 +741,7 @@ def test_okx_query_deposits_withdrawals(mock_okx: Okx):
             'request',
             side_effect=mock_okx_deposits_withdrawals,
     ):
-        asset_movements = mock_okx.query_online_deposits_withdrawals(
+        asset_movements = mock_okx.query_online_history_events(
             Timestamp(1609103082),
             Timestamp(1672175105),
         )
@@ -742,53 +749,76 @@ def test_okx_query_deposits_withdrawals(mock_okx: Okx):
     expected_asset_movements = [
         AssetMovement(
             location=Location.OKX,
-            category=AssetMovementCategory.DEPOSIT,
-            timestamp=Timestamp(1669963555),
-            address='0xAAB27b150451726EC7738aa1d0A94505c8729bd1',
-            transaction_id='0xfd12f8850218dc9d1d706c2dbd6c38f495988109c220bf8833255697b85c92db',
+            location_label=mock_okx.name,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1669963555000),
             asset=A_USDT,
             amount=FVal(2500.180327),
-            fee_asset=A_USDT,
-            fee=Fee(FVal(0)),
-            link='0xfd12f8850218dc9d1d706c2dbd6c38f495988109c220bf8833255697b85c92db',
+            unique_id='0xfd12f8850218dc9d1d706c2dbd6c38f495988109c220bf8833255697b85c92db',
+            extra_data={
+                'address': '0xAAB27b150451726EC7738aa1d0A94505c8729bd1',
+                'transaction_id': '0xfd12f8850218dc9d1d706c2dbd6c38f495988109c220bf8833255697b85c92db',  # noqa: E501
+            },
         ),
         AssetMovement(
             location=Location.OKX,
-            category=AssetMovementCategory.DEPOSIT,
-            timestamp=Timestamp(1669405596),
-            address='0xAAB27b150451726EC7738aa1d0A94505c8729bd1',
-            transaction_id='0xcea993d53b2c1f79430a003fb8facb5cd6b83b6cb6a502b6233d83eb338ba8ba',
+            location_label=mock_okx.name,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1669405596000),
             asset=A_USDC,
             amount=FVal(990.795352),
-            fee_asset=A_USDC,
-            fee=Fee(FVal(0)),
-            link='0xcea993d53b2c1f79430a003fb8facb5cd6b83b6cb6a502b6233d83eb338ba8ba',
+            unique_id='0xcea993d53b2c1f79430a003fb8facb5cd6b83b6cb6a502b6233d83eb338ba8ba',
+            extra_data={
+                'address': '0xAAB27b150451726EC7738aa1d0A94505c8729bd1',
+                'transaction_id': '0xcea993d53b2c1f79430a003fb8facb5cd6b83b6cb6a502b6233d83eb338ba8ba',  # noqa: E501
+            },
         ),
         AssetMovement(
             location=Location.OKX,
-            category=AssetMovementCategory.WITHDRAWAL,
-            timestamp=Timestamp(1671542569),
-            address='9ZLfHwxzgbZi3eiK43duZVJ2nXft3mtkRMjs9YD5Yds2',
-            transaction_id='46tgp3RHNuQqQrHbms1NtPFkRRwsabCajvEUPX'
-                           'BryVuH6qJmQysn1V9VhTYBEJmVQq8s8fbfv4WFW3oj2LtwRzyU',
+            location_label=mock_okx.name,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1671542569000),
             asset=A_SOL,
             amount=FVal(49.86051649),
-            fee_asset=A_SOL,
-            fee=Fee(FVal(0.008)),
-            link='46tgp3RHNuQqQrHbms1NtPFkRRwsabCajvEUPXBryVuH6qJm'
-                 'Qysn1V9VhTYBEJmVQq8s8fbfv4WFW3oj2LtwRzyU',
+            unique_id='46tgp3RHNuQqQrHbms1NtPFkRRwsabCajvEUPXBryVuH6qJmQysn1V9VhTYBEJmVQq8s8fbfv4WFW3oj2LtwRzyU',
+            extra_data={
+                'address': '9ZLfHwxzgbZi3eiK43duZVJ2nXft3mtkRMjs9YD5Yds2',
+                'transaction_id': '46tgp3RHNuQqQrHbms1NtPFkRRwsabCajvEUPXBryVuH6qJmQysn1V9VhTYBEJmVQq8s8fbfv4WFW3oj2LtwRzyU',  # noqa: E501
+            },
         ),
         AssetMovement(
             location=Location.OKX,
-            category=AssetMovementCategory.WITHDRAWAL,
-            timestamp=Timestamp(1670953159),
-            address='0x388C818CA8B9251b393131C08a736A67ccB19297',
-            transaction_id='0x9444b018c33c5adb58ee171bc18e61c56078495e37ae88833007a46c02b4552f',
+            location_label=mock_okx.name,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1671542569000),
+            asset=A_SOL,
+            amount=FVal(0.008),
+            unique_id='46tgp3RHNuQqQrHbms1NtPFkRRwsabCajvEUPXBryVuH6qJmQysn1V9VhTYBEJmVQq8s8fbfv4WFW3oj2LtwRzyU',
+            is_fee=True,
+        ),
+        AssetMovement(
+            location=Location.OKX,
+            location_label=mock_okx.name,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1670953159000),
             asset=A_USDT,
             amount=FVal(421.169831),
-            fee_asset=A_USDT,
-            fee=Fee(FVal(0.1)),
-            link='0x9444b018c33c5adb58ee171bc18e61c56078495e37ae88833007a46c02b4552f'),
+            unique_id='0x9444b018c33c5adb58ee171bc18e61c56078495e37ae88833007a46c02b4552f',
+            extra_data={
+                'address': '0x388C818CA8B9251b393131C08a736A67ccB19297',
+                'transaction_id': '0x9444b018c33c5adb58ee171bc18e61c56078495e37ae88833007a46c02b4552f',  # noqa: E501
+            },
+        ),
+        AssetMovement(
+            location=Location.OKX,
+            location_label=mock_okx.name,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1670953159000),
+            asset=A_USDT,
+            amount=FVal(0.1),
+            unique_id='0x9444b018c33c5adb58ee171bc18e61c56078495e37ae88833007a46c02b4552f',
+            is_fee=True,
+        ),
     ]
 
     assert asset_movements == expected_asset_movements

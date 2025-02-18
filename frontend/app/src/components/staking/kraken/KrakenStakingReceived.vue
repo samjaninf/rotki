@@ -1,27 +1,15 @@
 <script setup lang="ts">
-import type { Balance } from '@rotki/common';
-import type { ReceivedAmount } from '@/types/staking';
+import BalanceDisplay from '@/components/display/BalanceDisplay.vue';
+import ValueAccuracyHint from '@/components/helper/hint/ValueAccuracyHint.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import type { AssetBalance } from '@rotki/common';
 
 defineProps<{
-  received: ReceivedAmount[];
+  loading: boolean;
+  received: AssetBalance[];
 }>();
 
-const { prices } = storeToRefs(useBalancePricesStore());
-const selection: Ref<'current' | 'historical'> = ref('current');
-const pricesAreLoading = computed(() => Object.keys(get(prices)).length === 0);
-
-function getBalance({ amount, asset, usdValue }: ReceivedAmount): Balance {
-  const assetPrices = get(prices);
-
-  const currentPrice = assetPrices[asset]
-    ? assetPrices[asset].value.times(amount)
-    : Zero;
-  return {
-    amount,
-    usdValue: get(selection) === 'current' ? currentPrice : usdValue,
-  };
-}
-
+const selection = ref<'current' | 'historical'>('current');
 const { t } = useI18n();
 </script>
 
@@ -41,14 +29,12 @@ const { t } = useI18n();
           variant="outlined"
           color="primary"
         >
-          <template #default>
-            <RuiButton value="current">
-              {{ t('kraken_staking_received.switch.current') }}
-            </RuiButton>
-            <RuiButton value="historical">
-              {{ t('kraken_staking_received.switch.historical') }}
-            </RuiButton>
-          </template>
+          <RuiButton model-value="current">
+            {{ t('kraken_staking_received.switch.current') }}
+          </RuiButton>
+          <RuiButton model-value="historical">
+            {{ t('kraken_staking_received.switch.historical') }}
+          </RuiButton>
         </RuiButtonGroup>
       </div>
     </template>
@@ -67,8 +53,8 @@ const { t } = useI18n();
           <BalanceDisplay
             no-icon
             :asset="item.asset"
-            :value="getBalance(item)"
-            :loading="pricesAreLoading && selection === 'current'"
+            :value="item"
+            :loading="loading && selection === 'current'"
           />
         </div>
       </div>

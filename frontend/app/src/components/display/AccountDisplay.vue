@@ -1,31 +1,33 @@
 <script setup lang="ts">
-import {
-  Blockchain,
-} from '@rotki/common/lib/blockchain';
+import { type Account, Blockchain } from '@rotki/common';
 import { truncateAddress } from '@/utils/truncate';
-import type { Account } from '@rotki/common/lib/account';
+import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
+import { useScramble } from '@/composables/scramble';
+import EnsAvatar from '@/components/display/EnsAvatar.vue';
+import ChainIcon from '@/components/helper/display/icons/ChainIcon.vue';
 
-const props = withDefaults(
-  defineProps<{
-    account: Account;
-    useAliasName?: boolean;
-    truncate?: boolean;
-    hideChainIcon?: boolean;
-  }>(),
-  {
-    useAliasName: true,
-    truncate: true,
-    hideChainIcon: false,
-  },
-);
+const props = withDefaults(defineProps<{
+  account: Account;
+  useAliasName?: boolean;
+  truncate?: boolean;
+  hideChainIcon?: boolean;
+}>(), {
+  hideChainIcon: false,
+  truncate: true,
+  useAliasName: true,
+});
 
 const { account, useAliasName } = toRefs(props);
-const { scrambleData, shouldShowAmount, scrambleHex } = useScramble();
+
+const { t } = useI18n();
+
 const { addressNameSelector } = useAddressesNamesStore();
+
+const { scrambleAddress, scrambleData, shouldShowAmount } = useScramble();
 
 const address = computed<string>(() => {
   const address = get(account).address;
-  return scrambleHex(address);
+  return scrambleAddress(address);
 });
 
 const aliasName = computed<string | null>(() => {
@@ -39,8 +41,6 @@ const aliasName = computed<string | null>(() => {
 
   return null;
 });
-
-const { t } = useI18n();
 </script>
 
 <template>
@@ -48,16 +48,15 @@ const { t } = useI18n();
     :popper="{ placement: 'top' }"
     :open-delay="400"
     :disabled="!truncate"
-    class="flex items-center flex-nowrap"
+    class="flex items-center flex-nowrap gap-2"
+    tooltip-class="[&_*]:font-mono"
   >
     <template #activator>
       <div
         v-if="!hideChainIcon"
         class="pr-1"
       >
-        <div
-          class="rounded-full overflow-hidden w-6 h-6 dark:bg-rui-grey-600 flex items-center justify-center"
-        >
+        <div class="rounded-full overflow-hidden w-6 h-6 dark:bg-rui-grey-600 flex items-center justify-center">
           <ChainIcon
             v-if="account.chain && account.chain !== 'ALL'"
             size="22px"
@@ -70,7 +69,7 @@ const { t } = useI18n();
           >
             <template #activator>
               <RuiIcon
-                name="links-line"
+                name="lu-link"
                 class="text-rui-text-secondary"
               />
             </template>
@@ -87,7 +86,7 @@ const { t } = useI18n();
 
       <div
         :class="{ blur: !shouldShowAmount }"
-        class="text-no-wrap"
+        class="text-no-wrap [&_*]:font-mono text-xs"
       >
         <div v-if="aliasName">
           {{ aliasName }}

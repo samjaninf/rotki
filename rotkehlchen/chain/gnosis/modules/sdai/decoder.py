@@ -17,7 +17,6 @@ from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.gnosis.modules.sdai.constants import GNOSIS_SDAI_ADDRESS
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_int
 
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS  # all tokens in this decoder use default(18)  # noqa: E501 # isort: skip
 
@@ -25,59 +24,59 @@ from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS  # all tokens
 class SdaiDecoder(DecoderInterface):
 
     def _decode_sdai_deposit_events(self, context: DecoderContext) -> DecodingOutput:
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        amount_raw = int.from_bytes(context.tx_log.data[:32])
         amount = token_normalized_value_decimals(amount_raw, DEFAULT_TOKEN_DECIMALS)
-        shares_raw = hex_or_bytes_to_int(context.tx_log.data[32:64])
+        shares_raw = int.from_bytes(context.tx_log.data[32:64])
         shares = token_normalized_value_decimals(shares_raw, DEFAULT_TOKEN_DECIMALS)
 
         for event in context.decoded_events:
             if (
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == amount
+                event.amount == amount
             ):
                 asset = event.asset.resolve_to_crypto_asset()
                 event.counterparty = CPT_SDAI
                 event.event_type = HistoryEventType.DEPOSIT
                 event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
-                event.notes = f'Deposit {event.balance.amount} {asset.symbol} into the Savings xDAI contract'  # noqa: E501
+                event.notes = f'Deposit {event.amount} {asset.symbol} into the Savings xDAI contract'  # noqa: E501
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == shares
+                event.amount == shares
             ):
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.REMOVE_ASSET
-                event.notes = f'Withdraw {event.balance.amount} sDAI from the Savings xDAI contract'  # noqa: E501
+                event.notes = f'Withdraw {event.amount} sDAI from the Savings xDAI contract'
                 event.counterparty = CPT_SDAI
 
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_sdai_redeem_events(self, context: DecoderContext) -> DecodingOutput:
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        amount_raw = int.from_bytes(context.tx_log.data[:32])
         amount = token_normalized_value_decimals(amount_raw, DEFAULT_TOKEN_DECIMALS)
-        shares_raw = hex_or_bytes_to_int(context.tx_log.data[32:64])
+        shares_raw = int.from_bytes(context.tx_log.data[32:64])
         shares = token_normalized_value_decimals(shares_raw, DEFAULT_TOKEN_DECIMALS)
 
         for event in context.decoded_events:
             if (
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == shares
+                event.amount == shares
             ):
                 event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
                 event.event_type = HistoryEventType.DEPOSIT
-                event.notes = f'Return {event.balance.amount} sDAI to the Savings xDAI contract'
+                event.notes = f'Return {event.amount} sDAI to the Savings xDAI contract'
                 event.counterparty = CPT_SDAI
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == amount
+                event.amount == amount
             ):
                 asset = event.asset.resolve_to_crypto_asset()
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.REMOVE_ASSET
-                event.notes = f'Withdraw {event.balance.amount} {asset.symbol} from the Savings xDAI contract'  # noqa: E501
+                event.notes = f'Withdraw {event.amount} {asset.symbol} from the Savings xDAI contract'  # noqa: E501
                 event.counterparty = CPT_SDAI
 
         return DEFAULT_DECODING_OUTPUT

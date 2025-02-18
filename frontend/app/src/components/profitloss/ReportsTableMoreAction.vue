@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ExportReportCsv from '@/components/profitloss/ExportReportCsv.vue';
+
 defineProps<{
   showExportButton: boolean;
 }>();
@@ -16,15 +18,15 @@ const { t } = useI18n();
     :popper="{ placement: 'bottom-end' }"
     close-on-content-click
   >
-    <template #activator="{ on }">
+    <template #activator="{ attrs }">
       <RuiButton
         class="!p-2"
         icon
         variant="text"
-        v-on="on"
+        v-bind="attrs"
       >
         <RuiIcon
-          name="more-2-fill"
+          name="lu-ellipsis-vertical"
           size="20"
         />
       </RuiButton>
@@ -42,7 +44,7 @@ const { t } = useI18n();
         <template #prepend>
           <RuiIcon
             size="20"
-            name="delete-bin-5-line"
+            name="lu-trash-2"
           />
         </template>
 

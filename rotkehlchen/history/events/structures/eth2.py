@@ -3,7 +3,6 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 
 from rotkehlchen.accounting.mixins.event import AccountingEventMixin, AccountingEventType
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.constants import ETH2_DEPOSIT_ADDRESS
 from rotkehlchen.chain.ethereum.modules.eth2.constants import CPT_ETH2, UNKNOWN_VALIDATOR_INDEX
 from rotkehlchen.chain.ethereum.modules.eth2.utils import form_withdrawal_notes
@@ -13,6 +12,7 @@ from rotkehlchen.serialization.deserialize import deserialize_evm_address, deser
 from rotkehlchen.types import (
     ChecksumEvmAddress,
     EVMTxHash,
+    FVal,
     Location,
     TimestampMS,
     deserialize_evm_tx_hash,
@@ -35,8 +35,8 @@ ETH_STAKING_EVENT_DB_TUPLE_READ = tuple[
     int,            # timestamp
     str | None,  # location label
     str,            # amount
-    str,            # usd value
     str,            # event_subtype
+    dict[str, Any] | None,  # extra data
     int,            # validator_index
     int,            # is_exit_or_blocknumber
 ]
@@ -48,7 +48,7 @@ EVM_DEPOSIT_EVENT_DB_TUPLE_READ = tuple[
     int,            # timestamp
     str,            # depositor
     str,            # amount
-    str,            # usd value
+    str,            # notes
     bytes,          # tx_hash
     int,            # validator_index
 ]
@@ -68,7 +68,7 @@ class EthStakingEvent(HistoryBaseEntry, ABC):  # noqa: PLW1641  # hash in superc
             event_subtype: HistoryEventSubType,
             validator_index: int,
             timestamp: TimestampMS,
-            balance: Balance,
+            amount: FVal,
             location_label: ChecksumEvmAddress,
             is_exit_or_blocknumber: int,
             notes: str,
@@ -85,7 +85,7 @@ class EthStakingEvent(HistoryBaseEntry, ABC):  # noqa: PLW1641  # hash in superc
             event_type=event_type,
             event_subtype=event_subtype,
             asset=A_ETH,
-            balance=balance,
+            amount=amount,
             location_label=location_label,
             notes=notes,
         )
@@ -118,7 +118,7 @@ class EthWithdrawalEvent(EthStakingEvent):
             self,
             validator_index: int,
             timestamp: TimestampMS,
-            balance: Balance,
+            amount: FVal,
             withdrawal_address: ChecksumEvmAddress,
             is_exit: bool,
             identifier: int | None = None,
@@ -139,10 +139,10 @@ class EthWithdrawalEvent(EthStakingEvent):
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
             validator_index=validator_index,
-            balance=balance,
+            amount=amount,
             location_label=withdrawal_address,
             is_exit_or_blocknumber=is_exit,
-            notes=form_withdrawal_notes(is_exit=is_exit, validator_index=validator_index, amount=balance.amount),  # noqa: E501
+            notes=form_withdrawal_notes(is_exit=is_exit, validator_index=validator_index, amount=amount),  # noqa: E501
         )
 
     @property
@@ -163,14 +163,13 @@ class EthWithdrawalEvent(EthStakingEvent):
 
     @classmethod
     def deserialize_from_db(cls: type['EthWithdrawalEvent'], entry: tuple) -> 'EthWithdrawalEvent':
-        entry = cast(ETH_STAKING_EVENT_DB_TUPLE_READ, entry)
+        entry = cast('ETH_STAKING_EVENT_DB_TUPLE_READ', entry)
         amount = deserialize_fval(entry[5], 'amount', 'eth withdrawal event')
-        usd_value = deserialize_fval(entry[6], 'usd_value', 'eth withdrawal event')
         return cls(
             identifier=entry[0],
             event_identifier=entry[1],
             timestamp=TimestampMS(entry[3]),
-            balance=Balance(amount, usd_value),
+            amount=amount,
             withdrawal_address=entry[4],  # type: ignore  # exists for these events
             validator_index=entry[8],
             is_exit=bool(entry[9]),
@@ -191,7 +190,7 @@ class EthWithdrawalEvent(EthStakingEvent):
 
         return cls(
             timestamp=base_data['timestamp'],
-            balance=base_data['balance'],
+            amount=base_data['amount'],
             validator_index=validator_index,
             withdrawal_address=withdrawal_address,
             is_exit=is_exit,
@@ -208,9 +207,9 @@ class EthWithdrawalEvent(EthStakingEvent):
             accounting: 'AccountingPot',
             events_iterator: Iterator['AccountingEventMixin'],  # pylint: disable=unused-argument
     ) -> int:
-        profit_amount = self.balance.amount
-        if self.balance.amount >= 32:
-            profit_amount = 32 - self.balance.amount
+        profit_amount = self.amount
+        if self.amount >= 32:
+            profit_amount = self.amount - 32
 
         # TODO: This is hacky and does not cover edge case where people mistakenly
         # double deposited for a validator. We can and should combine deposit and
@@ -220,7 +219,7 @@ class EthWithdrawalEvent(EthStakingEvent):
         name = 'Exit' if bool(self.is_exit_or_blocknumber) else 'Withdrawal'
         accounting.add_in_event(
             event_type=AccountingEventType.HISTORY_EVENT,
-            notes=f'{name} of {self.balance.amount} ETH from validator {self.validator_index}. Only {profit_amount} is profit',  # noqa: E501
+            notes=f'{name} of {self.amount} ETH from validator {self.validator_index}. Only {profit_amount} is profit',  # noqa: E501
             location=self.location,
             timestamp=self.get_timestamp_in_sec(),
             asset=self.asset,
@@ -231,14 +230,34 @@ class EthWithdrawalEvent(EthStakingEvent):
 
 
 class EthBlockEvent(EthStakingEvent):
-    """An ETH block production/MEV event"""
+    """An ETH block production/MEV event
+
+    These events have a kind of special meaning based on type/subtype and sequence index.
+    0 -> Normal block production. This contains the fee recipient event. May or may
+    not be a tracked address
+    1 -> MEV event. This contains the MEV reported by the relayer (we get this from beaconcha.in).
+    This may not be the actual true amount received by the mev recipient. Sometimes they mistakenly
+    add the fee amount in too if the fee is also received by the same address or the amount
+    is simply wrong.
+
+    -----
+
+    Even though they are EVM history events and not block events, by changing their event
+    identifier to be same as the blocks we move the MEV receivals here with sequence
+    index 2 and higher.
+
+    2 ++ -> We move here all the actual MEV transfers to the fee recipient. As there can be
+    multiple ones, this is what we must count as the actual MEV reported. Also we should not trust
+    what the relayer (seq index 1) is reporting. Only what we verify we received.
+    """
 
     def __init__(
             self,
             validator_index: int,
             timestamp: TimestampMS,
-            balance: Balance,
+            amount: FVal,
             fee_recipient: ChecksumEvmAddress,
+            fee_recipient_tracked: bool,
             block_number: int,
             is_mev_reward: bool,
             identifier: int | None = None,
@@ -247,25 +266,27 @@ class EthBlockEvent(EthStakingEvent):
 
         if is_mev_reward:
             sequence_index = 1
+            event_type = HistoryEventType.INFORMATIONAL  # the Relayer reported MEV is always info
             event_subtype = HistoryEventSubType.MEV_REWARD
-            name = 'mev reward'
+            notes = f'Validator {validator_index} produced block {block_number}. Relayer reported {amount} ETH as the MEV reward going to {fee_recipient}'  # noqa: E501
         else:
             sequence_index = 0
+            event_type = HistoryEventType.STAKING if fee_recipient_tracked else HistoryEventType.INFORMATIONAL  # noqa: E501
             event_subtype = HistoryEventSubType.BLOCK_PRODUCTION
-            name = 'block reward'
+            notes = f'Validator {validator_index} produced block {block_number} with {amount} ETH going to {fee_recipient} as the block reward'  # noqa: E501
 
         super().__init__(
             identifier=identifier,
             event_identifier=self.form_event_identifier(block_number) if event_identifier is None else event_identifier,  # noqa: E501
             sequence_index=sequence_index,
             timestamp=timestamp,
-            event_type=HistoryEventType.STAKING,
+            event_type=event_type,
             event_subtype=event_subtype,
             validator_index=validator_index,
-            balance=balance,
+            amount=amount,
             location_label=fee_recipient,
             is_exit_or_blocknumber=block_number,
-            notes=f'Validator {validator_index} produced block {block_number} with {balance.amount} ETH going to {fee_recipient} as the {name}',  # noqa: E501
+            notes=notes,
         )
 
     @staticmethod
@@ -289,23 +310,29 @@ class EthBlockEvent(EthStakingEvent):
         return super().serialize() | {'validator_index': self.validator_index, 'block_number': self.is_exit_or_blocknumber}  # noqa: E501
 
     @classmethod
-    def deserialize_from_db(cls: type['EthBlockEvent'], entry: tuple) -> 'EthBlockEvent':
-        entry = cast(ETH_STAKING_EVENT_DB_TUPLE_READ, entry)
+    def deserialize_from_db(cls: type['EthBlockEvent'], entry: tuple, fee_recipient_tracked: bool) -> 'EthBlockEvent':  # type: ignore[override]  # noqa: E501
+        """
+        We have an annoying typing problem here. We are breaking the Liskov principle by adding an
+        extra argument to the subclass function. But not sure what else to do since we need it.
+        Mypy will stop complaining if we make it optional but not sure what to put as default
+        value in that case. This here and in the deserialize() function needs some more thinking
+        """
+        entry = cast('ETH_STAKING_EVENT_DB_TUPLE_READ', entry)
         amount = deserialize_fval(entry[5], 'amount', 'eth block event')
-        usd_value = deserialize_fval(entry[6], 'usd_value', 'eth block event')
         return cls(
             identifier=entry[0],
             event_identifier=entry[1],
             timestamp=TimestampMS(entry[3]),
-            balance=Balance(amount, usd_value),
+            amount=amount,
             fee_recipient=entry[4],  # type: ignore  # exists for these events
+            fee_recipient_tracked=fee_recipient_tracked,
             validator_index=entry[8],
             block_number=entry[9],
-            is_mev_reward=entry[7] == HistoryEventSubType.MEV_REWARD.serialize(),
+            is_mev_reward=entry[6] == HistoryEventSubType.MEV_REWARD.serialize(),
         )
 
     @classmethod
-    def deserialize(cls: type['EthBlockEvent'], data: dict[str, Any]) -> 'EthBlockEvent':
+    def deserialize(cls: type['EthBlockEvent'], data: dict[str, Any], fee_recipient_tracked: bool) -> 'EthBlockEvent':  # type: ignore[override]  # noqa: E501
         base_data = cls._deserialize_base_history_data(data)
         try:
             validator_index = data['validator_index']
@@ -319,9 +346,10 @@ class EthBlockEvent(EthStakingEvent):
 
         return cls(
             timestamp=base_data['timestamp'],
-            balance=base_data['balance'],
+            amount=base_data['amount'],
             validator_index=validator_index,
             fee_recipient=fee_recipient,
+            fee_recipient_tracked=fee_recipient_tracked,
             block_number=block_number,
             is_mev_reward=base_data['event_subtype'] == HistoryEventSubType.MEV_REWARD.serialize(),
         )
@@ -344,21 +372,17 @@ class EthBlockEvent(EthStakingEvent):
         with accounting.database.conn.read_ctx() as cursor:
             accounts = accounting.database.get_blockchain_accounts(cursor)
 
-        if self.location_label not in accounts.eth:
-            return 1  # fee recipient not tracked. So we do not add it in accounting
+        if self.event_type != HistoryEventType.STAKING or self.location_label not in accounts.eth:
+            return 1  # fee recipient not tracked or mev relay info. So do not add it in accounting
 
-        if self.event_subtype == HistoryEventSubType.MEV_REWARD:
-            name = 'Mev reward'
-        else:
-            name = 'Block reward'
-
+        assert self.event_subtype == HistoryEventSubType.BLOCK_PRODUCTION, 'Only block production events should come here'  # Because MEV rewards are always information and actual MEV comes in as transaction events # noqa: E501
         accounting.add_in_event(
             event_type=AccountingEventType.HISTORY_EVENT,
-            notes=f'{name} of {self.balance.amount} for block {self.is_exit_or_blocknumber}',
+            notes=f'Block reward of {self.amount} for block {self.is_exit_or_blocknumber}',
             location=self.location,
             timestamp=self.get_timestamp_in_sec(),
             asset=self.asset,
-            amount=self.balance.amount,
+            amount=self.amount,
             taxable=True,
         )
         return 1
@@ -373,7 +397,7 @@ class EthDepositEvent(EvmEvent, EthStakingEvent):  # noqa: PLW1641  # hash in su
             validator_index: int,
             sequence_index: int,
             timestamp: TimestampMS,
-            balance: Balance,
+            amount: FVal,
             depositor: ChecksumEvmAddress,
             extra_data: dict[str, Any] | None = None,
             identifier: int | None = None,
@@ -388,9 +412,9 @@ class EthDepositEvent(EvmEvent, EthStakingEvent):  # noqa: PLW1641  # hash in su
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_ETH,
-            balance=balance,
+            amount=amount,
             location_label=depositor,
-            notes=f'Deposit {balance.amount} ETH to validator {suffix}',
+            notes=f'Deposit {amount} ETH to validator {suffix}',
             counterparty=CPT_ETH2,
             product=EvmProduct.STAKING,
             address=ETH2_DEPOSIT_ADDRESS,
@@ -431,15 +455,14 @@ class EthDepositEvent(EvmEvent, EthStakingEvent):  # noqa: PLW1641  # hash in su
 
     @classmethod
     def deserialize_from_db(cls: type['EthDepositEvent'], entry: tuple) -> 'EthDepositEvent':
-        entry = cast(EVM_DEPOSIT_EVENT_DB_TUPLE_READ, entry)
+        entry = cast('EVM_DEPOSIT_EVENT_DB_TUPLE_READ', entry)
         amount = deserialize_fval(entry[5], 'amount', 'eth deposit event')
-        usd_value = deserialize_fval(entry[6], 'usd_value', 'eth deposit event')
         return cls(
             tx_hash=deserialize_evm_tx_hash(entry[7]),
             validator_index=entry[8],
             sequence_index=entry[2],
             timestamp=TimestampMS(entry[3]),
-            balance=Balance(amount, usd_value),
+            amount=amount,
             depositor=entry[4],  # type: ignore  # exists for these events
             identifier=entry[0],
             event_identifier=entry[1],
@@ -466,7 +489,7 @@ class EthDepositEvent(EvmEvent, EthStakingEvent):  # noqa: PLW1641  # hash in su
             validator_index=validator_index,
             sequence_index=base_data['sequence_index'],
             timestamp=base_data['timestamp'],
-            balance=base_data['balance'],
+            amount=base_data['amount'],
             depositor=deserialize_evm_address(base_data['location_label']),
             identifier=base_data['identifier'],
             event_identifier=base_data['event_identifier'],

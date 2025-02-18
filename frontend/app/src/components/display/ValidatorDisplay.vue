@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { truncateAddress } from '@/utils/truncate';
-import type { Eth2ValidatorEntry } from '@rotki/common/lib/staking/eth2';
+import { useScramble } from '@/composables/scramble';
+import type { Eth2ValidatorEntry } from '@rotki/common';
 
 const props = withDefaults(
   defineProps<{
@@ -17,7 +18,7 @@ const length = computed(() => (get(horizontal) ? 4 : 10));
 
 const { t } = useI18n();
 
-const { scrambleIdentifier, scrambleHex, shouldShowAmount } = useScramble();
+const { scrambleAddress, scrambleIdentifier, shouldShowAmount } = useScramble();
 </script>
 
 <template>
@@ -28,7 +29,7 @@ const { scrambleIdentifier, scrambleHex, shouldShowAmount } = useScramble();
     }"
   >
     <div class="font-medium text-truncate text-rui-text">
-      {{ truncateAddress(scrambleHex(validator.publicKey), length) }}
+      {{ truncateAddress(scrambleAddress(validator.publicKey), length) }}
     </div>
     <div>
       <span

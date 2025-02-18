@@ -1,6 +1,5 @@
 import pytest
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.modules.golem.constants import CPT_GOLEM, GNT_MIGRATION_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
@@ -12,16 +11,12 @@ from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [['0xf264267DCaFC1539900bc96006879701fA053259']])
-def test_gnt_glm_migration(database, ethereum_inquirer, ethereum_accounts):
+def test_gnt_glm_migration(ethereum_inquirer, ethereum_accounts):
     tx_hex = deserialize_evm_tx_hash('0x86baa45e4ab48d1db26df82da1a6f654fe96f1254ace5883b6397d7f55eb11a4')  # noqa: E501
     evmhash = deserialize_evm_tx_hash(tx_hex)
-    events, _ = get_decoded_events_of_transaction(
-        evm_inquirer=ethereum_inquirer,
-        database=database,
-        tx_hash=tx_hex,
-    )
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hex)
     timestamp = TimestampMS(1646777828000)
     gas_str = '0.00560851737819982'
     amount_str = '5920'
@@ -34,9 +29,9 @@ def test_gnt_glm_migration(database, ethereum_inquirer, ethereum_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(amount=FVal(gas_str)),
+            amount=FVal(gas_str),
             location_label=ethereum_accounts[0],
-            notes=f'Burned {gas_str} ETH for gas',
+            notes=f'Burn {gas_str} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=evmhash,
@@ -46,7 +41,7 @@ def test_gnt_glm_migration(database, ethereum_inquirer, ethereum_accounts):
             event_type=HistoryEventType.MIGRATE,
             event_subtype=HistoryEventSubType.SPEND,
             asset=Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d'),
-            balance=Balance(FVal(amount_str)),
+            amount=FVal(amount_str),
             location_label=ethereum_accounts[0],
             notes=f'Migrate {amount_str} GNT to GLM',
             counterparty=CPT_GOLEM,
@@ -59,7 +54,7 @@ def test_gnt_glm_migration(database, ethereum_inquirer, ethereum_accounts):
             event_type=HistoryEventType.MIGRATE,
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_GLM,
-            balance=Balance(FVal(amount_str)),
+            amount=FVal(amount_str),
             location_label=ethereum_accounts[0],
             notes=f'Receive {amount_str} GLM from GNT->GLM migration',
             counterparty=CPT_GOLEM,

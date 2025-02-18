@@ -1,9 +1,35 @@
 <script setup lang="ts">
+import { externalLinks } from '@shared/external-links';
 import { AssetAmountAndValueOverTime } from '@/premium/premium';
-import { Routes } from '@/router/routes';
 import { EVM_TOKEN } from '@/types/asset';
-import type { RawLocation } from 'vue-router';
+import { NoteLocation } from '@/types/notes';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { useWhitelistedAssetsStore } from '@/store/assets/whitelisted';
+import { usePremium } from '@/composables/premium';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
+import { useSupportedChains } from '@/composables/info/chains';
+import { type AssetResolutionOptions, useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useSpamAsset } from '@/composables/assets/spam';
+import AssetBalances from '@/components/AssetBalances.vue';
+import AssetLocations from '@/components/assets/AssetLocations.vue';
+import AssetValueRow from '@/components/assets/AssetValueRow.vue';
+import ManagedAssetIgnoringMore from '@/components/asset-manager/managed/ManagedAssetIgnoringMore.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import HashLink from '@/components/helper/HashLink.vue';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import AssetAmountAndValuePlaceholder from '@/components/graphs/AssetAmountAndValuePlaceholder.vue';
 import type { AssetBalanceWithPrice } from '@rotki/common';
+import type { RouteLocationRaw } from 'vue-router';
+
+definePage({
+  meta: {
+    canNavigateBack: true,
+    noteLocation: NoteLocation.ASSETS,
+  },
+  props: true,
+});
 
 defineOptions({
   name: 'AssetBreakdown',
@@ -14,37 +40,38 @@ const props = defineProps<{
 }>();
 
 const { identifier } = toRefs(props);
-const { isAssetIgnored, ignoreAsset, unignoreAsset } = useIgnoredAssetsStore();
-const { isAssetWhitelisted, whitelistAsset, unWhitelistAsset } = useWhitelistedAssetsStore();
-const { markAssetAsSpam, removeAssetFromSpamList } = useSpamAsset();
-const { assetName, assetSymbol, assetInfo, tokenAddress, refetchAssetInfo } = useAssetInfoRetrieval();
+
+const { t } = useI18n();
+const router = useRouter();
+const route = useRoute();
+
+const { coingeckoAsset, cryptocompareAsset } = externalLinks;
+
+const { ignoreAssetWithConfirmation, isAssetIgnored, unignoreAsset } = useIgnoredAssetsStore();
+const { isAssetWhitelisted, unWhitelistAsset, whitelistAsset } = useWhitelistedAssetsStore();
+const { markAssetsAsSpam, removeAssetFromSpamList } = useSpamAsset();
+const { assetInfo, assetName, assetSymbol, refetchAssetInfo, tokenAddress } = useAssetInfoRetrieval();
 const { getChain } = useSupportedChains();
+const premium = usePremium();
+const { balances } = useAggregatedBalances();
 
 const isIgnored = isAssetIgnored(identifier);
 const isWhitelisted = isAssetWhitelisted(identifier);
 
-async function toggleIgnoreAsset() {
-  const id = get(identifier);
-  if (get(isIgnored))
-    await unignoreAsset(id);
-  else
-    await ignoreAsset(id);
-}
+const isCollectionParent = computed<boolean>(() => {
+  const currentRoute = get(route);
+  const collectionParent = currentRoute.query.collectionParent;
 
-async function toggleWhitelistAsset() {
-  const id = get(identifier);
-  if (get(isWhitelisted))
-    await unWhitelistAsset(id);
-  else
-    await whitelistAsset(id);
+  return !!collectionParent;
+});
 
-  refetchAssetInfo(id);
-}
-const premium = usePremium();
+const assetRetrievalOption = computed<AssetResolutionOptions>(() => ({
+  collectionParent: get(isCollectionParent),
+}));
 
-const name = assetName(identifier);
-const symbol = assetSymbol(identifier);
-const asset = assetInfo(identifier);
+const name = assetName(identifier, assetRetrievalOption);
+const symbol = assetSymbol(identifier, assetRetrievalOption);
+const asset = assetInfo(identifier, assetRetrievalOption);
 const address = tokenAddress(identifier);
 const chain = computed(() => {
   const evmChain = get(asset)?.evmChain;
@@ -55,19 +82,7 @@ const chain = computed(() => {
 });
 const isCustomAsset = computed(() => get(asset)?.isCustomAsset);
 
-const { t } = useI18n();
-
-const route = useRoute();
-const router = useRouter();
-
-const isCollectionParent: ComputedRef<boolean> = computed(() => {
-  const currentRoute = get(route);
-  const collectionParent = currentRoute.query.collectionParent;
-
-  return !!collectionParent;
-});
-
-const collectionId: ComputedRef<number | undefined> = computed(() => {
+const collectionId = computed<number | undefined>(() => {
   if (!get(isCollectionParent))
     return undefined;
 
@@ -75,38 +90,52 @@ const collectionId: ComputedRef<number | undefined> = computed(() => {
   return (collectionId && parseInt(collectionId)) || undefined;
 });
 
-const editRoute = computed<RawLocation>(() => ({
-  path: get(isCustomAsset)
-    ? Routes.ASSET_MANAGER_CUSTOM
-    : Routes.ASSET_MANAGER_MANAGED,
+const editRoute = computed<RouteLocationRaw>(() => ({
+  path: get(isCustomAsset) ? '/asset-manager/custom' : '/asset-manager/managed',
   query: {
     id: get(identifier),
   },
 }));
 
-const { balances } = useAggregatedBalances();
-const collectionBalance: ComputedRef<AssetBalanceWithPrice[]> = computed(() => {
+const collectionBalance = computed<AssetBalanceWithPrice[]>(() => {
   if (!get(isCollectionParent))
     return [];
 
-  return (
-    get(balances()).find(data => data.asset === get(identifier))?.breakdown
-    || []
-  );
+  return get(balances()).find(data => data.asset === get(identifier))?.breakdown || [];
 });
+
+const isSpam = computed(() => get(asset)?.isSpam || false);
 
 function goToEdit() {
   router.push(get(editRoute));
 }
-
-const isSpam = computed(() => get(asset)?.isSpam || false);
 
 async function toggleSpam() {
   const id = get(identifier);
   if (get(isSpam))
     await removeAssetFromSpamList(id);
   else
-    await markAssetAsSpam(id);
+    await markAssetsAsSpam([id]);
+
+  refetchAssetInfo(id);
+}
+
+async function toggleIgnoreAsset() {
+  const id = get(identifier);
+  if (get(isIgnored)) {
+    await unignoreAsset(id);
+  }
+  else {
+    await ignoreAssetWithConfirmation(id, get(symbol) || get(name));
+  }
+}
+
+async function toggleWhitelistAsset() {
+  const id = get(identifier);
+  if (get(isWhitelisted))
+    await unWhitelistAsset(id);
+  else
+    await whitelistAsset(id);
 
   refetchAssetInfo(id);
 }
@@ -145,47 +174,91 @@ async function toggleSpam() {
           </span>
         </div>
 
-        <HashLink
-          v-if="address"
-          :chain="chain"
-          type="address"
-          :text="address"
-          link-only
-          size="18"
-          :show-icon="false"
-        />
+        <div class="flex items-center gap-2 ml-4">
+          <HashLink
+            v-if="address"
+            :chain="chain"
+            type="address"
+            :text="address"
+            link-only
+            size="18"
+            class="[&_a]:!p-2.5"
+            :show-icon="false"
+          />
 
+          <template
+            v-if="asset"
+          >
+            <ExternalLink
+              v-if="asset.coingecko"
+              custom
+              :url="coingeckoAsset.replace('$symbol', asset.coingecko)"
+            >
+              <RuiButton
+                size="sm"
+                icon
+              >
+                <template #prepend>
+                  <AppImage
+                    size="30px"
+                    src="./assets/images/services/coingecko.svg"
+                  />
+                </template>
+              </RuiButton>
+            </ExternalLink>
+            <ExternalLink
+              v-if="asset.cryptocompare"
+              custom
+              :url="cryptocompareAsset.replace('$symbol', asset.cryptocompare)"
+            >
+              <RuiButton
+                size="sm"
+                icon
+              >
+                <template #prepend>
+                  <AppImage
+                    size="30px"
+                    src="./assets/images/services/cryptocompare.svg"
+                  />
+                </template>
+              </RuiButton>
+            </ExternalLink>
+          </template>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
         <RuiButton
           v-if="!isCollectionParent"
           icon
           variant="text"
           @click="goToEdit()"
         >
-          <RuiIcon name="pencil-line" />
+          <RuiIcon name="lu-pencil" />
         </RuiButton>
-      </div>
-      <div class="flex items-center gap-2">
-        <div class="text-body-2 mr-4">
-          {{ t('assets.ignore') }}
-        </div>
 
-        <RuiTooltip
-          :popper="{ placement: 'top' }"
-          :open-delay="400"
-          tooltip-class="max-w-[10rem]"
-          :disabled="!isWhitelisted && !isSpam"
-        >
-          <template #activator>
-            <RuiSwitch
-              color="primary"
-              hide-details
-              :disabled="isWhitelisted || isSpam"
-              :value="isIgnored"
-              @input="toggleIgnoreAsset()"
-            />
-          </template>
-          {{ isSpam ? t('ignore.spam.hint') : t('ignore.whitelist.hint') }}
-        </RuiTooltip>
+        <template v-if="!isCustomAsset">
+          <div class="text-body-2 mr-4">
+            {{ t('assets.ignore') }}
+          </div>
+
+          <RuiTooltip
+            :popper="{ placement: 'top' }"
+            :open-delay="400"
+            tooltip-class="max-w-[10rem]"
+            :disabled="!isSpam"
+          >
+            <template #activator>
+              <RuiSwitch
+                color="primary"
+                hide-details
+                :disabled="isSpam"
+                :model-value="isIgnored"
+                @update:model-value="toggleIgnoreAsset()"
+              />
+            </template>
+            {{ t('ignore.spam.hint') }}
+          </RuiTooltip>
+        </template>
 
         <ManagedAssetIgnoringMore
           v-if="asset?.assetType === EVM_TOKEN"
@@ -207,6 +280,8 @@ async function toggleSpam() {
       :asset="identifier"
       :collection-id="collectionId"
     />
+
+    <AssetAmountAndValuePlaceholder v-else />
 
     <AssetLocations
       v-if="!isCollectionParent"

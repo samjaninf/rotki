@@ -2,6 +2,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
+from eth_typing.abi import ABI
+
 from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.assets.utils import get_or_create_evm_token
 from rotkehlchen.chain.arbitrum_one.constants import ARBITRUM_ONE_CPT_DETAILS, CPT_ARBITRUM_ONE
@@ -25,7 +27,7 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChainID, ChecksumEvmAddress
-from rotkehlchen.utils.misc import from_wei, hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address, from_wei
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
@@ -46,10 +48,9 @@ ERC20_DEPOSIT_FINALIZED: Final = b'\xc7\xf2\xe9\xc5\\@\xa5\x0f\xbc!}\xfcp\xcd9\x
 WITHDRAW_ETH_METHOD: Final = b'%\xe1`c'
 
 
-L2_GATEWAY_ROUTE_CALCULATE_L2TOKEN_ABI = [{
+L2_GATEWAY_ROUTE_CALCULATE_L2TOKEN_ABI: Final[ABI] = [{
     'inputs': [
         {
-            'internalType': 'address',
             'name': 'l1ERC20',
             'type': 'address',
         },
@@ -57,7 +58,6 @@ L2_GATEWAY_ROUTE_CALCULATE_L2TOKEN_ABI = [{
     'name': 'calculateL2TokenAddress',
     'outputs': [
         {
-            'internalType': 'address',
             'name': '',
             'type': 'address',
         },
@@ -89,15 +89,15 @@ class ArbitrumOneBridgeDecoder(ArbitrumDecoderInterface):
         if context.tx_log.topics[0] != TRANSFER_ROUTED:
             return DEFAULT_DECODING_OUTPUT
 
-        l1_token_address = hex_or_bytes_to_address(context.tx_log.topics[1])
+        l1_token_address = bytes_to_address(context.tx_log.topics[1])
         to_asset = get_or_create_evm_token(
             userdb=self.base.database,
             evm_address=l1_token_address,
             chain_id=ChainID.ETHEREUM,
             evm_inquirer=None,  # don't have it since we are in arbitrum decoder
         )
-        from_address = hex_or_bytes_to_address(context.tx_log.topics[2])
-        to_address = hex_or_bytes_to_address(context.tx_log.topics[3])
+        from_address = bytes_to_address(context.tx_log.topics[2])
+        to_address = bytes_to_address(context.tx_log.topics[3])
 
         if not self.base.any_tracked([from_address, to_address]):
             return DEFAULT_DECODING_OUTPUT
@@ -142,7 +142,7 @@ class ArbitrumOneBridgeDecoder(ArbitrumDecoderInterface):
         (Sending assets from arbitrum one)
         """
         from_token = self.base.get_or_create_evm_token(from_token_address)
-        raw_amount = hex_or_bytes_to_int(context.tx_log.data[64:96])
+        raw_amount = int.from_bytes(context.tx_log.data[64:96])
         amount = asset_normalized_value(raw_amount, to_asset)
         to_label = f'address {to_address}'
         if to_address == from_address:
@@ -175,20 +175,20 @@ class ArbitrumOneBridgeDecoder(ArbitrumDecoderInterface):
         ):
             return DEFAULT_DECODING_OUTPUT
 
-        from_address = hex_or_bytes_to_address(context.tx_log.topics[1])
-        to_address = hex_or_bytes_to_address(context.transaction.input_data[4:])  # only argument of input data is destination address # noqa: E501
+        from_address = bytes_to_address(context.tx_log.topics[1])
+        to_address = bytes_to_address(context.transaction.input_data[4:])  # only argument of input data is destination address # noqa: E501
 
         if not self.base.any_tracked([from_address, to_address]):
             return DEFAULT_DECODING_OUTPUT
 
-        raw_amount = hex_or_bytes_to_int(context.tx_log.data[128:160])
+        raw_amount = int.from_bytes(context.tx_log.data[128:160])
         amount = from_wei(FVal(raw_amount))
         for event in context.decoded_events:
             if (
                     event.event_type == HistoryEventType.SPEND and
                     event.location_label == from_address and
                     event.asset == A_ETH and
-                    event.balance.amount == amount
+                    event.amount == amount
             ):
                 bridge_match_transfer(
                     event=event,
@@ -231,13 +231,13 @@ class ArbitrumOneBridgeDecoder(ArbitrumDecoderInterface):
                     event.event_type == HistoryEventType.RECEIVE and
                     event.location_label == to_address and
                     event.asset == A_ETH and
-                    event.balance.amount == from_wei(FVal(transaction.value))
+                    event.amount == from_wei(FVal(transaction.value))
             ):
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.BRIDGE
                 event.counterparty = CPT_ARBITRUM_ONE
                 event.notes = (
-                    f'Bridge {event.balance.amount} ETH from Ethereum to Arbitrum '
+                    f'Bridge {event.amount} ETH from Ethereum to Arbitrum '
                     f'One via Arbitrum One bridge'
                 )
                 break
@@ -256,10 +256,10 @@ class ArbitrumOneBridgeDecoder(ArbitrumDecoderInterface):
         if context.tx_log.topics[0] != ERC20_DEPOSIT_FINALIZED:
             return DEFAULT_DECODING_OUTPUT
 
-        raw_amount = hex_or_bytes_to_int(context.tx_log.data[:32])
-        l1_token_address = hex_or_bytes_to_address(context.tx_log.topics[1])
-        from_address = hex_or_bytes_to_address(context.tx_log.topics[2])
-        to_address = hex_or_bytes_to_address(context.tx_log.topics[3])
+        raw_amount = int.from_bytes(context.tx_log.data[:32])
+        l1_token_address = bytes_to_address(context.tx_log.topics[1])
+        from_address = bytes_to_address(context.tx_log.topics[2])
+        to_address = bytes_to_address(context.tx_log.topics[3])
         if not self.base.any_tracked([from_address, to_address]):
             return DEFAULT_DECODING_OUTPUT
 
@@ -272,7 +272,7 @@ class ArbitrumOneBridgeDecoder(ArbitrumDecoderInterface):
                     event.event_type == HistoryEventType.RECEIVE and
                     event.location_label == to_address and
                     event.address == ZERO_ADDRESS and
-                    event.balance.amount == amount
+                    event.amount == amount
             ):
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.BRIDGE

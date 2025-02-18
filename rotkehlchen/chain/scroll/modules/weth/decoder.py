@@ -1,12 +1,13 @@
 import logging
 from typing import TYPE_CHECKING
+
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.decoding.structures import DEFAULT_DECODING_OUTPUT
 from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.decoding.weth.decoder import WethDecoder as EthBaseWethDecoder
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.structures import DecoderContext, DecodingOutput
@@ -18,8 +19,8 @@ log = RotkehlchenLogsAdapter(logger)
 
 class WethDecoder(EthBaseWethDecoder):
     def _decode_deposit_event(self, context: 'DecoderContext') -> 'DecodingOutput':
-        depositor = hex_or_bytes_to_address(context.tx_log.topics[1])
-        deposited_amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        depositor = bytes_to_address(context.tx_log.topics[1])
+        deposited_amount_raw = int.from_bytes(context.tx_log.data[:32])
         deposited_amount = asset_normalized_value(
             amount=deposited_amount_raw,
             asset=self.base_asset,
@@ -29,17 +30,17 @@ class WethDecoder(EthBaseWethDecoder):
             if (
                 event.event_type == HistoryEventType.SPEND and
                 event.address == self.wrapped_token.evm_address and
-                event.balance.amount == deposited_amount and
+                event.amount == deposited_amount and
                 event.asset == self.base_asset
             ):
                 event.counterparty = self.counterparty
                 event.event_type = HistoryEventType.DEPOSIT
-                event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                event.event_subtype = HistoryEventSubType.DEPOSIT_FOR_WRAPPED
                 event.notes = f'Wrap {deposited_amount} ETH in WETH'
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == deposited_amount and
+                event.amount == deposited_amount and
                 event.asset == self.wrapped_token
             ):  # scroll WETH does emit an event on transfer so we can edit the event instead of creating a new one  # noqa: E501
                 event.notes = f'Receive {deposited_amount} WETH'
@@ -51,8 +52,10 @@ class WethDecoder(EthBaseWethDecoder):
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_withdrawal_event(self, context: 'DecoderContext') -> 'DecodingOutput':
-        withdrawer = hex_or_bytes_to_address(context.tx_log.topics[1])
-        withdrawn_amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        if not self.base.is_tracked(withdrawer := bytes_to_address(context.tx_log.topics[1])):
+            return DEFAULT_DECODING_OUTPUT
+
+        withdrawn_amount_raw = int.from_bytes(context.tx_log.data[:32])
         withdrawn_amount = asset_normalized_value(
             amount=withdrawn_amount_raw,
             asset=self.base_asset,
@@ -62,7 +65,7 @@ class WethDecoder(EthBaseWethDecoder):
             if (
                 event.event_type == HistoryEventType.RECEIVE and
                 event.address == self.wrapped_token.evm_address and
-                event.balance.amount == withdrawn_amount and
+                event.amount == withdrawn_amount and
                 event.asset == self.base_asset
             ):
                 in_event = event
@@ -71,7 +74,7 @@ class WethDecoder(EthBaseWethDecoder):
             elif (
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == withdrawn_amount and
+                event.amount == withdrawn_amount and
                 event.asset == self.wrapped_token
             ):  # scroll WETH does emit an event on transfer so we can edit the event instead of creating a new one  # noqa: E501
                 event.notes = f'Unwrap {withdrawn_amount} WETH'

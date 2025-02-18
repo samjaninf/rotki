@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from collections.abc import Collection
 from csv import DictWriter
 from pathlib import Path
@@ -39,7 +40,6 @@ ACCOUNTING_SETTINGS = (
     'include_crypto2crypto',
     'taxfree_after_period',
     'include_gas_costs',
-    'account_for_assets_movements',
     'calculate_past_cost_basis',
     'cost_basis_method',
 )
@@ -54,6 +54,7 @@ class CSVWriteError(Exception):
 def dict_to_csv_file(
         path: Path,
         dictionary_list: list,
+        csv_delimiter: str,
         headers: Collection | None = None,
 ) -> None:
     """Takes a filepath and a list of dictionaries representing the rows and writes them
@@ -64,17 +65,19 @@ def dict_to_csv_file(
     fields not in fieldnames
     """
     if len(dictionary_list) == 0:
-        log.debug(f'Skipping writting empty CSV for {path}')
+        log.debug(f'Skipping writing empty CSV for {path}')
         return
 
     with open(path, 'w', newline='', encoding='utf-8') as f:
-        w = DictWriter(f, fieldnames=dictionary_list[0].keys() if headers is None else headers)
+        w = DictWriter(f, fieldnames=dictionary_list[0].keys() if headers is None else headers, delimiter=csv_delimiter)  # noqa: E501
         w.writeheader()
         try:
             for dic in dictionary_list:
                 w.writerow(dic)
         except ValueError as e:
             raise CSVWriteError(f'Failed to write {path} CSV due to {e!s}') from e
+
+    os.utime(path)
 
 
 class CSVExporter(CustomizableDateMixin):
@@ -97,6 +100,7 @@ class CSVExporter(CustomizableDateMixin):
             SupportedBlockchain.BASE: ETHERSCAN_EXPLORER_TX_URL.format(base_url='basescan.org'),
             SupportedBlockchain.GNOSIS: ETHERSCAN_EXPLORER_TX_URL.format(base_url='gnosisscan.io'),
             SupportedBlockchain.SCROLL: ETHERSCAN_EXPLORER_TX_URL.format(base_url='scrollscan.com'),  # noqa: E501
+            SupportedBlockchain.BINANCE_SC: ETHERSCAN_EXPLORER_TX_URL.format(base_url='bscscan.com'),  # noqa: E501
             SupportedBlockchain.ZKSYNC_LITE: 'https://zkscan.io/explorer/transactions/',
         }
         with self.database.conn.read_ctx() as cursor:
@@ -272,7 +276,6 @@ class CSVExporter(CustomizableDateMixin):
             events: list['ProcessedAccountingEvent'],
             pnls: PnlTotals,
     ) -> tuple[bool, str]:
-        # TODO: Find a way to properly delete the directory after send is complete
         dirpath = Path(mkdtemp())
         success, msg = self.export(events=events, pnls=pnls, directory=dirpath)
         if not success:
@@ -333,8 +336,9 @@ class CSVExporter(CustomizableDateMixin):
         try:
             directory.mkdir(parents=True, exist_ok=True)
             dict_to_csv_file(
-                directory / FILENAME_ALL_CSV,
-                serialized_events,
+                path=directory / FILENAME_ALL_CSV,
+                dictionary_list=serialized_events,
+                csv_delimiter=self.settings.csv_export_delimiter,
             )
         except (CSVWriteError, PermissionError) as e:
             return False, str(e)

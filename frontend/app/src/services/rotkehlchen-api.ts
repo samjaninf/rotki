@@ -1,23 +1,12 @@
 import axios, { type AxiosInstance } from 'axios';
 import { basicAxiosTransformer } from '@/services/axios-tranformers';
+import { defaultApiUrls } from '@/services/api-urls';
 
 export class RotkehlchenApi {
   private axios: AxiosInstance;
   private _serverUrl: string;
   private signal = axios.CancelToken.source();
-  private readonly pathname: string;
-
-  get defaultServerUrl(): string {
-    if (import.meta.env.VITE_BACKEND_URL)
-      return import.meta.env.VITE_BACKEND_URL as string;
-
-    if (import.meta.env.VITE_PUBLIC_PATH) {
-      const pathname = this.pathname;
-      return pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
-    }
-
-    return '';
-  }
+  private authFailureAction?: () => void;
 
   get instance(): AxiosInstance {
     return this.axios;
@@ -28,7 +17,7 @@ export class RotkehlchenApi {
   }
 
   get defaultBackend(): boolean {
-    return this._serverUrl === this.defaultServerUrl;
+    return this._serverUrl === defaultApiUrls.coreApiUrl;
   }
 
   public cancel(): void {
@@ -37,17 +26,17 @@ export class RotkehlchenApi {
   }
 
   constructor() {
-    this.pathname = window.location.pathname;
-    this._serverUrl = this.defaultServerUrl;
+    this._serverUrl = defaultApiUrls.coreApiUrl;
     this.axios = axios.create({
       baseURL: `${this.serverUrl}/api/1/`,
       timeout: 30000,
       transformResponse: basicAxiosTransformer,
     });
     this.setupCancellation();
+    this.setupAuthRedirect();
   }
 
-  setup(serverUrl: string) {
+  setup(serverUrl: string): void {
     this._serverUrl = serverUrl;
     this.axios = axios.create({
       baseURL: `${serverUrl}/api/1/`,
@@ -58,13 +47,17 @@ export class RotkehlchenApi {
     this.setupAuthRedirect();
   }
 
-  private setupCancellation() {
+  setOnAuthFailure(action: () => void): void {
+    this.authFailureAction = action;
+  }
+
+  private setupCancellation(): void {
     this.axios.interceptors.request.use(
       (request) => {
         request.cancelToken = this.signal.token;
         return request;
       },
-      (error) => {
+      async (error) => {
         if (error.response)
           return Promise.reject(error.response.data);
 
@@ -73,17 +66,18 @@ export class RotkehlchenApi {
     );
   }
 
-  private setupAuthRedirect() {
+  private setupAuthRedirect(): void {
     this.axios.interceptors.response.use(
       (response) => {
         if (response.status === 401) {
           this.cancel();
+          this.authFailureAction?.();
           window.location.href = '/#/';
         }
 
         return response;
       },
-      (error) => {
+      async (error) => {
         if (error.response) {
           if (error.response.status === 401) {
             this.cancel();

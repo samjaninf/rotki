@@ -5,6 +5,7 @@ from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.chain.arbitrum_one.constants import ARBITRUM_ONE_GENESIS
 from rotkehlchen.chain.base.constants import BASE_GENESIS
+from rotkehlchen.chain.binance_sc.constants import BINANCE_SC_GENESIS
 from rotkehlchen.chain.ethereum.constants import ETHEREUM_GENESIS
 from rotkehlchen.chain.evm.constants import GENESIS_HASH, ZERO_ADDRESS
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
@@ -13,7 +14,11 @@ from rotkehlchen.chain.gnosis.constants import GNOSIS_GENESIS
 from rotkehlchen.chain.optimism.constants import OPTIMISM_GENESIS
 from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_GENESIS
 from rotkehlchen.chain.scroll.constants import SCROLL_GENESIS
-from rotkehlchen.db.constants import EXTRAINTERNALTXPREFIX, HISTORY_MAPPING_STATE_DECODED
+from rotkehlchen.db.constants import (
+    EVMTX_DECODED,
+    EVMTX_SPAM,
+    EXTRAINTERNALTXPREFIX,
+)
 from rotkehlchen.db.filtering import EvmTransactionsFilterQuery, TransactionsNotDecodedFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.serialization import DeserializationError
@@ -47,9 +52,13 @@ if TYPE_CHECKING:
 
 from rotkehlchen.constants.limits import FREE_ETH_TX_LIMIT
 
+# This is only used in get_transaction_hashes_not_decoded and count_hashes_not_decoded
+# in conjunction with TransactionsNotDecodedFilterQuery. In that filter query we also
+# make sure to check that the evmtx_mapping value is that of the decoded attribute
+# The reason it happens there is that it needs to be in the WHERE
 TRANSACTIONS_MISSING_DECODING_QUERY = (
     'evmtx_receipts AS A LEFT OUTER JOIN evm_tx_mappings AS B ON A.tx_id=B.tx_id '
-    'LEFT JOIN evm_transactions AS C on A.tx_id=C.identifier '
+    'LEFT JOIN evm_transactions AS C ON A.tx_id=C.identifier '
 )
 
 
@@ -206,22 +215,6 @@ class DBEvmTx:
 
         return evm_transactions
 
-    def get_evm_transactions_and_limit_info(
-            self,
-            cursor: 'DBCursor',
-            filter_: EvmTransactionsFilterQuery,
-            has_premium: bool,
-    ) -> tuple[list[EvmTransaction], int]:
-        """Gets all evm transactions for the query from the DB.
-
-        Also returns how many are the total found for the filter.
-        """
-        txs = self.get_evm_transactions(cursor, filter_=filter_, has_premium=has_premium)
-        query, bindings = filter_.prepare(with_pagination=False)
-        query = 'SELECT COUNT(DISTINCT evm_transactions.tx_hash) FROM evm_transactions ' + query
-        total_found_result = cursor.execute(query, bindings)
-        return txs, total_found_result.fetchone()[0]  # always returns result
-
     def delete_evm_transaction_data(
             self,
             chain: SUPPORTED_EVM_CHAINS_TYPE | None,
@@ -373,14 +366,13 @@ class DBEvmTx:
 
         for log_entry in data['logs']:
             write_cursor.execute(
-                'INSERT INTO evmtx_receipt_logs (tx_id, log_index, data, address, removed) '
-                'VALUES(? ,? ,? ,? ,?)',
+                'INSERT INTO evmtx_receipt_logs (tx_id, log_index, data, address) '
+                'VALUES(? ,? ,? ,?)',
                 (
                     tx_id,
                     log_entry['logIndex'],
                     hexstring_to_bytes(log_entry['data']),
                     deserialize_evm_address(log_entry['address']),
-                    int(log_entry['removed']),
                 ),
             )
             log_id = write_cursor.lastrowid
@@ -429,7 +421,7 @@ class DBEvmTx:
         )
 
         cursor.execute(
-            'SELECT identifier, log_index, data, address, removed from evmtx_receipt_logs WHERE tx_id=?',  # noqa: E501
+            'SELECT identifier, log_index, data, address from evmtx_receipt_logs WHERE tx_id=?',
             (tx_id,))
         with self.db.conn.read_ctx() as other_cursor:
             for result in cursor:
@@ -437,7 +429,6 @@ class DBEvmTx:
                     log_index=result[1],
                     data=result[2],
                     address=result[3],
-                    removed=bool(result[4]),  # works since value is either 0 or 1
                 )
                 other_cursor.execute(
                     'SELECT topic from evmtx_receipt_log_topics '
@@ -445,6 +436,10 @@ class DBEvmTx:
                     (result[0],),
                 )
                 tx_receipt_log.topics = [x[0] for x in other_cursor]
+                if len(tx_receipt_log.topics) == 0:
+                    log.debug(f'Ignoring anonymous tx log in {tx_hash.hex()} at {chain_id}')
+                    continue
+
                 tx_receipt.logs.append(tx_receipt_log)
 
         return tx_receipt
@@ -527,15 +522,15 @@ class DBEvmTx:
             'DELETE FROM evm_transactions WHERE tx_hash=? AND chain_id=? AND tx_hash NOT IN (SELECT tx_hash FROM evm_events_info)',  # noqa: E501
             [(x, chain_id_serialized) for x in tx_hashes],
         )
-        # Delete all remaining evm_tx_mappings so decoding can happen again for customized events
+        # Delete all remaining evm_tx_mappings so decoding can happen again
         write_cursor.executemany(
-            'DELETE FROM evm_tx_mappings WHERE tx_id=? AND value=?',
-            [(x, HISTORY_MAPPING_STATE_DECODED) for x in tx_ids],
+            'DELETE FROM evm_tx_mappings WHERE tx_id=? AND value IN (?, ?)',
+            [(x, EVMTX_DECODED, EVMTX_SPAM) for x in tx_ids],
         )
         # Delete any key_value_cache entries
         write_cursor.executemany(
             'DELETE FROM key_value_cache WHERE name LIKE ?',
-            [(f'{EXTRAINTERNALTXPREFIX}_{tx_hash.hex()}%',) for tx_hash in tx_hashes],
+            [(f'{EXTRAINTERNALTXPREFIX}_{chain_id.value}_%_{tx_hash.hex()}',) for tx_hash in tx_hashes],  # noqa: E501
         )
 
     def get_queried_range(
@@ -604,6 +599,8 @@ class DBEvmTx:
                 timestamp = GNOSIS_GENESIS
             elif chain_id == ChainID.SCROLL:
                 timestamp = SCROLL_GENESIS
+            elif chain_id == ChainID.BINANCE_SC:
+                timestamp = BINANCE_SC_GENESIS
             else:
                 timestamp = POLYGON_POS_GENESIS
             tx = EvmTransaction(
@@ -672,3 +669,10 @@ class DBEvmTx:
         with self.db.conn.read_ctx() as cursor:
             cursor.execute(query, bindings)
             return cursor.fetchone()[0]
+
+    def get_transaction_block_by_hash(self, cursor: 'DBCursor', tx_hash: EVMTxHash) -> int | None:
+        """Return the block number of a transaction"""
+        cursor.execute('SELECT block_number FROM evm_transactions WHERE tx_hash=?', (tx_hash,))
+        if (result := cursor.fetchone()) is None:
+            return None
+        return result[0]

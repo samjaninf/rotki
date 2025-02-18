@@ -1,15 +1,14 @@
 import csv
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.converters import asset_from_bitstamp
-from rotkehlchen.constants import ZERO
 from rotkehlchen.data_import.importers.constants import BITSTAMP_EVENT_PREFIX
 from rotkehlchen.data_import.utils import BaseExchangeImporter
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -21,8 +20,16 @@ from rotkehlchen.serialization.deserialize import (
 from rotkehlchen.types import Location, TradeType
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
+if TYPE_CHECKING:
+    from rotkehlchen.db.dbhandler import DBHandler
+
 
 class BitstampTransactionsImporter(BaseExchangeImporter):
+    """Bitstamp CSV importer"""
+
+    def __init__(self, db: 'DBHandler') -> None:
+        super().__init__(db=db, name='Bitstamp')
+
     def _consume_bitstamp_transaction(
             self,
             write_cursor: DBCursor,
@@ -68,10 +75,7 @@ class BitstampTransactionsImporter(BaseExchangeImporter):
                 timestamp=timestamp,
                 location=Location.BITSTAMP,
                 asset=sold_currency,
-                balance=Balance(
-                    amount=sold_amount,
-                    usd_value=ZERO,
-                ),
+                amount=sold_amount,
                 notes=f'Spend {sold_amount} {sold_currency} as the result of a trade on Bitstamp',
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.SPEND,
@@ -82,10 +86,7 @@ class BitstampTransactionsImporter(BaseExchangeImporter):
                 timestamp=timestamp,
                 location=Location.BITSTAMP,
                 asset=bought_currency,
-                balance=Balance(
-                    amount=bought_amount,
-                    usd_value=ZERO,
-                ),
+                amount=bought_amount,
                 notes=f'Receive {bought_amount} {bought_currency} as the result of a trade on Bitstamp',  # noqa: E501
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.RECEIVE,
@@ -96,10 +97,7 @@ class BitstampTransactionsImporter(BaseExchangeImporter):
                 timestamp=timestamp,
                 location=Location.BITSTAMP,
                 asset=fee_currency,
-                balance=Balance(
-                    amount=fee_amount,
-                    usd_value=ZERO,
-                ),
+                amount=fee_amount,
                 notes=f'Fee of {fee_amount} {fee_currency} as the result of a trade on Bitstamp',
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.FEE,
@@ -125,10 +123,7 @@ class BitstampTransactionsImporter(BaseExchangeImporter):
                 timestamp=timestamp,
                 location=Location.BITSTAMP,
                 asset=asset,
-                balance=Balance(
-                    amount=amount,
-                    usd_value=ZERO,
-                ),
+                amount=amount,
                 notes=f'{transaction_type} of {amount} {asset} on Bitstamp',
                 event_type=event_type,
                 event_subtype=event_subtype,
@@ -140,25 +135,31 @@ class BitstampTransactionsImporter(BaseExchangeImporter):
         Import trades from bitstamp.
         """
         with open(filepath, encoding='utf-8-sig') as csvfile:
-            data = csv.DictReader(csvfile)
-            for row in data:
+            for index, row in enumerate(csv.DictReader(csvfile), start=1):
                 try:
+                    self.total_entries += 1
                     self._consume_bitstamp_transaction(write_cursor, row, **kwargs)
+                    self.imported_entries += 1
                 except UnknownAsset as e:
-                    self.db.msg_aggregator.add_warning(
-                        f'During Bitstamp CSV import found action with unknown '
-                        f'asset {e.identifier}. Ignoring entry',
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=f'Unknown asset {e.identifier}.',
+                        is_error=True,
                     )
                 except DeserializationError as e:
-                    self.db.msg_aggregator.add_warning(
-                        f'Deserialization error during Bitstamp CSV import. '
-                        f'{e!s}. Ignoring entry',
-                    )
-                except KeyError as e:
-                    self.db.msg_aggregator.add_warning(
-                        f'Could not find key {e!s} in csv row {row!s} {e!s}. Ignoring entry',
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=f'Deserialization error: {e!s}.',
+                        is_error=True,
                     )
                 except ValueError as e:
-                    self.db.msg_aggregator.add_warning(
-                        f'Could not parse some values {e!s} in csv row {row!s}',
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=f'Could not parse some values: {e!s}',
+                        is_error=True,
                     )
+                except KeyError as e:
+                    raise InputError(f'Could not find key {e!s} in csv row {row!s}') from e

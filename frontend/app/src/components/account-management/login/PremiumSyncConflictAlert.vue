@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useRefMap } from '@/composables/utils/useRefMap';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import LoginActionAlert from '@/components/account-management/login/LoginActionAlert.vue';
+
 const emit = defineEmits<{ (e: 'proceed', approval: 'yes' | 'no'): void }>();
 
 const { t } = useI18n();
@@ -11,8 +16,8 @@ const lastModified = useRefMap(syncConflict, (conflict) => {
 
   const { localLastModified, remoteLastModified } = conflict.payload;
   return {
-    remote: remoteLastModified,
     local: localLastModified,
+    remote: remoteLastModified,
   };
 });
 </script>
@@ -21,7 +26,7 @@ const lastModified = useRefMap(syncConflict, (conflict) => {
   <Transition name="bounce">
     <LoginActionAlert
       v-if="syncConflict"
-      icon="download-cloud-line"
+      icon="lu-cloud-download-fill"
       @cancel="emit('proceed', 'no')"
       @confirm="emit('proceed', 'yes')"
     >
@@ -35,20 +40,20 @@ const lastModified = useRefMap(syncConflict, (conflict) => {
         class="mt-2 list-disc"
       >
         <li>
-          <i18n
-            path="login.sync_error.local_modified"
+          <i18n-t
+            keypath="login.sync_error.local_modified"
             class="font-medium"
           >
             <DateDisplay :timestamp="lastModified.local" />
-          </i18n>
+          </i18n-t>
         </li>
         <li class="mt-2">
-          <i18n
-            path="login.sync_error.remote_modified"
+          <i18n-t
+            keypath="login.sync_error.remote_modified"
             class="font-medium"
           >
             <DateDisplay :timestamp="lastModified.remote" />
-          </i18n>
+          </i18n-t>
         </li>
       </ul>
       <div class="mt-2">

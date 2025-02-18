@@ -1,19 +1,23 @@
+import { checkIfDevelopment, startPromise } from '@shared/utils';
 import { api } from '@/services/rotkehlchen-api';
-import type { Nullable } from '@/types';
-import type { LogLevel } from '@/utils/log-level';
+import { getDefaultLogLevel, logger, setLevel } from '@/utils/logging';
+import { useInfoApi } from '@/composables/api/info';
+import { apiUrls, defaultApiUrls } from '@/services/api-urls';
+import type { Nullable } from '@rotki/common';
+import type { LogLevel } from '@shared/log-level';
 import type { Version } from '@/types/action';
 import type { DefaultBackendArguments } from '@/types/backend';
 
 let intervalId: any = null;
 
 export const useMainStore = defineStore('main', () => {
-  const version: Ref<Version> = ref(defaultVersion());
-  const connected: Ref<boolean> = ref(false);
-  const connectionFailure: Ref<boolean> = ref(false);
-  const dataDirectory: Ref<string> = ref('');
-  const logLevel: Ref<LogLevel> = ref(getDefaultLogLevel());
-  const dockerRiskAccepted: Ref<boolean> = ref(true);
-  const defaultBackendArguments: Ref<DefaultBackendArguments> = ref({
+  const version = ref<Version>(defaultVersion());
+  const connected = ref<boolean>(false);
+  const connectionFailure = ref<boolean>(false);
+  const dataDirectory = ref<string>('');
+  const logLevel = ref<LogLevel>(getDefaultLogLevel());
+  const dockerRiskAccepted = ref<boolean>(true);
+  const defaultBackendArguments = ref<DefaultBackendArguments>({
     maxLogfilesNum: 0,
     maxSizeInMbAllLogs: 0,
     sqliteInstructions: 0,
@@ -22,42 +26,42 @@ export const useMainStore = defineStore('main', () => {
   const { info, ping } = useInfoApi();
 
   const updateNeeded = computed(() => {
-    const { version: appVersion, downloadUrl } = get(version);
+    const { downloadUrl, version: appVersion } = get(version);
     return appVersion.includes('dev') ? false : !!downloadUrl;
   });
 
   const appVersion = computed(() => {
     const { version: appVersion } = get(version);
     const indexOfDev = appVersion.indexOf('dev');
-    return indexOfDev > 0
-      ? appVersion.slice(0, Math.max(0, indexOfDev + 3))
-      : appVersion;
+    return indexOfDev > 0 ? appVersion.slice(0, Math.max(0, indexOfDev + 3)) : appVersion;
   });
 
-  const isDevelop = computed(() => {
+  const isDevelop = computed<boolean>(() => {
+    const dev = checkIfDevelopment();
+    if (dev)
+      return true;
+
     const { version: appVersion } = get(version);
-    return (
-      appVersion.includes('dev') || get(dataDirectory).includes('develop_data')
-    );
+    return appVersion.includes('dev') || get(dataDirectory).includes('develop_data');
   });
 
   const getVersion = async (): Promise<void> => {
     const { version: appVersion } = await info(true);
     if (appVersion) {
       set(version, {
-        version: appVersion.ourVersion || '',
-        latestVersion: appVersion.latestVersion || '',
-        downloadUrl: appVersion.downloadUrl || '',
+        downloadUrl: appVersion.downloadUrl ?? '',
+        latestVersion: appVersion.latestVersion ?? '',
+        version: appVersion.ourVersion ?? '',
       });
     }
   };
 
   const getInfo = async (): Promise<void> => {
     const {
-      dataDirectory: appDataDirectory,
-      logLevel: level,
       acceptDockerRisk,
       backendDefaultArguments,
+      dataDirectory: appDataDirectory,
+      logLevel: level,
     } = await info(false);
 
     set(dataDirectory, appDataDirectory);
@@ -73,12 +77,16 @@ export const useMainStore = defineStore('main', () => {
       clearInterval(intervalId);
 
     const updateApi = (payload?: Nullable<string>): void => {
-      const interopBackendUrl = window.interop?.serverUrl();
-      let backendUrl = api.defaultServerUrl;
-      if (payload)
+      const updatedUrls = window.interop?.apiUrls();
+      let backendUrl = defaultApiUrls.coreApiUrl;
+      if (payload) {
         backendUrl = payload;
-      else if (interopBackendUrl)
-        backendUrl = interopBackendUrl;
+      }
+      else if (updatedUrls) {
+        backendUrl = updatedUrls.coreApiUrl;
+        apiUrls.coreApiUrl = updatedUrls.coreApiUrl;
+        apiUrls.colibriApiUrl = updatedUrls.colibriApiUrl;
+      }
 
       api.setup(backendUrl);
     };
@@ -120,28 +128,28 @@ export const useMainStore = defineStore('main', () => {
   };
 
   return {
-    version,
     appVersion,
+    connect,
     connected,
     connectionFailure,
     dataDirectory,
-    updateNeeded,
-    dockerRiskAccepted,
     defaultBackendArguments,
-    isDevelop,
-    connect,
-    getVersion,
+    dockerRiskAccepted,
     getInfo,
+    getVersion,
+    isDevelop,
     setConnected,
     setConnectionFailure,
+    updateNeeded,
+    version,
   };
 });
 
 function defaultVersion(): Version {
   return {
-    version: '',
-    latestVersion: '',
     downloadUrl: '',
+    latestVersion: '',
+    version: '',
   };
 }
 

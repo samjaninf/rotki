@@ -1,70 +1,78 @@
 <script setup lang="ts">
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
+import { Blockchain, HistoryEventEntryType } from '@rotki/common';
 import dayjs from 'dayjs';
 import { helpers, required, requiredIf } from '@vuelidate/validators';
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { isEmpty } from 'lodash-es';
+import { isEmpty } from 'es-toolkit/compat';
+import useVuelidate from '@vuelidate/core';
 import { TRADE_LOCATION_EXTERNAL } from '@/data/defaults';
 import { toMessages } from '@/utils/validation';
-import HistoryEventAssetPriceForm from '@/components/history/events/forms/HistoryEventAssetPriceForm.vue';
 import { DateFormat } from '@/types/date-format';
-import type {
-  EvmHistoryEvent,
-  NewEvmHistoryEventPayload,
-} from '@/types/history/events';
+import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
+import { bigNumberifyFromRef } from '@/utils/bignumbers';
+import HistoryEventAssetPriceForm from '@/components/history/events/forms/HistoryEventAssetPriceForm.vue';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useHistoryEventsForm } from '@/composables/history/events/form';
+import { useSupportedChains } from '@/composables/info/chains';
+import { useHistoryEventCounterpartyMappings } from '@/composables/history/events/mapping/counterparty';
+import { useHistoryEventProductMappings } from '@/composables/history/events/mapping/product';
+import JsonInput from '@/components/inputs/JsonInput.vue';
+import CounterpartyInput from '@/components/inputs/CounterpartyInput.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import AutoCompleteWithSearchSync from '@/components/inputs/AutoCompleteWithSearchSync.vue';
+import HistoryEventTypeForm from '@/components/history/events/forms/HistoryEventTypeForm.vue';
+import LocationSelector from '@/components/helper/LocationSelector.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
+import { useFormStateWatcher } from '@/composables/form';
+import type { EvmHistoryEvent, NewEvmHistoryEventPayload } from '@/types/history/events';
 
-const props = withDefaults(
-  defineProps<{
-    editableItem?: EvmHistoryEvent;
-    nextSequence?: string;
-    groupHeader?: EvmHistoryEvent;
-  }>(),
-  {
-    editableItem: undefined,
-    nextSequence: '',
-    groupHeader: undefined,
-  },
-);
+interface HistoryEventFormProps {
+  editableItem?: EvmHistoryEvent;
+  nextSequence?: string;
+  groupHeader?: EvmHistoryEvent;
+}
+
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+
+const props = withDefaults(defineProps<HistoryEventFormProps>(), {
+  editableItem: undefined,
+  groupHeader: undefined,
+  nextSequence: '',
+});
 
 const { t } = useI18n();
 
 const { editableItem, groupHeader, nextSequence } = toRefs(props);
 
-const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { historyEventProductsMapping } = useHistoryEventProductMappings();
 const { counterparties } = useHistoryEventCounterpartyMappings();
 
-const lastLocation = useLocalStorage(
-  'rotki.history_event.location',
-  TRADE_LOCATION_EXTERNAL,
-);
+const lastLocation = useLocalStorage('rotki.history_event.location', TRADE_LOCATION_EXTERNAL);
 
-const assetPriceForm: Ref<InstanceType<
-  typeof HistoryEventAssetPriceForm
-> | null> = ref(null);
+const assetPriceForm = ref<InstanceType<typeof HistoryEventAssetPriceForm>>();
 
-const txHash: Ref<string> = ref('');
-const eventIdentifier = ref<string>();
-const sequenceIndex: Ref<string> = ref('');
-const datetime: Ref<string> = ref('');
-const location: Ref<string> = ref('');
-const eventType: Ref<string> = ref('');
-const eventSubtype: Ref<string> = ref('');
-const asset: Ref<string> = ref('');
-const amount: Ref<string> = ref('');
-const usdValue: Ref<string> = ref('');
-const address: Ref<string> = ref('');
-const locationLabel: Ref<string> = ref('');
-const notes: Ref<string> = ref('');
-const counterparty: Ref<string> = ref('');
-const product: Ref<string> = ref('');
-const extraData: Ref<object> = ref({});
+const txHash = ref<string>('');
+const eventIdentifier = ref<string>('');
+const sequenceIndex = ref<string>('');
+const datetime = ref<string>('');
+const location = ref<string>('');
+const eventType = ref<string>('');
+const eventSubtype = ref<string>('none');
+const asset = ref<string>('');
+const amount = ref<string>('');
+const address = ref<string>('');
+const locationLabel = ref<string>('');
+const notes = ref<string>('');
+const counterparty = ref<string>('');
+const product = ref<string>('');
+const extraData = ref<object>({});
 
 const errorMessages = ref<Record<string, string[]>>({});
 
 const externalServerValidation = () => true;
 
-const historyEventLimitedProducts: ComputedRef<string[]> = computed(() => {
+const isInformationalEvent = computed(() => get(eventType) === 'informational');
+
+const historyEventLimitedProducts = computed<string[]>(() => {
   const counterpartyVal = get(counterparty);
   const mapping = get(historyEventProductsMapping);
 
@@ -75,149 +83,105 @@ const historyEventLimitedProducts: ComputedRef<string[]> = computed(() => {
 });
 
 const rules = {
-  timestamp: { externalServerValidation },
-  locationLabel: { externalServerValidation },
-  notes: { externalServerValidation },
-  txHash: {
-    required: helpers.withMessage(
-      t('transactions.events.form.tx_hash.validation.non_empty'),
-      required,
-    ),
-    isValid: helpers.withMessage(
-      t('transactions.events.form.tx_hash.validation.valid'),
-      (value: string) => isValidTxHash(value),
-    ),
-  },
-  eventIdentifier: {
-    required: helpers.withMessage(
-      t(
-        'transactions.events.form.event_identifier.validation.non_empty',
-      ),
-      requiredIf(() => !!get(editableItem)),
-    ),
-  },
-  location: {
-    required: helpers.withMessage(
-      t('transactions.events.form.location.validation.non_empty'),
-      required,
-    ),
-  },
-  asset: {
-    required: helpers.withMessage(
-      t('transactions.events.form.asset.validation.non_empty'),
-      required,
-    ),
-  },
-  amount: {
-    required: helpers.withMessage(
-      t('transactions.events.form.amount.validation.non_empty'),
-      required,
-    ),
-  },
-  usdValue: {
-    required: helpers.withMessage(
-      t('transactions.events.form.fiat_value.validation.non_empty', {
-        currency: get(currencySymbol),
-      }),
-      required,
-    ),
-  },
   address: {
     isValid: helpers.withMessage(
       t('transactions.events.form.address.validation.valid'),
       (value: string) => !value || isValidEthAddress(value),
     ),
   },
-  sequenceIndex: {
-    required: helpers.withMessage(
-      t(
-        'transactions.events.form.sequence_index.validation.non_empty',
-      ),
-      required,
-    ),
+  amount: {
+    required: helpers.withMessage(t('transactions.events.form.amount.validation.non_empty'), required),
   },
-  eventType: {
-    required: helpers.withMessage(
-      t('transactions.events.form.event_type.validation.non_empty'),
-      required,
-    ),
-  },
-  eventSubtype: {
-    required: helpers.withMessage(
-      t(
-        'transactions.events.form.event_subtype.validation.non_empty',
-      ),
-      required,
-    ),
+  asset: {
+    required: helpers.withMessage(t('transactions.events.form.asset.validation.non_empty'), required),
   },
   counterparty: {
     isValid: helpers.withMessage(
       t('transactions.events.form.counterparty.validation.valid'),
-      (value: string) =>
-        !value
-        || get(counterparties).includes(value)
-        || isValidEthAddress(value),
+      (value: string) => !value || get(counterparties).includes(value) || isValidEthAddress(value),
     ),
   },
+  eventIdentifier: {
+    required: helpers.withMessage(
+      t('transactions.events.form.event_identifier.validation.non_empty'),
+      requiredIf(() => !!get(editableItem)),
+    ),
+  },
+  eventSubtype: {
+    required: helpers.withMessage(t('transactions.events.form.event_subtype.validation.non_empty'), required),
+  },
+  eventType: {
+    required: helpers.withMessage(t('transactions.events.form.event_type.validation.non_empty'), required),
+  },
+  location: {
+    required: helpers.withMessage(t('transactions.events.form.location.validation.non_empty'), required),
+  },
+  locationLabel: { externalServerValidation },
+  notes: { externalServerValidation },
   product: {
     isValid: helpers.withMessage(
       t('transactions.events.form.product.validation.valid'),
-      (value: string) =>
-        !value || get(historyEventLimitedProducts).includes(value),
+      (value: string) => !value || get(historyEventLimitedProducts).includes(value),
     ),
+  },
+  sequenceIndex: {
+    required: helpers.withMessage(t('transactions.events.form.sequence_index.validation.non_empty'), required),
+  },
+  timestamp: { externalServerValidation },
+  txHash: {
+    isValid: helpers.withMessage(t('transactions.events.form.tx_hash.validation.valid'), (value: string) =>
+      isValidTxHash(value)),
+    required: helpers.withMessage(t('transactions.events.form.tx_hash.validation.non_empty'), required),
   },
 };
 
 const numericAmount = bigNumberifyFromRef(amount);
-const numericUsdValue = bigNumberifyFromRef(usdValue);
 
-const { setValidation, setSubmitFunc, saveHistoryEventHandler } = useHistoryEventsForm();
+const { getPayloadNotes, saveHistoryEventHandler } = useHistoryEventsForm();
+const { getAddresses } = useBlockchainStore();
+const { txChainsToLocation } = useSupportedChains();
 
-const v$ = setValidation(
+const states = {
+  address,
+  amount,
+  asset,
+  counterparty,
+  eventIdentifier,
+  eventSubtype,
+  eventType,
+  location,
+  locationLabel,
+  notes,
+  product,
+  sequenceIndex,
+  timestamp: datetime,
+  txHash,
+};
+
+const v$ = useVuelidate(
   rules,
-  {
-    timestamp: datetime,
-    locationLabel,
-    notes,
-    eventIdentifier,
-    txHash,
-    location,
-    asset,
-    amount,
-    usdValue,
-    address,
-    sequenceIndex,
-    eventType,
-    eventSubtype,
-    counterparty,
-    product,
-  },
+  states,
   {
     $autoDirty: true,
     $externalResults: errorMessages,
   },
 );
+useFormStateWatcher(states, stateUpdated);
+
+const addressSuggestions = computed(() => getAddresses(Blockchain.ETH));
 
 function reset() {
   set(sequenceIndex, get(nextSequence) || '0');
   set(txHash, '');
   set(eventIdentifier, null);
-  set(
-    datetime,
-    convertFromTimestamp(
-      dayjs().valueOf(),
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
+  set(datetime, convertFromTimestamp(dayjs().valueOf(), DateFormat.DateMonthYearHourMinuteSecond, true));
   set(location, get(lastLocation));
   set(address, '');
   set(locationLabel, '');
   set(eventType, '');
-  set(eventSubtype, '');
+  set(eventSubtype, 'none');
   set(asset, '');
   set(amount, '0');
-  set(usdValue, '0');
   set(notes, '');
   set(counterparty, '');
   set(product, '');
@@ -231,20 +195,12 @@ function applyEditableData(entry: EvmHistoryEvent) {
   set(sequenceIndex, entry.sequenceIndex?.toString() ?? '');
   set(txHash, entry.txHash);
   set(eventIdentifier, entry.eventIdentifier);
-  set(
-    datetime,
-    convertFromTimestamp(
-      entry.timestamp,
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
+  set(datetime, convertFromTimestamp(entry.timestamp, DateFormat.DateMonthYearHourMinuteSecond, true));
   set(location, entry.location);
   set(eventType, entry.eventType);
   set(eventSubtype, entry.eventSubtype || 'none');
   set(asset, entry.asset);
-  set(amount, entry.balance.amount.toFixed());
-  set(usdValue, entry.balance.usdValue.toFixed());
+  set(amount, entry.amount.toFixed());
   set(address, entry.address ?? '');
   set(locationLabel, entry.locationLabel ?? '');
   set(notes, entry.notes ?? '');
@@ -260,15 +216,7 @@ function applyGroupHeaderData(entry: EvmHistoryEvent) {
   set(address, entry.address ?? '');
   set(locationLabel, entry.locationLabel ?? '');
   set(txHash, entry.txHash);
-  set(
-    datetime,
-    convertFromTimestamp(
-      entry.timestamp,
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
-  set(usdValue, '0');
+  set(datetime, convertFromTimestamp(entry.timestamp, DateFormat.DateMonthYearHourMinuteSecond, true));
 }
 
 watch(errorMessages, (errors) => {
@@ -277,50 +225,41 @@ watch(errorMessages, (errors) => {
 });
 
 async function save(): Promise<boolean> {
-  const timestamp = convertToTimestamp(
-    get(datetime),
-    DateFormat.DateMonthYearHourMinuteSecond,
-    true,
-  );
+  if (!(await get(v$).$validate())) {
+    return false;
+  }
+
+  const timestamp = convertToTimestamp(get(datetime), DateFormat.DateMonthYearHourMinuteSecond, true);
+
+  const editable = get(editableItem);
+  const usedNotes = getPayloadNotes(get(notes), editable?.notes);
 
   const payload: NewEvmHistoryEventPayload = {
+    address: get(address) || null,
+    amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
+    asset: get(asset),
+    counterparty: get(counterparty) || null,
     entryType: HistoryEventEntryType.EVM_EVENT,
-    txHash: get(txHash),
     eventIdentifier: get(eventIdentifier) ?? null,
+    eventSubtype: get(eventSubtype),
+    eventType: get(eventType),
+    extraData: get(extraData) || null,
+    location: get(location),
+    locationLabel: get(locationLabel) || null,
+    notes: usedNotes ? usedNotes.trim() : undefined,
+    product: get(product) || null,
     sequenceIndex: get(sequenceIndex) || '0',
     timestamp,
-    eventType: get(eventType),
-    eventSubtype: get(eventSubtype),
-    asset: get(asset),
-    balance: {
-      amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
-      usdValue: get(numericUsdValue).isNaN() ? Zero : get(numericUsdValue),
-    },
-    location: get(location),
-    address: get(address) || null,
-    locationLabel: get(locationLabel) || null,
-    notes: get(notes) || undefined,
-    counterparty: get(counterparty) || null,
-    product: get(product) || null,
-    extraData: get(extraData) || null,
+    txHash: get(txHash),
   };
 
-  const edit = get(editableItem);
-
   return await saveHistoryEventHandler(
-    edit ? { ...payload, identifier: edit.identifier } : payload,
+    editable ? { ...payload, identifier: editable.identifier } : payload,
     assetPriceForm,
     errorMessages,
     reset,
   );
 }
-
-setSubmitFunc(save);
-
-watch(location, (location: string) => {
-  if (location)
-    set(lastLocation, location);
-});
 
 function checkPropsData() {
   const editable = get(editableItem);
@@ -336,11 +275,12 @@ function checkPropsData() {
   reset();
 }
 
-watch([groupHeader, editableItem], checkPropsData);
-
-onMounted(() => {
-  checkPropsData();
+watch(location, (location: string) => {
+  if (location)
+    set(lastLocation, location);
 });
+
+watch([groupHeader, editableItem], checkPropsData);
 
 watch(historyEventLimitedProducts, (products) => {
   const selected = get(product);
@@ -348,11 +288,13 @@ watch(historyEventLimitedProducts, (products) => {
     set(product, '');
 });
 
-const { txChainsToLocation } = useSupportedChains();
+onMounted(() => {
+  checkPropsData();
+});
 
-const { getAddresses } = useBlockchainStore();
-
-const addressSuggestions = computed(() => getAddresses(Blockchain.ETH));
+defineExpose({
+  save,
+});
 </script>
 
 <template>
@@ -393,31 +335,30 @@ const addressSuggestions = computed(() => getAddresses(Blockchain.ETH));
 
     <RuiDivider class="mb-6 mt-2" />
 
-    <HistoryEventAssetPriceForm
-      ref="assetPriceForm"
-      :v$="v$"
-      :datetime="datetime"
-      :asset.sync="asset"
-      :amount.sync="amount"
-      :usd-value.sync="usdValue"
-    />
-
-    <RuiDivider class="my-10" />
-
     <HistoryEventTypeForm
-      :event-type.sync="eventType"
-      :event-subtype.sync="eventSubtype"
+      v-model:event-type="eventType"
+      v-model:event-subtype="eventSubtype"
       :counterparty="counterparty"
       :v$="v$"
     />
 
     <RuiDivider class="mb-6 mt-2" />
 
+    <HistoryEventAssetPriceForm
+      ref="assetPriceForm"
+      v-model:asset="asset"
+      v-model:amount="amount"
+      :v$="v$"
+      :datetime="datetime"
+      :hide-price-fields="isInformationalEvent"
+    />
+
+    <RuiDivider class="mb-6 mt-2" />
+
     <div class="grid md:grid-cols-2 gap-4">
-      <ComboboxWithCustomInput
+      <AutoCompleteWithSearchSync
         v-model="locationLabel"
         :items="addressSuggestions"
-        outlined
         clearable
         data-cy="locationLabel"
         :label="t('transactions.events.form.location_label.label')"
@@ -426,10 +367,9 @@ const addressSuggestions = computed(() => getAddresses(Blockchain.ETH));
         @blur="v$.locationLabel.$touch()"
       />
 
-      <ComboboxWithCustomInput
+      <AutoCompleteWithSearchSync
         v-model="address"
         :items="addressSuggestions"
-        outlined
         clearable
         data-cy="address"
         :label="t('transactions.events.form.address.label')"
@@ -472,8 +412,8 @@ const addressSuggestions = computed(() => getAddresses(Blockchain.ETH));
     <RuiDivider class="mb-6 mt-2" />
 
     <RuiTextArea
-      v-model.trim="notes"
-      prepend-icon="sticky-note-line"
+      v-model="notes"
+      prepend-icon="lu-sticky-note"
       data-cy="notes"
       variant="outlined"
       color="primary"

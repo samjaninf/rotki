@@ -26,12 +26,12 @@ from rotkehlchen.inquirer import Inquirer, get_underlying_asset_price
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChainID, ChecksumEvmAddress, SupportedBlockchain
-from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import get_chunks
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -210,7 +210,7 @@ class ZerionSDK:
     def __init__(
             self,
             ethereum_inquirer: 'EthereumInquirer',
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
             database: 'DBHandler',
     ) -> None:
         self.ethereum = ethereum_inquirer
@@ -235,7 +235,7 @@ class ZerionSDK:
             )
         except RemoteError as e:
             log.warning(
-                f'Failed to query zerion adapter contract for protocol names due to {e!s}'
+                f'Failed to query zerion adapter contract for protocol names due to {e!s}. '
                 f'Falling back to known list of names.',
             )
             return list(KNOWN_ZERION_PROTOCOL_NAMES)
@@ -321,7 +321,7 @@ class ZerionSDK:
                             log.error(
                                 f'Deserialization error trying to get single balance '
                                 f'in {protocol.name}. {balances[0]}'
-                                f' Skipping underliying balance',
+                                f' Skipping underlying balance',
                             )
                             # In this case we just skip the underlying balance
                             continue
@@ -382,13 +382,12 @@ class ZerionSDK:
             usd_price = ZERO_PRICE
 
         usd_value = normalized_value * usd_price
-        defi_balance = DefiBalance(
+        return DefiBalance(
             token_address=token_address,
             token_name=token_name,
             token_symbol=token_symbol,
-            balance=Balance(amount=normalized_value, usd_value=usd_value),
+            balance=Balance(normalized_value, usd_value=usd_value),
         )
-        return defi_balance
 
     def handle_protocols(
             self,
@@ -424,5 +423,5 @@ class ZerionSDK:
             token_address=deserialize_evm_address(token_address),
             token_name=token_name,
             token_symbol=token_symbol,
-            balance=Balance(amount=normalized_balance, usd_value=normalized_balance * usd_price),
+            balance=Balance(normalized_balance, usd_value=normalized_balance * usd_price),
         )

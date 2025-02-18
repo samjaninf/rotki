@@ -1,17 +1,15 @@
-import { cloneDeep } from 'lodash-es';
+import { cloneDeep } from 'es-toolkit';
+import { balanceSum } from '@/utils/calculation';
 import type {
+  Writeable,
   XswapBalance,
   XswapBalances,
   XswapEvents,
   XswapPool,
   XswapPoolProfit,
-} from '@rotki/common/lib/defi/xswap';
-import type { Writeable } from '@/types';
+} from '@rotki/common';
 
-export function getPools(
-  balances: XswapBalances,
-  events: XswapEvents,
-): XswapPool[] {
+export function getPools(balances: XswapBalances, events: XswapEvents): XswapPool[] {
   const pools: XswapPool[] = [];
   const known: Record<string, boolean> = {};
 
@@ -20,7 +18,7 @@ export function getPools(
     if (!accountBalances || accountBalances.length === 0)
       continue;
 
-    for (const { assets, address } of accountBalances) {
+    for (const { address, assets } of accountBalances) {
       if (known[address])
         continue;
 
@@ -48,10 +46,7 @@ export function getPools(
   return pools;
 }
 
-export function getPoolProfit(
-  events: XswapEvents,
-  addresses: string[],
-): XswapPoolProfit[] {
+export function getPoolProfit(events: XswapEvents, addresses: string[]): XswapPoolProfit[] {
   const perPoolProfit: Record<string, Writeable<XswapPoolProfit>> = {};
   for (const address in events) {
     if (addresses.length > 0 && !addresses.includes(address))
@@ -78,17 +73,14 @@ export function getPoolProfit(
   return Object.values(perPoolProfit);
 }
 
-export function getBalances(
-  xswapBalance: XswapBalances,
-  addresses: string[],
-  group = true,
-): XswapBalance[] {
+export function getBalances(xswapBalance: XswapBalances, addresses: string[], group = true): XswapBalance[] {
   if (!group) {
     const balances = [];
     for (const account in xswapBalance) {
       if (addresses.length === 0 || addresses.includes(account))
         balances.push(...xswapBalance[account]);
     }
+
     return balances;
   }
   const balances: Record<string, Writeable<XswapBalance>> = {};
@@ -100,29 +92,17 @@ export function getBalances(
     if (!accountBalances || accountBalances.length === 0)
       continue;
 
-    for (const {
-      userBalance,
-      totalSupply,
-      assets,
-      address,
-      nftId,
-      priceRange,
-    } of accountBalances) {
+    for (const { address, assets, nftId, priceRange, totalSupply, userBalance } of accountBalances) {
       const balance = balances[address];
       if (balance) {
         const oldBalance = balance.userBalance;
         balance.userBalance = balanceSum(oldBalance, userBalance);
 
         assets.forEach((asset) => {
-          const index = balance.assets.findIndex(
-            item => item.asset === asset.asset,
-          );
+          const index = balance.assets.findIndex(item => item.asset === asset.asset);
           if (index > -1) {
             const existingAssetData = balance.assets[index];
-            const userBalance = balanceSum(
-              existingAssetData.userBalance,
-              asset.userBalance,
-            );
+            const userBalance = balanceSum(existingAssetData.userBalance, asset.userBalance);
             balance.assets[index] = {
               ...existingAssetData,
               userBalance,
@@ -136,12 +116,12 @@ export function getBalances(
       else {
         balances[address] = {
           account,
-          userBalance,
-          totalSupply,
-          assets,
           address,
+          assets,
           nftId,
           priceRange,
+          totalSupply,
+          userBalance,
         };
       }
     }

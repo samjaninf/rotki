@@ -1,8 +1,9 @@
-import type {
-  EditExchange,
-  Exchange,
-  ExchangeSetupPayload,
-} from '@/types/exchanges';
+import { startPromise } from '@shared/utils';
+import { useMessageStore } from '@/store/message';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { useExchangeBalancesStore } from '@/store/balances/exchanges';
+import { useExchangeApi } from '@/composables/api/balances/exchanges';
+import type { EditExchange, Exchange, ExchangeFormData } from '@/types/exchanges';
 
 export const useExchangesStore = defineStore('exchanges', () => {
   const exchangeBalancesStore = useExchangeBalancesStore();
@@ -12,36 +13,27 @@ export const useExchangesStore = defineStore('exchanges', () => {
   const { setConnectedExchanges } = sessionStore;
   const { connectedExchanges } = storeToRefs(sessionStore);
 
-  const { queryRemoveExchange, querySetupExchange } = useExchangeApi();
+  const { callSetupExchange, queryRemoveExchange } = useExchangeApi();
   const { setMessage } = useMessageStore();
 
   const { t } = useI18n();
 
   const getExchangeNonce = (exchange: string): ComputedRef<number> =>
-    computed(
-      () =>
-        get(connectedExchanges).filter(({ location }) => location === exchange)
-          .length + 1,
-    );
+    computed(() => get(connectedExchanges).filter(({ location }) => location === exchange).length + 1);
 
   const addExchange = (exchange: Exchange): void => {
     setConnectedExchanges([...get(connectedExchanges), exchange]);
   };
 
-  const editExchange = ({
-    exchange: { location, name: oldName, krakenAccountType },
-    newName,
-  }: EditExchange): void => {
+  const editExchange = ({ exchange: { krakenAccountType, location, name: oldName }, newName }: EditExchange): void => {
     const exchanges = [...get(connectedExchanges)];
     const name = newName ?? oldName;
-    const index = exchanges.findIndex(
-      value => value.name === oldName && value.location === location,
-    );
+    const index = exchanges.findIndex(value => value.name === oldName && value.location === location);
     exchanges[index] = {
       ...exchanges[index],
-      name,
-      location,
       krakenAccountType,
+      location,
+      name,
     };
     setConnectedExchanges(exchanges);
   };
@@ -52,12 +44,11 @@ export const useExchangesStore = defineStore('exchanges', () => {
       const connected = get(connectedExchanges);
       if (success) {
         const exchangeIndex = connected.findIndex(
-          ({ location, name }) =>
-            name === exchange.name && location === exchange.location,
+          ({ location, name }) => name === exchange.name && location === exchange.location,
         );
         assert(
           exchangeIndex >= 0,
-          `${exchange} not found in ${connected
+          `${exchange.location} not found in ${connected
             .map(exchange => `${exchange.name} on ${exchange.location}`)
             .join(', ')}`,
         );
@@ -65,8 +56,7 @@ export const useExchangesStore = defineStore('exchanges', () => {
         const exchanges = [...connected];
         const balances = { ...get(exchangeBalances) };
         const index = exchanges.findIndex(
-          ({ location, name }) =>
-            name === exchange.name && location === exchange.location,
+          ({ location, name }) => name === exchange.name && location === exchange.location,
         );
         // can't modify in place or else the vue reactivity does not work
         exchanges.splice(index, 1);
@@ -77,8 +67,8 @@ export const useExchangesStore = defineStore('exchanges', () => {
         // if multiple keys exist for the deleted exchange, re-fetch and update the balances for the location
         if (exchanges.some(exch => exch.location === exchange.location)) {
           await fetchExchangeBalances({
-            location: exchange.location,
             ignoreCache: false,
+            location: exchange.location,
           });
         }
       }
@@ -87,42 +77,40 @@ export const useExchangesStore = defineStore('exchanges', () => {
     }
     catch (error: any) {
       setMessage({
-        title: t('actions.balances.exchange_removal.title'),
         description: t('actions.balances.exchange_removal.description', {
-          exchange,
           error: error.message,
+          exchange,
         }),
+        title: t('actions.balances.exchange_removal.title'),
       });
       return false;
     }
   };
 
-  const setupExchange = async ({
-    exchange,
-    edit,
-  }: ExchangeSetupPayload): Promise<boolean> => {
+  const setupExchange = async (exchange: ExchangeFormData): Promise<boolean> => {
     try {
-      const success = await querySetupExchange(exchange, edit);
+      const success = await callSetupExchange(exchange);
+      const { krakenAccountType, location, mode, name, newName } = exchange;
       const exchangeEntry: Exchange = {
-        name: exchange.name,
-        location: exchange.location,
-        krakenAccountType: exchange.krakenAccountType ?? undefined,
+        krakenAccountType,
+        location,
+        name,
       };
 
-      if (!edit) {
+      if (mode !== 'edit') {
         addExchange(exchangeEntry);
       }
       else {
         editExchange({
           exchange: exchangeEntry,
-          newName: exchange.newName,
+          newName,
         });
       }
 
       startPromise(
         fetchExchangeBalances({
-          location: exchange.location,
           ignoreCache: false,
+          location,
         }),
       );
 
@@ -130,21 +118,21 @@ export const useExchangesStore = defineStore('exchanges', () => {
     }
     catch (error: any) {
       setMessage({
-        title: t('actions.balances.exchange_setup.title').toString(),
         description: t('actions.balances.exchange_setup.description', {
-          exchange: exchange.location,
           error: error.message,
-        }).toString(),
+          exchange: exchange.location,
+        }),
+        title: t('actions.balances.exchange_setup.title'),
       });
       return false;
     }
   };
 
   return {
-    connectedExchanges,
-    getExchangeNonce,
     addExchange,
+    connectedExchanges,
     editExchange,
+    getExchangeNonce,
     removeExchange,
     setupExchange,
   };

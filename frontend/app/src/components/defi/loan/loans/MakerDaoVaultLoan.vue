@@ -1,17 +1,24 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
-import type { BigNumber } from '@rotki/common';
+import { type BigNumber, Blockchain, HistoryEventEntryType } from '@rotki/common';
+import { useScramble } from '@/composables/scramble';
+import { usePremium } from '@/composables/premium';
+import HistoryEventsView from '@/components/history/events/HistoryEventsView.vue';
+import PremiumCard from '@/components/display/PremiumCard.vue';
+import MakerDaoVaultDebtDetails from '@/components/defi/loan/loans/makerdao/MakerDaoVaultDebtDetails.vue';
+import LoanDebt from '@/components/defi/loan/LoanDebt.vue';
+import MakerDaoVaultLiquidation from '@/components/defi/loan/loans/makerdao/MakerDaoVaultLiquidation.vue';
+import MakerDaoVaultCollateral from '@/components/defi/loan/loans/makerdao/MakerDaoVaultCollateral.vue';
+import LoanHeader from '@/components/defi/loan/LoanHeader.vue';
 import type { MakerDAOVaultModel } from '@/types/defi/maker';
 
 const props = defineProps<{
   vault: MakerDAOVaultModel;
 }>();
 
-const { premium } = storeToRefs(usePremiumStore());
+const premium = usePremium();
 const { t } = useI18n();
 
-const totalInterestOwed: ComputedRef<BigNumber> = computed(() => {
+const totalInterestOwed = computed<BigNumber>(() => {
   const makerVault = props.vault;
   if ('totalInterestOwed' in makerVault)
     return makerVault.totalInterestOwed;
@@ -26,8 +33,8 @@ const { scrambleIdentifier } = useScramble();
 const header = computed(() => {
   const makerVault = props.vault;
   return {
-    identifier: scrambleIdentifier(makerVault.identifier),
     collateralType: makerVault.collateralType,
+    identifier: scrambleIdentifier(makerVault.identifier),
   };
 });
 

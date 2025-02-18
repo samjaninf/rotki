@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const includeFeesInCostBasis = ref(true);
-const { includeFeesInCostBasis: enabled } = storeToRefs(
-  useAccountingSettingsStore(),
-);
+const { includeFeesInCostBasis: enabled } = storeToRefs(useAccountingSettingsStore());
 
 onMounted(() => {
   set(includeFeesInCostBasis, get(enabled));
@@ -21,19 +22,17 @@ function getSuccessMessage(enabled: boolean) {
   <SettingsOption
     #default="{ error, success, update }"
     setting="includeFeesInCostBasis"
-    :error-message="
-      t('account_settings.messages.include_fees_in_cost_basis.error')
-    "
+    :error-message="t('account_settings.messages.include_fees_in_cost_basis.error')"
     :success-message="getSuccessMessage"
   >
     <RuiSwitch
       v-model="includeFeesInCostBasis"
-      class="accounting-settings__include-fees-in-cost-basis"
+      data-cy="include-fees-in-cost-basis-switch"
       :success-messages="success"
       :error-messages="error"
       :label="t('accounting_settings.trade.labels.include_fees_in_cost_basis')"
       color="primary"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

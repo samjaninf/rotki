@@ -34,7 +34,7 @@ class PNL:
         if isinstance(x, FVal | int):
             return PNL(taxable=self.taxable + x, free=self.free + x)
 
-        raise TypeError(f'Cant add type {type(x)} to PNL')
+        raise TypeError(f"Can't add type {type(x)} to PNL")
 
     __radd__ = __add__
 
@@ -44,7 +44,7 @@ class PNL:
         if isinstance(x, FVal | int):
             return PNL(taxable=self.taxable - x, free=self.free - x)
 
-        raise TypeError(f'Cant sub type {type(x)} from PNL')
+        raise TypeError(f"Can't sub type {type(x)} from PNL")
 
     __rsub__ = __sub__
 
@@ -71,8 +71,7 @@ class PnlTotals(MutableMapping):
         self.totals = defaultdict(PNL)
 
     def __repr__(self) -> str:
-        result = ','.join(f'{event_type}: {totals}' for event_type, totals in self.totals.items())
-        return result
+        return ','.join(f'{event_type}: {totals}' for event_type, totals in self.totals.items())
 
     def __getitem__(self, key: 'AccountingEventType') -> PNL:
         return self.totals[key]

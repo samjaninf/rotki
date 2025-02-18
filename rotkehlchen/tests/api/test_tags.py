@@ -1,4 +1,5 @@
 from http import HTTPStatus
+from typing import TYPE_CHECKING, Final
 
 import pytest
 import requests
@@ -7,16 +8,21 @@ from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
     assert_proper_response,
+    assert_proper_response_with_result,
     assert_proper_sync_response_with_result,
 )
 from rotkehlchen.tests.utils.factories import UNIT_BTC_ADDRESS1, UNIT_BTC_ADDRESS2
 from rotkehlchen.tests.utils.rotkehlchen import setup_balances
-from rotkehlchen.types import SupportedBlockchain
+from rotkehlchen.types import ChainType, HexColorCode
+
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
 
 
-def test_add_and_query_tags(
-        rotkehlchen_api_server,
-):
+TEST_ADDRESS: Final = '0xc37b40ABdB939635068d3c5f13E7faF686F03B65'
+
+
+def test_add_and_query_tags(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that adding and querying tags via the API works fine"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     response = requests.get(
@@ -106,12 +112,10 @@ def test_add_and_query_tags(
     assert db_response['private'].serialize() == tag2
 
 
-def test_add_tag_without_description(
-        rotkehlchen_api_server,
-):
+def test_add_tag_without_description(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that adding a tag without a description works"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
-    tag1 = {
+    tag1: dict[str, str | None] = {
         'name': 'Public',
         'background_color': 'ffffff',
         'foreground_color': '000000',
@@ -149,12 +153,12 @@ def test_add_tag_without_description(
 
 @pytest.mark.parametrize('verb', ['PUT', 'PATCH'])
 def test_add_edit_tag_errors(
-        rotkehlchen_api_server,
-        verb,
-):
+        rotkehlchen_api_server: 'APIServer',
+        verb: str,
+) -> None:
     """Test that errors in input data while adding/editing a tag are handled correctly"""
     # Name missing
-    tag = {
+    tag: dict[str, str | int | float] = {
         'description': 'My public accounts',
         'background_color': 'ffffff',
         'foreground_color': '000000',
@@ -211,7 +215,7 @@ def test_add_edit_tag_errors(
         status_code=HTTPStatus.BAD_REQUEST,
     )
 
-    model_tag = {
+    model_tag: dict[str, str | int | float] = {
         'name': 'Public',
         'description': 'My public accounts',
         'background_color': 'ffffff',
@@ -306,9 +310,7 @@ def test_add_edit_tag_errors(
         )
 
 
-def test_edit_tags(
-        rotkehlchen_api_server,
-):
+def test_edit_tags(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that editing a tag via the REST API works fine"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
 
@@ -470,9 +472,7 @@ def test_edit_tags(
     assert db_response['private'].serialize() == tag2
 
 
-def test_delete_tags(
-        rotkehlchen_api_server,
-):
+def test_delete_tags(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that deleting a tag via the REST API works fine"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
 
@@ -567,12 +567,10 @@ def test_delete_tags(
     assert db_response['private'].serialize() == tag2
 
 
-def test_delete_tag_errors(
-        rotkehlchen_api_server,
-):
+def test_delete_tag_errors(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that errors in input data while deleting a tag are handled correctly"""
     # Name missing
-    data = {}
+    data: dict[str, float] = {}
     response = requests.delete(
         api_url_for(
             rotkehlchen_api_server,
@@ -600,7 +598,7 @@ def test_delete_tag_errors(
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
-def test_delete_utilized_tag(rotkehlchen_api_server):
+def test_delete_utilized_tag(rotkehlchen_api_server: 'APIServer') -> None:
     """
     Test that deleting a tag that is already utilized by an account
     also removes it from the account"""
@@ -681,12 +679,12 @@ def test_delete_utilized_tag(rotkehlchen_api_server):
     cursor = rotki.data.db.conn.cursor()
     query = cursor.execute('SELECT object_reference, tag_name FROM tag_mappings;').fetchall()
     assert len(query) == 1
-    assert query[0][0] == f'{SupportedBlockchain.BITCOIN.value}{UNIT_BTC_ADDRESS1}'
+    assert query[0][0] == UNIT_BTC_ADDRESS1
     assert query[0][1] == 'public'
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
-def test_delete_all_tags(rotkehlchen_api_server):
+def test_delete_all_tags(rotkehlchen_api_server: 'APIServer') -> None:
     """Tests that trying to delete all remaining tags of a blockchain account works."""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     # Add a tag
@@ -695,8 +693,8 @@ def test_delete_all_tags(rotkehlchen_api_server):
             write_cursor=cursor,
             name='public',
             description='My public accounts',
-            background_color='ffffff',
-            foreground_color='000000',
+            background_color=HexColorCode('ffffff'),
+            foreground_color=HexColorCode('000000'),
         )
     # Add an account with a tag
     btc_balances = ['10000']
@@ -749,3 +747,77 @@ def test_delete_all_tags(rotkehlchen_api_server):
     with rotki.data.db.conn.read_ctx() as cursor:
         # Also check that the tag mapping is gone from the db
         assert len(cursor.execute('SELECT * FROM tag_mappings;').fetchall()) == 0
+
+
+@pytest.mark.parametrize('ethereum_accounts', [[TEST_ADDRESS]])
+@pytest.mark.parametrize('gnosis_accounts', [[TEST_ADDRESS]])
+@pytest.mark.parametrize('optimism_accounts', [[TEST_ADDRESS]])
+@pytest.mark.parametrize('base_accounts', [[TEST_ADDRESS]])
+def test_editing_chain_type_tags(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that modifying the label and tags of an account using the
+    chain type account endpoint works correctly removing previous values
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    # setup tags and addresses
+    with rotki.data.db.conn.read_ctx() as cursor:
+        for key in ('public', 'ledger', 'validators'):
+            rotki.data.db.add_tag(
+                write_cursor=cursor,
+                name=f'tag_{key}',
+                description=f'My {key} accounts',
+                background_color=HexColorCode('ffffff'),
+                foreground_color=HexColorCode('000000'),
+            )
+
+    # notice that the address is in base also but we don't add a label there.
+    # when editing the account we expect base to get a label set.
+    for blockchain in ('eth', 'gnosis', 'optimism'):
+        response = requests.patch(
+            api_url_for(
+                rotkehlchen_api_server,
+                'blockchainsaccountsresource',
+                blockchain=blockchain,
+            ), json={
+                'accounts': [{
+                    'address': TEST_ADDRESS,
+                    'label': 'my ledger address',
+                    'tags': ['tag_public', 'tag_ledger'],
+                }],
+            },
+        )
+        assert_proper_response(response)
+
+    # edit the tag and label for all chains
+    response = requests.patch(
+        api_url_for(
+            rotkehlchen_api_server,
+            'chaintypeaccountresource',
+            chain_type=ChainType.EVM.serialize(),
+        ),
+        json={
+            'accounts': [{
+                'address': TEST_ADDRESS,
+                'label': 'validators',
+                'tags': ['tag_validators'],
+            }],
+            'async_query': True,
+        },
+    )
+    assert_proper_response_with_result(
+        response=response,
+        rotkehlchen_api_server=rotkehlchen_api_server,
+        async_query=True,
+    )
+
+    for chain in ('ETH', 'optimism', 'gnosis', 'base'):
+        response = requests.get(
+            api_url_for(
+                rotkehlchen_api_server,
+                'blockchainsaccountsresource',
+                blockchain=chain,
+            ),
+        )
+        result = assert_proper_sync_response_with_result(response)
+        assert result[0]['address'] == TEST_ADDRESS
+        assert result[0]['tags'] == ['tag_validators']
+        assert result[0]['label'] == 'validators'

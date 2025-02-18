@@ -1,8 +1,7 @@
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
-from rotkehlchen.assets.utils import set_token_protocol_if_missing
 from rotkehlchen.chain.ethereum.modules.uniswap.v2.constants import SWAP_SIGNATURE as SWAP_V1
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
@@ -27,19 +26,20 @@ from rotkehlchen.chain.evm.decoding.velodrome.constants import (
 )
 from rotkehlchen.chain.evm.decoding.velodrome.velodrome_cache import (
     query_velodrome_like_data,
-    save_velodrome_data_to_cache,
 )
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
+from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CacheType, ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.base.node_inquirer import BaseInquirer
     from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
     from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
     from rotkehlchen.chain.optimism.manager import OptimismInquirer
+    from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
@@ -70,17 +70,19 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
             evm_inquirer=evm_inquirer,
             cache_type_to_check_for_freshness=pool_cache_type,
             query_data_method=query_velodrome_like_data,
-            save_data_to_cache_method=save_velodrome_data_to_cache,
             read_data_from_cache_method=read_fn,
         )
         self.counterparty = counterparty
         self.pool_token_protocol = pool_token_protocol
-        self.protocol_addresses = routers.union(self.pools)  # (velo/aero)drome addresses that appear on decoded events  # noqa: E501
+        self.protocol_addresses = routers  # protocol_addresses are updated with pools in post_cache_update_callback  # noqa: E501
 
     @property
     def pools(self) -> set[ChecksumEvmAddress]:
         assert isinstance(self.cache_data[0], set), f'{self.counterparty} Decoder cache_data[0] is not a set'  # noqa: E501
         return self.cache_data[0]
+
+    def post_cache_update_callback(self) -> None:
+        self.protocol_addresses.update(self.pools)
 
     def _decode_add_liquidity_events(
             self,
@@ -102,9 +104,9 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
                 event.address in self.pools
             ):
                 event.event_type = HistoryEventType.DEPOSIT
-                event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                event.event_subtype = HistoryEventSubType.DEPOSIT_FOR_WRAPPED
                 event.counterparty = self.counterparty
-                event.notes = f'Deposit {event.balance.amount} {crypto_asset.symbol} in {self.counterparty} pool {event.address}'  # noqa: E501
+                event.notes = f'Deposit {event.amount} {crypto_asset.symbol} in {self.counterparty} pool {event.address}'  # noqa: E501
                 event.product = EvmProduct.POOL
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
@@ -113,11 +115,11 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
             ):
                 event.event_subtype = HistoryEventSubType.RECEIVE_WRAPPED
                 event.counterparty = self.counterparty
-                event.notes = f'Receive {event.balance.amount} {crypto_asset.symbol} after depositing in {self.counterparty} pool {tx_log.address}'  # noqa: E501
+                event.notes = f'Receive {event.amount} {crypto_asset.symbol} after depositing in {self.counterparty} pool {tx_log.address}'  # noqa: E501
                 event.product = EvmProduct.POOL
-                set_token_protocol_if_missing(
-                    evm_token=event.asset.resolve_to_evm_token(),
-                    protocol=self.pool_token_protocol,
+                GlobalDBHandler.set_token_protocol_if_missing(
+                    token=event.asset.resolve_to_evm_token(),
+                    new_protocol=self.pool_token_protocol,
                 )
 
         return DEFAULT_DECODING_OUTPUT
@@ -137,7 +139,7 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
             ):
                 event.event_subtype = HistoryEventSubType.RETURN_WRAPPED
                 event.counterparty = self.counterparty
-                event.notes = f'Return {event.balance.amount} {crypto_asset.symbol}'
+                event.notes = f'Return {event.amount} {crypto_asset.symbol}'
                 event.product = EvmProduct.POOL
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
@@ -145,9 +147,9 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
                 event.address in self.pools
             ):
                 event.event_type = HistoryEventType.WITHDRAWAL
-                event.event_subtype = HistoryEventSubType.REMOVE_ASSET
+                event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.counterparty = self.counterparty
-                event.notes = f'Remove {event.balance.amount} {crypto_asset.symbol} from {self.counterparty} pool {tx_log.address}'  # noqa: E501
+                event.notes = f'Remove {event.amount} {crypto_asset.symbol} from {self.counterparty} pool {tx_log.address}'  # noqa: E501
                 event.product = EvmProduct.POOL
 
         return DEFAULT_DECODING_OUTPUT
@@ -157,25 +159,29 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
         spend_event, receive_event = None, None
         for event in context.decoded_events:
             crypto_asset = event.asset.resolve_to_crypto_asset()
-            if (
+            if ((
                 event.event_type == HistoryEventType.SPEND and
-                event.event_subtype == HistoryEventSubType.NONE and
-                event.address in self.protocol_addresses
-            ):
+                event.event_subtype == HistoryEventSubType.NONE
+            ) or ((
+                event.event_type == HistoryEventType.TRADE and
+                event.event_subtype == HistoryEventSubType.SPEND
+            ) and event.address in self.protocol_addresses)):
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.SPEND
                 event.counterparty = self.counterparty
-                event.notes = f'Swap {event.balance.amount} {crypto_asset.symbol} in {self.counterparty}'  # noqa: E501
+                event.notes = f'Swap {event.amount} {crypto_asset.symbol} in {self.counterparty}'
                 spend_event = event
-            elif (
+            elif ((
                 event.event_type == HistoryEventType.RECEIVE and
-                event.event_subtype == HistoryEventSubType.NONE and
-                event.address in self.protocol_addresses
-            ):
+                event.event_subtype == HistoryEventSubType.NONE
+            ) or ((
+                event.event_type == HistoryEventType.TRADE and
+                event.event_subtype == HistoryEventSubType.RECEIVE
+            ) and event.address in self.protocol_addresses)):
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
                 event.counterparty = self.counterparty
-                event.notes = f'Receive {event.balance.amount} {crypto_asset.symbol} as the result of a swap in {self.counterparty}'  # noqa: E501
+                event.notes = f'Receive {event.amount} {crypto_asset.symbol} as the result of a swap in {self.counterparty}'  # noqa: E501
                 receive_event = event
 
         if spend_event is None or receive_event is None:
@@ -218,16 +224,16 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
         if context.tx_log.topics[0] not in (GAUGE_DEPOSIT_V2, GAUGE_WITHDRAW_V2, CLAIM_REWARDS_V2):
             return DEFAULT_DECODING_OUTPUT
 
-        user_or_contract_address = hex_or_bytes_to_address(context.tx_log.topics[1])
+        user_or_contract_address = bytes_to_address(context.tx_log.topics[1])
         gauge_address = context.tx_log.address
-        raw_amount = hex_or_bytes_to_int(context.tx_log.data)
+        raw_amount = int.from_bytes(context.tx_log.data)
         found_event_modifying_balances = False
         for event in context.decoded_events:
             crypto_asset = event.asset.resolve_to_crypto_asset()
             if (
                 event.location_label == user_or_contract_address and
                 event.address == gauge_address and
-                event.balance.amount == asset_normalized_value(amount=raw_amount, asset=crypto_asset)  # noqa: E501
+                event.amount == asset_normalized_value(amount=raw_amount, asset=crypto_asset)
             ):
                 event.counterparty = self.counterparty
                 event.product = EvmProduct.GAUGE
@@ -235,20 +241,18 @@ class VelodromeLikeDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixi
                 if context.tx_log.topics[0] == GAUGE_DEPOSIT_V2:
                     event.event_type = HistoryEventType.DEPOSIT
                     event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
-                    event.notes = f'Deposit {event.balance.amount} {crypto_asset.symbol} into {gauge_address} {self.counterparty} gauge'  # noqa: E501
-                    set_token_protocol_if_missing(event.asset.resolve_to_evm_token(), self.pool_token_protocol)  # noqa: E501
+                    event.notes = f'Deposit {event.amount} {crypto_asset.symbol} into {gauge_address} {self.counterparty} gauge'  # noqa: E501
+                    GlobalDBHandler.set_token_protocol_if_missing(
+                        token=event.asset.resolve_to_evm_token(),
+                        new_protocol=self.pool_token_protocol,
+                    )
                 elif context.tx_log.topics[0] == GAUGE_WITHDRAW_V2:
                     event.event_type = HistoryEventType.WITHDRAWAL
                     event.event_subtype = HistoryEventSubType.REMOVE_ASSET
-                    event.notes = f'Withdraw {event.balance.amount} {crypto_asset.symbol} from {gauge_address} {self.counterparty} gauge'  # noqa: E501
+                    event.notes = f'Withdraw {event.amount} {crypto_asset.symbol} from {gauge_address} {self.counterparty} gauge'  # noqa: E501
                 else:  # CLAIM_REWARDS
                     event.event_type = HistoryEventType.RECEIVE
                     event.event_subtype = HistoryEventSubType.REWARD
-                    event.notes = f'Receive {event.balance.amount} {crypto_asset.symbol} rewards from {gauge_address} {self.counterparty} gauge'  # noqa: E501
+                    event.notes = f'Receive {event.amount} {crypto_asset.symbol} rewards from {gauge_address} {self.counterparty} gauge'  # noqa: E501
 
         return DecodingOutput(refresh_balances=found_event_modifying_balances)
-
-    def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
-        mapping: dict[ChecksumEvmAddress, tuple[Any, ...]] = dict.fromkeys(self.pools, (self._decode_pool_events,))  # noqa: E501
-        mapping.update(dict.fromkeys(self.gauges, (self._decode_gauge_events,)))
-        return mapping

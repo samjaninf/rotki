@@ -1,5 +1,10 @@
 <script setup lang="ts">
+import { checkIfDevelopment } from '@shared/utils';
 import { api } from '@/services/rotkehlchen-api';
+import { logger } from '@/utils/logging';
+import { useRandomStepper } from '@/composables/random-stepper';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import FadeTransition from '@/components/helper/FadeTransition.vue';
 import type { WelcomeMessage } from '@/types/dynamic-messages';
 
 const props = defineProps<{
@@ -8,20 +13,14 @@ const props = defineProps<{
 
 const svg = ref();
 
-const { step, steps, onNavigate, onPause, onResume } = useRandomStepper(props.messages.length);
+const { onNavigate, onPause, onResume, step, steps } = useRandomStepper(props.messages.length);
 
 const activeItem = computed(() => props.messages[get(step) - 1]);
 
 async function fetchSvg() {
   const url = get(activeItem).icon;
 
-  if (
-    !url
-    || !(
-      checkIfDevelopment()
-      || url.startsWith(`https://raw.githubusercontent.com/rotki/data`)
-    )
-  )
+  if (!url || !(checkIfDevelopment() || url.startsWith(`https://raw.githubusercontent.com/rotki/data`)))
     return;
 
   try {
@@ -43,15 +42,13 @@ onMounted(async () => {
   if (get(activeItem)?.icon)
     set(svg, await fetchSvg());
 });
-
-const css = useCssModule();
 </script>
 
 <template>
   <div
     v-if="activeItem"
     class="flex flex-col items-start gap-4 w-full p-6 overflow-hidden rounded-lg"
-    :class="css.card"
+    :class="$style.card"
   >
     <FadeTransition tag="div">
       <div
@@ -66,7 +63,7 @@ const css = useCssModule();
         >
           <div
             class="object-contain text-rui-primary h-6 w-6"
-            :class="css.icon"
+            :class="$style.icon"
             v-html="svg"
           />
         </div>
@@ -97,11 +94,11 @@ const css = useCssModule();
 
       <RuiFooterStepper
         v-if="steps > 1"
-        :value="step"
+        :model-value="step"
         :pages="steps"
         variant="bullet"
         hide-buttons
-        @input="onNavigate($event)"
+        @update:model-value="onNavigate($event)"
       />
     </div>
   </div>

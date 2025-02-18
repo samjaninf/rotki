@@ -11,25 +11,31 @@ concurrency:
 env:
   PYTHON_MACOS: 11
 
+permissions: {}
+
 jobs:
   create_draft:
     name: Create Draft
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Get Release Version
-        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> "$GITHUB_ENV"
       - name: Generate changelog
         id: change_log
         run: |
-          version=$(echo $RELEASE_VERSION | sed 's/^v//g')
-          echo 'changes<<EOF' >> $GITHUB_OUTPUT
-          python3 tools/scripts/generate_changelog.py -f docs/changelog.rst -v $version >> $GITHUB_OUTPUT
-          echo 'EOF' >> $GITHUB_OUTPUT
-          echo "version=${version}" >> $GITHUB_OUTPUT
+          version=$(echo "$RELEASE_VERSION" | sed 's/^v//g')
+          echo 'changes<<EOF' >> "$GITHUB_OUTPUT"
+          python3 tools/scripts/generate_changelog.py -f docs/changelog.rst -v "$version" >> "$GITHUB_OUTPUT"
+          echo 'EOF' >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: Create Release
         id: create_release
         uses: rotki/action-gh-release@v2
@@ -64,7 +70,7 @@ jobs:
               - [Windows executable](https://github.com/rotki/rotki/releases/download/${{ env.RELEASE_VERSION }}/rotki-win32_x64-${{ env.RELEASE_VERSION }}.exe)
               - [Standalone Backend](https://github.com/rotki/rotki/releases/download/${{ env.RELEASE_VERSION }}/rotki-core-${{ steps.change_log.outputs.version }}-windows.exe)
             
-            Optionally, you can also [verify the integrity](https://rotki.readthedocs.io/en/latest/installation_guide.html#verifying-integrity) of the aforementioned binaries using the following checksums:
+            Optionally, you can also [verify the integrity](https://docs.rotki.com/requirement-and-installation/packaged-binaries.html#verifying-integrity) of the aforementioned binaries using the following checksums:
             
             - **Linux**
               - [AppImage checksum](https://github.com/rotki/rotki/releases/download/${{ env.RELEASE_VERSION }}/rotki-linux_x86_64-${{ env.RELEASE_VERSION }}.AppImage.sha512)
@@ -102,17 +108,22 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: ubuntu-20.04
     needs: create_draft
+    permissions:
+      id-token: write
+      attestations: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Load env
         uses: rotki/action-env@v2
         with:
           env_file: .github/.env.ci
       - name: Get Release Version
-        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> "$GITHUB_ENV"
       - name: Set up python
         uses: actions/setup-python@v5
         with:
@@ -130,7 +141,7 @@ jobs:
         id: pnpm-cache
         shell: bash
         run: |
-          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+          echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
       - name: Setup pnpm cache
         uses: actions/cache@v4
         with:
@@ -145,7 +156,7 @@ jobs:
         id: packaging
         run: |
           echo "::group::packaging dependencies"
-          pip3 install --upgrade uv==${{env.UV_VERSION}}
+          pip3 install --upgrade uv=="${UV_VERSION}"
           uv pip install --system -r requirements_packaging.txt
           echo "::endgroup::"
           ./package.py --build full
@@ -158,6 +169,14 @@ jobs:
           files: |
             dist/*.sha512
             dist/rotki-core-*-linux
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/rotki-core-*-linux
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.tar.xz
+            
 
   macos:
     name: 'Build macOS binary ${{ matrix.os.arch }}'
@@ -169,7 +188,7 @@ jobs:
             arch: 'arm64'
             target: 11
             platform: macosx-11.0-arm64
-          - runner: macos-12
+          - runner: macos-13
             arch: 'x86_64'
             target: 10.9
             platform: macosx-10.9-x86_64
@@ -180,14 +199,20 @@ jobs:
       _PYTHON_HOST_PLATFORM: ${{ matrix.os.platform }}
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.os.target }}
       CMAKE_OSX_ARCHITECTURES: ${{ matrix.os.arch }}
+      NODE_OPTIONS: --max-old-space-size=4096
     environment: macos_sign
     runs-on: ${{ matrix.os.runner }}
     needs: create_draft
+    permissions:
+      id-token: write
+      attestations: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Load env
         uses: rotki/action-env@v2
         with:
@@ -208,7 +233,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.os.arch }}-pip-
       - name: Set up python
-        run: packaging/setup-macos-python.sh ${{ env.PYTHON_VERSION }} ${{ env.PYTHON_MACOS }}
+        run: packaging/setup-macos-python.sh "${PYTHON_VERSION}" "${PYTHON_MACOS}"
       - name: Setup node
         uses: actions/setup-node@v4
         with:
@@ -221,7 +246,7 @@ jobs:
         id: pnpm-cache
         shell: bash
         run: |
-          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+          echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
       - name: Setup pnpm cache
         uses: actions/cache@v4
         with:
@@ -236,7 +261,7 @@ jobs:
         id: packaging
         run: |
           echo "::group::packaging dependencies"
-          pip3 install --upgrade uv==${{env.UV_VERSION}}
+          pip3 install --upgrade uv=="${UV_VERSION}"
           pip3 install virtualenv
           python3 -m virtualenv ~/venv
           source ~/venv/bin/activate
@@ -249,6 +274,13 @@ jobs:
           IDENTITY: ${{ secrets.IDENTITY }}
           APPLEID: ${{ secrets.APPLEID }}
           APPLEIDPASS: ${{ secrets.APPLEIDPASS }}
+      - name: Append architecture to latest-mac.yml
+        run: mv dist/latest-mac.yml dist/latest-mac-${{ matrix.os.arch }}.yml
+      - name: upload latest-mac.yml
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-mac-${{ matrix.os.arch }}
+          path: dist/latest-mac-*.yml
       - name: Upload to release
         uses: rotki/action-gh-release@v2
         with:
@@ -257,7 +289,46 @@ jobs:
           draft: true
           files: |
             dist/*.sha512
-            dist/rotki-core-*-macos.zip
+            dist/rotki-core-*-macos-*.zip
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.dmg
+
+  macos_updater:
+    name: Merge latest-mac.yml
+    needs: macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: 'frontend/.nvmrc'
+      - name: download latest-mac.yml artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: latest-mac
+          pattern: latest-mac-*
+          merge-multiple: true
+      - name: Merge latest-mac.yml
+        run: |
+          npm i js-yaml consola --prefix ./.github/scripts         
+          node ./.github/scripts/merge-latest.mjs latest-mac/latest-mac-x86_64.yml latest-mac/latest-mac-arm64.yml latest-mac.yml
+      - name: Upload to release
+        uses: rotki/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          name: Rotki ${{ env.RELEASE_VERSION }} -
+          draft: true
+          files: latest-mac.yml
 
   windows:
     name: 'Build windows binary'
@@ -268,17 +339,22 @@ jobs:
     runs-on: windows-latest
     environment: windows_sign
     needs: create_draft
+    permissions:
+      id-token: write
+      attestations: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Load env
         uses: rotki/action-env@v2
         with:
           env_file: .github/.env.ci
       - name: Get Release Version
-        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> "$GITHUB_ENV"
       - name: Set up python
         uses: actions/setup-python@v5
         with:
@@ -296,7 +372,7 @@ jobs:
         id: pnpm-cache
         shell: bash
         run: |
-          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+          echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
       - name: Setup pnpm cache
         uses: actions/cache@v4
         with:
@@ -319,7 +395,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
         run: |
           echo ::group::"packaging dependencies"
-          pip3 install --upgrade uv==${{env.UV_VERSION}}
+          pip3 install --upgrade uv=="${env:UV_VERSION}"
           uv pip install --system -r requirements_packaging.txt
           echo ::endgroup::
           python .\package.py --build full
@@ -333,36 +409,66 @@ jobs:
           files: |
             dist/*.sha512
             dist/rotki-core-*-windows.exe
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/*.exe
 
   docker:
     name: 'Build docker images'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform.runner }}
     environment: docker
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            runner: ubuntu-24.04
+          - name: linux/arm64
+            runner: ubuntu-24.04-arm
+    permissions:
+      id-token: write
+      attestations: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          persist-credentials: false
+
+      - name: Prepare
+        id: prepare
+        run: |
+          platform=${{ matrix.platform.name }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ github.repository }}
+
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Rotki Version
         id: rotki_version
-        run: echo "version=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
-      - name: Build and push
+        run: echo "version=${GITHUB_REF#refs/*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push by digest
         id: docker_build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ matrix.platform.name }}
+          provenance: mode=max
           tags: |
             ${{ github.repository }}:${{ steps.rotki_version.outputs.version }}
           build-args: |
@@ -370,5 +476,61 @@ jobs:
             ROTKI_VERSION=${{ steps.rotki_version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Image digest
-        run: echo ${{ steps.docker_build.outputs.digest }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,"name=${{ github.repository }}",push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-merge:
+    runs-on: ubuntu-latest
+    needs:
+      - docker
+    environment: docker
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ github.repository }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect "${{ github.repository }}:${{ steps.meta.outputs.version }}"

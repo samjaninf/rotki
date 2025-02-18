@@ -1,4 +1,7 @@
 <script lang="ts" setup>
+import { usePremium } from '@/composables/premium';
+import PremiumLock from '@/components/premium/PremiumLock.vue';
+
 withDefaults(
   defineProps<{
     premiumOnly?: boolean;

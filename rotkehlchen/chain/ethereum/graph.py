@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final
 
@@ -27,26 +26,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-
-GRAPH_QUERY_LIMIT: Final = 1000
-GRAPH_QUERY_SKIP_LIMIT: Final = 5000
-RE_MULTIPLE_WHITESPACE: Final = re.compile(r'\s+')
 RETRY_BACKOFF_FACTOR: Final = 0.2
 THEGRAPH_BASE_URL: Final = 'https://gateway-arbitrum.network.thegraph.com/api/'
-SUBGRAPH_REMOTE_ERROR_MSG = (
-    'Failed to request the {protocol} subgraph due to {error_msg}. '
-    'All the deposits and withdrawals history queries are not functioning until this is fixed. '
-    "Probably will get fixed with time. If not report it to rotki's support channel"
-)
-
-
-def format_query_indentation(querystr: str) -> str:
-    """Format a triple quote and indented GraphQL query by:
-    - Removing returns
-    - Replacing multiple inner whitespaces with one
-    - Removing leading and trailing whitespaces
-    """
-    return RE_MULTIPLE_WHITESPACE.sub(' ', querystr).strip()
 
 
 class Graph(ExternalServiceWithApiKey):
@@ -65,7 +46,6 @@ class Graph(ExternalServiceWithApiKey):
         - May raise requests.RequestException if there is a problem connecting to the subgraph
         """
         super().__init__(database=database, service_name=ExternalService.THEGRAPH)
-        self.db = database
         self.subgraph_id = subgraph_id
         self.warning_given = False
         self.graph_label = label
@@ -82,7 +62,7 @@ class Graph(ExternalServiceWithApiKey):
         if (api_key := self._get_api_key()) is None and self.graph_label == CPT_ENS:
             api_key = ApiKey('d943ea1af415001154223fdf46b6f193')  # key created by yabir enabled for ens  # noqa: E501
             if self.warning_given is False:
-                self.db.msg_aggregator.add_message(  # type: ignore[union-attr]  # self.db is not None here
+                self.db.msg_aggregator.add_message(
                     message_type=WSMessageType.MISSING_API_KEY,
                     data={
                         'service': ExternalService.THEGRAPH.serialize(),
@@ -122,7 +102,7 @@ class Graph(ExternalServiceWithApiKey):
         are no retries left.
         - APIKeyNotConfigured
         """
-        prefix = ''
+        prefix, result = '', None
         if param_types is not None:
             prefix = 'query '
             prefix += json.dumps(param_types).replace('"', '').replace('{', '(').replace('}', ')')
@@ -145,6 +125,8 @@ class Graph(ExternalServiceWithApiKey):
                     raise RemoteError(f'{base_msg} because subgraph is not authorized. {error_msg}') from e  # noqa: E501
                 if 'invalid bearer token: invalid auth token' in error_msg:
                     raise RemoteError(f'{base_msg} because the token is not valid. {error_msg}') from e  # noqa: E501
+                if 'malformed API key' in error_msg:
+                    raise RemoteError(f'{base_msg} because the given API key is malformed') from e
 
                 # we retry again
                 retry_base_msg = base_msg + f' with payload {querystr} due to {error_msg}'
@@ -170,5 +152,6 @@ class Graph(ExternalServiceWithApiKey):
             else:
                 break
 
-        log.debug('Got result from The Graph query')
+        assert result  # result will always exist here.
+        log.debug(f'Got result {result} from The Graph query')
         return result

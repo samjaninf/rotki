@@ -1,11 +1,18 @@
 <script setup lang="ts">
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import HistoryEventsQueryStatusLine from '@/components/history/events/query-status/HistoryEventsQueryStatusLine.vue';
+import LocationIcon from '@/components/history/LocationIcon.vue';
+import LazyLoader from '@/components/helper/LazyLoader.vue';
 import type { HistoryEventsQueryData } from '@/types/websocket-messages';
 
 defineProps<{ item: HistoryEventsQueryData }>();
 </script>
 
 <template>
-  <div class="flex items-center">
+  <LazyLoader
+    min-height="40px"
+    class="flex items-center pl-0.5"
+  >
     <LocationIcon
       icon
       :item="item.location"
@@ -25,16 +32,17 @@ defineProps<{ item: HistoryEventsQueryData }>();
       <template #activator>
         <RuiIcon
           class="text-rui-text-secondary"
-          name="question-line"
+          name="lu-circle-help"
         />
       </template>
 
-      <i18n
-        :path="
+      <i18n-t
+        :keypath="
           item.period[0] === 0
             ? 'transactions.query_status_events.latest_period_end_date'
             : 'transactions.query_status_events.latest_period_date_range'
         "
+        tag="span"
       >
         <template #start>
           <DateDisplay :timestamp="item.period[0]" />
@@ -42,7 +50,7 @@ defineProps<{ item: HistoryEventsQueryData }>();
         <template #end>
           <DateDisplay :timestamp="item.period[1]" />
         </template>
-      </i18n>
+      </i18n-t>
     </RuiTooltip>
-  </div>
+  </LazyLoader>
 </template>

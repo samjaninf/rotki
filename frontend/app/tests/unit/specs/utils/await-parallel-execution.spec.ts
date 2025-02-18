@@ -1,10 +1,13 @@
+import { describe, expect, it, vi } from 'vitest';
+import { awaitParallelExecution } from '@/utils/await-parallel-execution';
+
 describe('awaitParallelExecution', () => {
   it('instant resolve if no items exist', async () => {
     await expect(
       awaitParallelExecution<{ id: string }>(
         [],
-        id => id,
-        () => Promise.resolve(),
+        id => id.id,
+        async () => Promise.resolve(),
       ),
     ).resolves.toBeUndefined();
   });
@@ -15,9 +18,9 @@ describe('awaitParallelExecution', () => {
     await expect(
       awaitParallelExecution<{ id: string }>(
         Array.from({ length: items }, (_, i) => ({
-          id: i + 1,
+          id: (i + 1).toString(),
         })),
-        id => id,
+        id => id.id,
         item => p1(item.id),
       ),
     ).resolves.toBeUndefined();

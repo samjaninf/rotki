@@ -1,8 +1,25 @@
 <script setup lang="ts">
-import { some } from 'lodash-es';
+import { some } from 'es-toolkit/compat';
 import { isTransactionEvent } from '@/utils/report';
-import type { DataTableColumn, DataTableOptions, DataTableSortData } from '@rotki/ui-library-compat';
+import { usePremium } from '@/composables/premium';
+import { useSupportedChains } from '@/composables/info/chains';
+import CostBasisTable from '@/components/profitloss/CostBasisTable.vue';
+import ReportProfitLossEventAction from '@/components/profitloss/ReportProfitLossEventAction.vue';
+import HistoryEventNote from '@/components/history/events/HistoryEventNote.vue';
+import UpgradeRow from '@/components/history/UpgradeRow.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import AssetLink from '@/components/assets/AssetLink.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import ProfitLossEventType from '@/components/profitloss/ProfitLossEventType.vue';
 import type { ProfitLossEvent, ProfitLossEvents, SelectedReport } from '@/types/reports';
+import type { DataTableColumn, DataTableOptions, DataTableSortData } from '@rotki/ui-library';
+
+interface GroupLine {
+  top: boolean;
+  bottom: boolean;
+}
 
 const props = withDefaults(
   defineProps<{
@@ -17,99 +34,98 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (
-    e: 'update:page',
-    page: { reportId: number; offset: number; limit: number }
-  ): void;
+  (e: 'update:page', page: { reportId: number; offset: number; limit: number }): void;
 }>();
 
 const { t } = useI18n();
 
-type PnLItem = ProfitLossEvent & { id: number };
+type PnLItem = ProfitLossEvent & { id: number; groupLine: GroupLine };
 
 const { report } = toRefs(props);
 
-const tablePagination = ref<DataTableOptions['pagination']>();
-const expanded = ref([]);
+const tablePagination = ref<DataTableOptions<PnLItem>['pagination']>();
+const expanded = ref<PnLItem[]>([]);
 
-const sort: Ref<DataTableSortData> = ref({
-  column: 'time',
-  direction: 'asc' as const,
+const sort = ref<DataTableSortData<PnLItem>>({
+  column: 'timestamp',
+  direction: 'asc',
 });
 
-const route = useRoute();
+const route = useRoute('/reports/[id]');
 const { getChain } = useSupportedChains();
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const tableHeaders = computed<DataTableColumn<PnLItem>[]>(() => [
   {
-    label: '',
-    key: 'group',
-    class: '!p-0',
     cellClass: '!p-0 h-px',
-  },
-  {
+    class: '!p-0',
+    key: 'group',
     label: '',
-    key: 'expand',
   },
   {
-    label: t('common.type'),
-    key: 'type',
+    key: 'expand',
+    label: '',
+  },
+  {
     align: 'center',
     class: 'w-[6.875rem]',
+    key: 'type',
+    label: t('common.type'),
   },
   {
-    label: t('common.location'),
-    key: 'location',
     align: 'center',
-    class: 'w-[7.5rem]',
     cellClass: 'py-2',
+    class: 'w-[7.5rem]',
+    key: 'location',
+    label: t('common.location'),
   },
   {
-    label: t('profit_loss_events.headers.tax_free_amount'),
+    align: 'end',
     key: 'free_amount',
-    align: 'end',
+    label: t('profit_loss_events.headers.tax_free_amount'),
   },
   {
-    label: t('profit_loss_events.headers.taxable_amount'),
+    align: 'end',
     key: 'taxable_amount',
-    align: 'end',
+    label: t('profit_loss_events.headers.taxable_amount'),
   },
   {
-    label: t('common.price'),
+    align: 'end',
     key: 'price',
-    align: 'end',
+    label: t('common.price'),
   },
   {
-    label: t('profit_loss_events.headers.pnl_free'),
+    align: 'end',
     key: 'pnl_free',
-    align: 'end',
+    label: t('profit_loss_events.headers.pnl_free'),
   },
   {
-    label: t('profit_loss_events.headers.pnl_taxable'),
+    align: 'end',
     key: 'pnl_taxable',
-    align: 'end',
+    label: t('profit_loss_events.headers.pnl_taxable'),
   },
   {
+    key: 'timestamp',
     label: t('common.datetime'),
-    key: 'time',
   },
   {
-    label: t('common.notes'),
     key: 'notes',
+    label: t('common.notes'),
   },
   {
-    label: t('common.actions_text'),
-    key: 'actions',
     align: 'end',
     class: 'w-[8.75rem]',
+    key: 'actions',
+    label: t('common.actions_text'),
   },
 ]);
 
-const items = computed<PnLItem[]>(() => get(report).entries.map((value, index) => ({
-  ...value,
-  id: index,
-  groupLine: checkGroupLine(get(report).entries, index),
-})));
+const items = computed<PnLItem[]>(() =>
+  get(report).entries.map((value, index) => ({
+    ...value,
+    groupLine: checkGroupLine(get(report).entries, index),
+    id: index,
+  })),
+);
 
 const itemLength = computed(() => {
   const { entriesFound, entriesLimit } = report.value;
@@ -121,26 +137,23 @@ const itemLength = computed(() => {
 
 const premium = usePremium();
 
-const showUpgradeMessage = computed(
-  () =>
-    !premium.value && report.value.totalActions > report.value.processedActions,
-);
+const showUpgradeMessage = computed(() => !premium.value && report.value.totalActions > report.value.processedActions);
 
-function updatePagination(tableOptions: DataTableOptions) {
+function updatePagination(tableOptions: DataTableOptions<PnLItem>) {
   const { pagination } = tableOptions;
   set(tablePagination, pagination);
 
   if (!pagination)
     return;
 
-  const { page, limit } = pagination;
+  const { limit, page } = pagination;
 
   const reportId = Number.parseInt(get(route).params.id as string);
 
   emit('update:page', {
-    reportId,
     limit,
     offset: limit * (page - 1),
+    reportId,
   });
 }
 
@@ -150,8 +163,8 @@ function checkGroupLine(entries: ProfitLossEvents, index: number) {
   const next = index + 1 < entries.length ? entries[index + 1] : null;
 
   return {
-    top: !!(current?.groupId && prev && current?.groupId === prev?.groupId),
     bottom: !!(current?.groupId && next && current?.groupId === next?.groupId),
+    top: !!(current?.groupId && prev && current?.groupId === prev?.groupId),
   };
 }
 
@@ -162,8 +175,6 @@ function isExpanded(id: number) {
 function expand(item: PnLItem) {
   set(expanded, isExpanded(item.id) ? [] : [item]);
 }
-
-const css = useCssModule();
 </script>
 
 <template>
@@ -172,17 +183,17 @@ const css = useCssModule();
       {{ t('common.events') }}
     </template>
     <RuiDataTable
+      v-model:expanded="expanded"
+      v-model:sort="sort"
       :cols="tableHeaders"
       :rows="items"
       :loading="loading || refreshing"
-      :expanded.sync="expanded"
       :pagination="{
         limit: tablePagination?.limit ?? 10,
         page: tablePagination?.page ?? 1,
         total: itemLength,
       }"
       :pagination-modifiers="{ external: true }"
-      :sort.sync="sort"
       outlined
       single-expand
       sticky-header
@@ -197,15 +208,15 @@ const css = useCssModule();
           class="h-full !block"
         >
           <template #activator>
-            <div :class="css.group">
+            <div :class="$style.group">
               <div
                 v-if="row.groupLine.top"
-                :class="[css.group__line, css['group__line-top']]"
+                :class="[$style.group__line, $style['group__line-top']]"
               />
-              <div :class="css.group__dot" />
+              <div :class="$style.group__dot" />
               <div
                 v-if="row.groupLine.bottom"
-                :class="[css.group__line, css['group__line-bottom']]"
+                :class="[$style.group__line, $style['group__line-bottom']]"
               />
             </div>
           </template>
@@ -218,7 +229,7 @@ const css = useCssModule();
       <template #item.location="{ row }">
         <LocationDisplay :identifier="row.location" />
       </template>
-      <template #item.time="{ row }">
+      <template #item.timestamp="{ row }">
         <DateDisplay :timestamp="row.timestamp" />
       </template>
       <template #item.free_amount="{ row }">
@@ -293,9 +304,7 @@ const css = useCssModule();
           <HistoryEventNote
             v-if="isTransactionEvent(row)"
             :notes="row.notes"
-            :amount="
-              row.taxableAmount.isZero() ? row.freeAmount : row.taxableAmount
-            "
+            :amount="row.taxableAmount.isZero() ? row.freeAmount : row.taxableAmount"
             :asset="row.assetIdentifier"
             :chain="getChain(row.location)"
           />
@@ -326,15 +335,12 @@ const css = useCssModule();
             />
           </template>
 
-          {{
-            isExpanded(row.id)
-              ? t('profit_loss_events.cost_basis.hide')
-              : t('profit_loss_events.cost_basis.show')
-          }}
+          {{ isExpanded(row.id) ? t('profit_loss_events.cost_basis.hide') : t('profit_loss_events.cost_basis.show') }}
         </RuiTooltip>
       </template>
       <template #expanded-item="{ row }">
         <CostBasisTable
+          v-if="row.costBasis"
           :show-group-line="row.groupLine.bottom"
           :currency="report.settings.profitCurrency"
           :cost-basis="row.costBasis"
@@ -346,36 +352,21 @@ const css = useCssModule();
 
 <style module lang="scss">
 .group {
-  height: 100%;
-  position: relative;
-  width: 10px;
-  margin-left: 1.5rem;
+  @apply relative h-full w-2.5 ml-6;
 
   &__dot {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 10px;
-    height: 10px;
-    border-radius: 10px;
-    background: var(--v-primary-base);
+    @apply absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-rui-primary;
   }
 
   &__line {
-    position: absolute;
-    height: 50%;
-    left: 50%;
-    width: 0;
-    transform: translateX(-50%);
-    border-left: 2px dashed var(--v-primary-base);
+    @apply absolute h-1/2 left-1/2 w-0 transform -translate-x-1/2 border-l-2 border-dashed border-rui-primary;
 
     &-top {
-      top: 0;
+      @apply top-0;
     }
 
     &-bottom {
-      bottom: 0;
+      @apply bottom-0;
     }
   }
 }

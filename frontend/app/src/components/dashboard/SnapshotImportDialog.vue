@@ -1,9 +1,12 @@
 <script lang="ts" setup>
+import FileUpload from '@/components/import/FileUpload.vue';
+
+const model = defineModel<boolean>({ required: true });
+
 const props = withDefaults(
   defineProps<{
-    value: boolean;
-    balanceFile: File | null;
-    locationFile: File | null;
+    balanceFile?: File;
+    locationFile?: File;
     loading?: boolean;
     persistent?: boolean;
   }>(),
@@ -14,16 +17,13 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'input', value: boolean): void;
   (e: 'import'): boolean;
-  (e: 'update:balance-file', file: File | null): void;
-  (e: 'update:location-file', file: File | null): void;
+  (e: 'update:balance-file', file?: File): void;
+  (e: 'update:location-file', file?: File): void;
 }>();
 
 const { t } = useI18n();
-const visible = useSimpleVModel(props, emit);
-
-const balanceFile = computed<File | null>({
+const balanceFile = computed<File | undefined>({
   get() {
     return props.balanceFile;
   },
@@ -32,7 +32,7 @@ const balanceFile = computed<File | null>({
   },
 });
 
-const locationFile = computed<File | null>({
+const locationFile = computed<File | undefined>({
   get() {
     return props.locationFile;
   },
@@ -46,18 +46,18 @@ const complete = logicAnd(balanceFile, locationFile);
 
 <template>
   <RuiDialog
-    v-model="visible"
-    max-width="600"
+    v-model="model"
+    max-width="650"
     :persistent="persistent"
   >
-    <template #activator="{ on }">
+    <template #activator="{ attrs }">
       <RuiButton
         color="primary"
         variant="outlined"
-        v-on="on"
+        v-bind="attrs"
       >
         <template #prepend>
-          <RuiIcon name="folder-received-line" />
+          <RuiIcon name="lu-folder-input" />
         </template>
         {{ t('common.actions.import') }}
       </RuiButton>
@@ -68,7 +68,7 @@ const complete = logicAnd(balanceFile, locationFile);
         {{ t('snapshot_import_dialog.title') }}
       </template>
 
-      <div class="flex flex-row gap-2">
+      <div class="grid grid-cols-2 gap-2">
         <div>
           <div class="font-bold">
             {{ t('snapshot_import_dialog.balance_snapshot_file') }}
@@ -104,7 +104,7 @@ const complete = logicAnd(balanceFile, locationFile);
         <RuiButton
           color="primary"
           variant="text"
-          @click="visible = false"
+          @click="model = false"
         >
           {{ t('common.actions.cancel') }}
         </RuiButton>

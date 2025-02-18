@@ -1,8 +1,11 @@
-import type { AssetInfo } from '@rotki/common/lib/data';
+import { useNotificationsStore } from '@/store/notifications';
+import { useItemCache } from '@/composables/item-cache';
+import { useAssetInfoApi } from '@/composables/api/assets/info';
+import type { AssetCollection, AssetInfo } from '@rotki/common';
 import type { AssetMap } from '@/types/asset';
 
 export const useAssetCacheStore = defineStore('assets/cache', () => {
-  const fetchedAssetCollections: Ref<Record<string, AssetInfo>> = ref({});
+  const fetchedAssetCollections = ref<Record<string, AssetCollection>>({});
 
   const { assetMapping } = useAssetInfoApi();
   const { t } = useI18n();
@@ -14,11 +17,11 @@ export const useAssetCacheStore = defineStore('assets/cache', () => {
     }
     catch (error: any) {
       notify({
-        title: t('asset_search.error.title'),
+        display: true,
         message: t('asset_search.error.message', {
           message: error.message,
         }),
-        display: true,
+        title: t('asset_search.error.title'),
       });
       return {
         assetCollections: {},
@@ -27,10 +30,10 @@ export const useAssetCacheStore = defineStore('assets/cache', () => {
     }
   };
 
-  const { cache, isPending, retrieve, reset, deleteCacheKey, queueIdentifier }
-    = useItemCache<AssetInfo>(async (keys: string[]) => {
+  const { cache, deleteCacheKey, isPending, queueIdentifier, reset, retrieve } = useItemCache<AssetInfo>(
+    async (keys: string[]) => {
       const response = await getAssetMappingHandler(keys);
-      return function* () {
+      return function* (): Generator<{ item: AssetInfo; key: string }, void> {
         for (const key of keys) {
           const { assetCollections, assets } = response;
           set(fetchedAssetCollections, {
@@ -42,16 +45,17 @@ export const useAssetCacheStore = defineStore('assets/cache', () => {
           yield { item, key };
         }
       };
-    });
+    },
+  );
 
   return {
     cache,
+    deleteCacheKey,
     fetchedAssetCollections,
     isPending,
-    retrieve,
-    reset,
-    deleteCacheKey,
     queueIdentifier,
+    reset,
+    retrieve,
   };
 });
 

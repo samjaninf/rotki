@@ -1,27 +1,29 @@
 import json
 import logging
 from http import HTTPStatus
-from typing import Any, Literal, NamedTuple, overload
-from urllib.parse import urlencode
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
 
 import requests
 
 from rotkehlchen.assets.asset import Asset, AssetWithOracles
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.constants.resolver import evm_address_to_identifier, strethaddress_to_identifier
-from rotkehlchen.constants.timing import DAY_IN_SECONDS
+from rotkehlchen.constants.timing import DAY_IN_SECONDS, YEAR_IN_SECONDS
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp, PriceQueryUnsupportedAsset
+from rotkehlchen.externalapis.interface import ExternalServiceWithApiKeyOptionalDB
 from rotkehlchen.fval import FVal
-from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.interfaces import HistoricalPriceOracleWithCoinListInterface
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChainID, EvmTokenKind, Price, Timestamp
-from rotkehlchen.utils.misc import create_timestamp, set_user_agent, timestamp_to_date, ts_now
+from rotkehlchen.types import ChainID, EvmTokenKind, ExternalService, Price, Timestamp
+from rotkehlchen.utils.misc import set_user_agent, timestamp_to_date, ts_now
 from rotkehlchen.utils.mixins.penalizable_oracle import PenalizablePriceOracleMixin
+from rotkehlchen.utils.network import create_session
+
+if TYPE_CHECKING:
+    from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -329,8 +331,8 @@ DELISTED_ASSETS = {
     strethaddress_to_identifier('0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA'),
     strethaddress_to_identifier('0x63739d137EEfAB1001245A8Bd1F3895ef3e186E7'),
     strethaddress_to_identifier('0xdA816459F1AB5631232FE5e97a05BBBb94970c95'),
-    evm_address_to_identifier(address='0x007EA5C0Ea75a8DF45D288a4debdD5bb633F9e56', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
-    evm_address_to_identifier(address='0x3f515f0a8e93F2E2f891ceeB3Db4e62e202d7110', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x007EA5C0Ea75a8DF45D288a4debdD5bb633F9e56', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x3f515f0a8e93F2E2f891ceeB3Db4e62e202d7110', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
     'BBK-2',
     'IFC',
     'MEC',
@@ -355,9 +357,9 @@ DELISTED_ASSETS = {
     strethaddress_to_identifier('0x23Ccc43365D9dD3882eab88F43d515208f832430'),
     strethaddress_to_identifier('0x23Ccc43365D9dD3882eab88F43d515208f832430'),
     strethaddress_to_identifier('0x824a50dF33AC1B41Afc52f4194E2e8356C17C3aC'),
-    evm_address_to_identifier(address='0x6cd871fb811224aa23B6bF1646177CdFe5106416', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
-    evm_address_to_identifier(address='0x7786B28826e2DDA4dBe344bE66A0bFbfF3d3362f', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
-    evm_address_to_identifier(address='0x11C0c93035d1302083eB09841042cFa582839A8C', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x6cd871fb811224aa23B6bF1646177CdFe5106416', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x7786B28826e2DDA4dBe344bE66A0bFbfF3d3362f', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x11C0c93035d1302083eB09841042cFa582839A8C', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
     strethaddress_to_identifier('0xC12D1c73eE7DC3615BA4e37E4ABFdbDDFA38907E'),
     'SILK',
     'CRT',
@@ -391,7 +393,7 @@ DELISTED_ASSETS = {
     strethaddress_to_identifier('0x37941b3Fdb2bD332e667D452a58Be01bcacb923e'),
     strethaddress_to_identifier('0xEd025A9Fe4b30bcd68460BCA42583090c2266468'),
     strethaddress_to_identifier('0xeEd4d7316a04ee59de3d301A384262FFbDbd589a'),
-    evm_address_to_identifier(address='0xF301C8435D4dFA51641f71B0615aDD794b52c8E9', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0xF301C8435D4dFA51641f71B0615aDD794b52c8E9', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
     strethaddress_to_identifier('0x18084fbA666a33d37592fA2633fD49a74DD93a88'),
     'FB',
     'ROAD',
@@ -402,8 +404,8 @@ DELISTED_ASSETS = {
     'CMT',
     'BLU',
     'ARC',
-    evm_address_to_identifier(address='0x1180C484f55024C5Ce1765101f4efaC1e7A3F6d4', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
-    evm_address_to_identifier(address='0x37941b3Fdb2bD332e667D452a58Be01bcacb923e', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x1180C484f55024C5Ce1765101f4efaC1e7A3F6d4', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x37941b3Fdb2bD332e667D452a58Be01bcacb923e', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0xA68Dd8cB83097765263AdAD881Af6eeD479c4a33', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0x34364BEe11607b1963d66BCA665FDE93fCA666a8', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0xa456b515303B2Ce344E9d2601f91270f8c2Fea5E', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
@@ -429,7 +431,7 @@ DELISTED_ASSETS = {
     evm_address_to_identifier(address='0x60EF10EDfF6D600cD91caeCA04caED2a2e605Fe5', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0xfC1Cb4920dC1110fD61AfaB75Cf085C1f871b8C6', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0xAE6e3540E97b0b9EA8797B157B510e133afb6282', chain_id=ChainID.ARBITRUM_ONE, token_type=EvmTokenKind.ERC20),  # noqa: E501
-    evm_address_to_identifier(address='0x6bfd576220e8444CA4Cc5f89Efbd7f02a4C94C16', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x6bfd576220e8444CA4Cc5f89Efbd7f02a4C94C16', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
     'TFC',
     'DON',
     'NUT',
@@ -444,14 +446,14 @@ DELISTED_ASSETS = {
     evm_address_to_identifier(address='0x670f9D9a26D3D42030794ff035d35a67AA092ead', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0x1c7E83f8C581a967940DBfa7984744646AE46b29', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0x75C9bC761d88f70156DAf83aa010E84680baF131', chain_id=ChainID.ARBITRUM_ONE, token_type=EvmTokenKind.ERC20),  # noqa: E501
-    evm_address_to_identifier(address='0x557f20CE25b41640ADe4a3085d42d7e626d7965A', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x557f20CE25b41640ADe4a3085d42d7e626d7965A', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0xc56c2b7e71B54d38Aab6d52E94a04Cbfa8F604fA', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0x628eBC64A38269E031AFBDd3C5BA857483B5d048', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
-    evm_address_to_identifier(address='0x24086EAb82DBDaa4771d0A5D66B0D810458b0E86', chain_id=ChainID.BINANCE, token_type=EvmTokenKind.ERC20),  # noqa: E501
+    evm_address_to_identifier(address='0x24086EAb82DBDaa4771d0A5D66B0D810458b0E86', chain_id=ChainID.BINANCE_SC, token_type=EvmTokenKind.ERC20),  # noqa: E501
     evm_address_to_identifier(address='0xCB5A05beF3257613E984C17DbcF039952B6d883F', chain_id=ChainID.ETHEREUM, token_type=EvmTokenKind.ERC20),  # noqa: E501
 }
 
-COINGECKO_SIMPLE_VS_CURRENCIES = [
+COINGECKO_SIMPLE_VS_CURRENCIES = {
     'btc',
     'eth',
     'ltc',
@@ -510,17 +512,22 @@ COINGECKO_SIMPLE_VS_CURRENCIES = [
     'xdr',
     'xag',
     'xau',
-]
+}
 
 
-class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOracleMixin):
+class Coingecko(
+        ExternalServiceWithApiKeyOptionalDB,
+        HistoricalPriceOracleWithCoinListInterface,
+        PenalizablePriceOracleMixin,
+):
 
-    def __init__(self) -> None:
+    def __init__(self, database: 'DBHandler | None') -> None:
+        ExternalServiceWithApiKeyOptionalDB.__init__(self, database=database, service_name=ExternalService.COINGECKO)  # noqa: E501
         HistoricalPriceOracleWithCoinListInterface.__init__(self, oracle_name='coingecko')
         PenalizablePriceOracleMixin.__init__(self)
-        self.session = requests.session()
+        self.session = create_session()
         set_user_agent(self.session)
-        self.last_rate_limit = 0
+        self.db: DBHandler | None  # type: ignore  # "solve" the self.db discrepancy
 
     @overload
     def _query(
@@ -551,16 +558,24 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
         May raise:
         - RemoteError if there is a problem querying coingecko
         """
+        if (api_key := self._get_api_key()) is not None:
+            base_url = 'https://pro-api.coingecko.com/api/v3'
+        else:
+            base_url = 'https://api.coingecko.com/api/v3'
+
         if options is None:
             options = {}
-        url = f'https://api.coingecko.com/api/v3/{module}/'
-        if subpath:
-            url += subpath
+        url = f'{base_url}/{module}/{subpath or ""}'
+        if api_key:
+            self.session.headers.update({'x-cg-pro-api-key': api_key})
+        else:
+            self.session.headers.pop('x-cg-pro-api-key', None)
 
-        log.debug(f'Querying coingecko: {url}?{urlencode(options)}')
+        log.debug(f'Querying coingecko: {url=} with {options=}')
         try:
             response = self.session.get(
-                f'{url}?{urlencode(options)}',
+                url=url,
+                params=options,
                 timeout=CachedSettings().get_timeout_tuple(),
             )
         except requests.exceptions.RequestException as e:
@@ -611,7 +626,7 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
         }
         data = self._query(
             module='coins',
-            subpath=f'{asset_coingecko_id}',
+            subpath=asset_coingecko_id,
             options=options,
         )
 
@@ -674,10 +689,8 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
             self,
             from_asset: AssetWithOracles,
             to_asset: AssetWithOracles,
-            match_main_currency: bool,
-    ) -> tuple[Price, bool]:
-        """Returns a simple price for from_asset to to_asset in coingecko and `False` value
-        since it never tries to match main currency.
+    ) -> Price:
+        """Returns a simple price for from_asset to to_asset in coingecko.
 
         Uses the simple/price endpoint of coingecko. If to_asset is not part of the
         coingecko simple vs currencies or if from_asset is not supported in coingecko
@@ -692,7 +705,7 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
             location='simple price',
         )
         if not vs_currency:
-            return ZERO_PRICE, False
+            return ZERO_PRICE
 
         try:
             from_coingecko_id = from_asset.to_coingecko()
@@ -701,7 +714,7 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
                 f'Tried to query coingecko simple price from {from_asset.identifier} '
                 f'to {to_asset.identifier}. But from_asset is not supported in coingecko',
             )
-            return ZERO_PRICE, False
+            return ZERO_PRICE
 
         result = self._query(
             module='simple/price',
@@ -712,14 +725,14 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
 
         # https://github.com/PyCQA/pylint/issues/4739
         try:
-            return Price(FVal(result[from_coingecko_id][vs_currency])), False
+            return Price(FVal(result[from_coingecko_id][vs_currency]))
         except KeyError as e:
             log.warning(
                 f'Queried coingecko simple price from {from_asset.identifier} '
                 f'to {to_asset.identifier}. But got key error for {e!s} when '
                 f'processing the result.',
             )
-            return ZERO_PRICE, False
+            return ZERO_PRICE
 
     def can_query_history(
             self,
@@ -728,16 +741,12 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
             timestamp: Timestamp,
             seconds: int | None = None,
     ) -> bool:
-        return not self.is_penalized()
-
-    def rate_limited_in_last(
-            self,
-            seconds: int | None = None,
-    ) -> bool:
-        if seconds is None:
+        """Apart from penalization, for coingecko if there is no paid API key then it won't
+        allow you to query further than a year in history. So let's save ourselves network calls"""
+        if self.api_key is None and ts_now() - timestamp > YEAR_IN_SECONDS:
             return False
 
-        return ts_now() - self.last_rate_limit <= seconds
+        return not self.is_penalized()
 
     def query_historical_price(
             self,
@@ -779,18 +788,6 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
                 time=timestamp,
             ) from e
 
-        # check DB cache
-        price_cache_entry = GlobalDBHandler.get_historical_price(
-            from_asset=from_asset,
-            to_asset=to_asset,
-            timestamp=timestamp,
-            max_seconds_distance=DAY_IN_SECONDS,
-            source=HistoricalPriceOracle.COINGECKO,
-        )
-        if price_cache_entry:
-            return price_cache_entry.price
-
-        # no cache, query coingecko for daily price
         date = timestamp_to_date(timestamp, formatstr='%d-%m-%Y')
         result = self._query(
             module='coins',
@@ -800,7 +797,6 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
                 'localization': 'false',
             },
         )
-
         # https://github.com/PyCQA/pylint/issues/4739
         try:
             price = Price(FVal(result['market_data']['current_price'][vs_currency]))
@@ -817,13 +813,4 @@ class Coingecko(HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOrac
                 rate_limited=False,
             ) from e
 
-        # save result in the DB and return
-        date_timestamp = create_timestamp(date, formatstr='%d-%m-%Y')
-        GlobalDBHandler.add_historical_prices(entries=[HistoricalPrice(
-            from_asset=from_asset,
-            to_asset=to_asset,
-            source=HistoricalPriceOracle.COINGECKO,
-            timestamp=date_timestamp,
-            price=price,
-        )])
         return price

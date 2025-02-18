@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { LpType } from '@rotki/common/lib/defi';
+import { LpType } from '@rotki/common';
+import AppImage from '@/components/common/AppImage.vue';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
 
 const props = defineProps<{
   assets: string[];
@@ -8,20 +10,12 @@ const props = defineProps<{
 
 const data = [
   {
+    icon: './assets/images/protocols/uniswap.svg',
     identifier: LpType.UNISWAP_V2,
-    icon: './assets/images/protocols/uniswap.svg',
   },
   {
-    identifier: LpType.UNISWAP_V3,
-    icon: './assets/images/protocols/uniswap.svg',
-  },
-  {
-    identifier: LpType.SUSHISWAP,
     icon: './assets/images/protocols/sushiswap.svg',
-  },
-  {
-    identifier: LpType.BALANCER,
-    icon: './assets/images/protocols/balancer.svg',
+    identifier: LpType.SUSHISWAP,
   },
 ];
 
@@ -35,8 +29,6 @@ const icon = computed(() => {
 });
 
 const multiple = computed<boolean>(() => props.assets.length > 2);
-
-const css = useCssModule();
 </script>
 
 <template>
@@ -52,18 +44,15 @@ const css = useCssModule();
       <AssetIcon
         v-if="!multiple"
         circle
-        :class="css['second-icon']"
+        :class="$style['second-icon']"
         :identifier="assets[1]"
         size="32px"
         padding="0"
         :show-chain="false"
       />
       <RuiMenu v-else>
-        <template #activator="{ on }">
-          <div
-            :class="[css['second-icon'], css['more-assets']]"
-            v-on="on"
-          >
+        <template #activator>
+          <div :class="[$style['second-icon'], $style['more-assets']]">
             +{{ assets.length - 1 }}
           </div>
         </template>
@@ -80,7 +69,7 @@ const css = useCssModule();
         </div>
       </RuiMenu>
     </div>
-    <div :class="css['lp-type-icon']">
+    <div :class="$style['lp-type-icon']">
       <AppImage
         size="1rem"
         :src="icon"

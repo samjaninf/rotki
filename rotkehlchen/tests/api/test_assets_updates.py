@@ -1,6 +1,7 @@
 import json
 import random
 import re
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -8,14 +9,15 @@ from unittest.mock import patch
 import pytest
 import requests
 
-from rotkehlchen.assets.asset import Asset, CryptoAsset, EvmToken
+from rotkehlchen.assets.asset import Asset, CryptoAsset, EvmToken, UnderlyingToken
 from rotkehlchen.assets.types import AssetType
 from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_GLM
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
 from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.globaldb.asset_updates.manager import ASSETS_VERSION_KEY
 from rotkehlchen.globaldb.handler import GLOBAL_DB_VERSION, GlobalDBHandler
-from rotkehlchen.globaldb.updates import ASSETS_VERSION_KEY
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -36,9 +38,9 @@ def count_total_assets() -> int:
         return cursor.fetchone()[0]
 
 
-def mock_asset_updates(original_requests_get, latest: int, updates: dict[str, Any], sql_actions: dict[str, dict[str, str]]):  # noqa: E501
+def mock_asset_updates(original_requests_get: Callable[..., requests.Response], latest: int, updates: dict[str, Any], sql_actions: dict[str, dict[str, str]]) -> Any:  # noqa: E501
 
-    def mock_requests_get(url, *args, **kwargs):  # pylint: disable=unused-argument
+    def mock_requests_get(url: str, *args: Any, **kwargs: Any) -> requests.Response | MockResponse:  # pylint: disable=unused-argument
         if 'github' not in url:
             return original_requests_get(url, *args, **kwargs)
 
@@ -76,21 +78,39 @@ def test_simple_update(rotkehlchen_api_server: 'APIServer', globaldb: GlobalDBHa
     """
     async_query = random.choice([False, True])
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
-    update_4_assets = """INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0xC2FEC534c461c45533e142f724d0e3930650929c", "AKB token", "C");INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES("eip155:1/erc20:0xC2FEC534c461c45533e142f724d0e3930650929c", "A", 1, "0xC2FEC534c461c45533e142f724d0e3930650929c", 18, NULL);INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("eip155:1/erc20:0xC2FEC534c461c45533e142f724d0e3930650929c", "AKB", NULL, "AIDU", NULL, 123, NULL);
+    update_4_assets = """INSERT INTO assets(identifier, name, type) VALUES('eip155:1/erc20:0xC2FEC534c461c45533e142f724d0e3930650929c', 'AKB token', 'C');INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES('eip155:1/erc20:0xC2FEC534c461c45533e142f724d0e3930650929c', 'A', 1, '0xC2FEC534c461c45533e142f724d0e3930650929c', 18, NULL);INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('eip155:1/erc20:0xC2FEC534c461c45533e142f724d0e3930650929c', 'AKB', NULL, 'AIDU', NULL, 123, NULL);
 *
-INSERT INTO assets(identifier, name, type) VALUES("121-ada-FADS-as", "A name", "F"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("121-ada-FADS-as", "SYMBOL", "", "", "BTC", NULL, NULL);
+INSERT INTO assets(identifier, name, type) VALUES('121-ada-FADS-as', 'A name', 'F'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('121-ada-FADS-as', 'SYMBOL', '', '', 'BTC', NULL, NULL);
 *
-UPDATE assets SET name="Ευρώ" WHERE identifier="EUR";
-INSERT INTO assets(identifier, name, type) VALUES("EUR", "Ευρώ", "A"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("EUR", "Ευρώ", "EUR", NULL, NULL, NULL, NULL, NULL);
+UPDATE assets SET name='Ευρώ' WHERE identifier='EUR';
+INSERT INTO assets(identifier, name, type) VALUES('EUR', 'Ευρώ', 'A'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('EUR', 'Ευρώ', 'EUR', NULL, NULL, NULL, NULL, NULL);
     """  # noqa: E501
     # The update_4_assets has an extra newline which is put there on purpose to see
     # that the consuming logic can handle trailing newlines
-    update_4_collections = """INSERT INTO asset_collections(id, name, symbol) VALUES (99999999, "My custom ETH", "ETHS")
-    *"""  # noqa: E501
-    update_4_mappings = """INSERT INTO multiasset_mappings(collection_id, asset) VALUES (99999999, "ETH");
+    update_4_collections = """INSERT INTO asset_collections(id, name, symbol, main_asset) VALUES (99999999, 'My custom ETH', 'ETHS', 'ETHS')
     *
-    INSERT INTO multiasset_mappings(collection_id, asset) VALUES (99999999, "eip155:1/erc20:0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84");
-    *"""  # noqa: E501
+    UPDATE asset_collections SET name='updated collection' WHERE id=33
+    *
+    DELETE FROM asset_collections WHERE id=39;
+    *
+    """  # noqa: E501
+    update_4_mappings = """INSERT INTO multiasset_mappings(collection_id, asset) VALUES (99999999, 'ETH');
+    *
+    INSERT INTO multiasset_mappings(collection_id, asset) VALUES (99999999, 'eip155:1/erc20:0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84');
+    *
+    DELETE FROM multiasset_mappings WHERE collection_id=314 AND asset='eip155:10/erc20:0xC52D7F23a2e460248Db6eE192Cb23dD12bDDCbf6';
+    *
+    """  # noqa: E501
+
+    with globaldb.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT name FROM asset_collections WHERE id=33',
+        ).fetchone()[0] == 'STASIS EURS'
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM multiasset_mappings WHERE collection_id=314 AND "
+            "asset='eip155:10/erc20:0xC52D7F23a2e460248Db6eE192Cb23dD12bDDCbf6'",
+        ).fetchone()[0] == 1
+
     empty_update = {'mappings': '', 'collections': '', 'assets': ''}
     update_patch = mock_asset_updates(
         original_requests_get=requests.get,
@@ -214,9 +234,19 @@ INSERT INTO assets(identifier, name, type) VALUES("EUR", "Ευρώ", "A"); INSER
 
         with globaldb.conn.read_ctx() as cursor:
             cursor.execute('SELECT * FROM asset_collections WHERE id = 99999999')
-            assert cursor.fetchall() == [(99999999, 'My custom ETH', 'ETHS')]
+            assert cursor.fetchall() == [(99999999, 'My custom ETH', 'ETHS', 'ETHS')]
             cursor.execute('SELECT * FROM multiasset_mappings WHERE collection_id = 99999999')
             assert cursor.fetchall() == [(99999999, 'ETH'), (99999999, 'eip155:1/erc20:0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84')]  # noqa: E501
+            assert cursor.execute(
+                'SELECT name, symbol FROM asset_collections WHERE id=33',
+            ).fetchone() == ('updated collection', 'EURS')
+            assert cursor.execute(
+                "SELECT COUNT(*) FROM multiasset_mappings WHERE collection_id=314 AND "
+                "asset='eip155:10/erc20:0xC52D7F23a2e460248Db6eE192Cb23dD12bDDCbf6'",
+            ).fetchone()[0] == 0
+            assert cursor.execute(
+                'SELECT COUNT(*) FROM asset_collections WHERE id=39',
+            ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
@@ -224,13 +254,13 @@ def test_update_conflicts(rotkehlchen_api_server: 'APIServer', globaldb: GlobalD
     """Test that conflicts in an asset update are handled properly"""
     async_query = random.choice([False, True])
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
-    update_1 = """INSERT INTO assets(identifier, name, type) VALUES("121-ada-FADS-as", "A name", "F"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("121-ada-FADS-as", "SYMBOL", "", "", "BTC", NULL, NULL);
+    update_1 = """INSERT INTO assets(identifier, name, type) VALUES('121-ada-FADS-as', 'A name', 'F'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('121-ada-FADS-as', 'SYMBOL', '', '', 'BTC', NULL, NULL);
 *
-INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F", "New Multi Collateral DAI", "C");INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES("eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F", "A", 1, "0x6B175474E89094C44Da98b954EedeAC495271d0F", 8, "maker"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F", "NDAI", "dai", NULL, NULL, 1573672677, NULL)
+INSERT INTO assets(identifier, name, type) VALUES('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F', 'New Multi Collateral DAI', 'C');INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F', 'A', 1, '0x6B175474E89094C44Da98b954EedeAC495271d0F', 8, 'maker'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F', 'NDAI', 'dai', NULL, NULL, 1573672677, NULL)
 *
-INSERT INTO assets(identifier, name, type) VALUES("DASH", "Dash", "B"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("DASH", "DASH", "dash-coingecko", NULL, "BTC", 1337, NULL);
+INSERT INTO assets(identifier, name, type) VALUES('DASH', 'Dash', 'B'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('DASH', 'DASH', 'dash-coingecko', NULL, 'BTC', 1337, NULL);
 *
-INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F", "Conflicting token", "C");INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES("eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F", "A", 1, "0x1B175474E89094C44Da98b954EedeAC495271d0F", 18, NULL);INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F", "CTK", "ctk", NULL, NULL, 1573672677, NULL)
+INSERT INTO assets(identifier, name, type) VALUES('eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F', 'Conflicting token', 'C');INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES('eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F', 'A', 1, '0x1B175474E89094C44Da98b954EedeAC495271d0F', 18, NULL);INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F', 'CTK', 'ctk', NULL, NULL, 1573672677, NULL)
 *
     """  # noqa: E501
     # add a conflicting token
@@ -328,7 +358,7 @@ INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x1B175474E890
                 'evm_chain': 'ethereum',
                 'token_kind': 'erc20',
                 'decimals': 18,
-                'cryptocompare': None,
+                'cryptocompare': 'DAI',
                 'coingecko': 'dai',
                 'protocol': None,
             },
@@ -359,7 +389,7 @@ INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x1B175474E890
                 'address': None,
                 'token_kind': None,
                 'decimals': None,
-                'cryptocompare': None,
+                'cryptocompare': 'DASH',
                 'coingecko': 'dash',
                 'protocol': None,
             },
@@ -458,8 +488,8 @@ INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x1B175474E890
         assert dai.decimals == 8
         assert dai.protocol == 'maker'
         # make sure data is in both tables
-        assert cursor.execute('SELECT COUNT(*) from evm_tokens WHERE address="0x6B175474E89094C44Da98b954EedeAC495271d0F";').fetchone()[0] == 1  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier="eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F";').fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) from evm_tokens WHERE address=?', ('0x6B175474E89094C44Da98b954EedeAC495271d0F',)).fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier=?', ('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F',)).fetchone()[0] == 1  # noqa: E501
 
         dash = CryptoAsset('DASH')
         assert dash.identifier == 'DASH'
@@ -470,9 +500,9 @@ INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x1B175474E890
         assert dash.forked is None
         assert dash.swapped_for is None
         assert dash.coingecko == 'dash'
-        assert dash.cryptocompare is None
-        assert cursor.execute('SELECT COUNT(*) from common_asset_details WHERE identifier="DASH";').fetchone()[0] == 1  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier="DASH";').fetchone()[0] == 1  # noqa: E501
+        assert dash.cryptocompare == 'DASH'
+        assert cursor.execute('SELECT COUNT(*) from common_asset_details WHERE identifier=?', ('DASH',)).fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier=?', ('DASH',)).fetchone()[0] == 1  # noqa: E501
 
         new_asset = CryptoAsset('121-ada-FADS-as')
         assert new_asset.identifier == '121-ada-FADS-as'
@@ -484,8 +514,8 @@ INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x1B175474E890
         assert new_asset.swapped_for is None
         assert new_asset.coingecko == ''
         assert new_asset.cryptocompare == ''
-        assert cursor.execute('SELECT COUNT(*) from common_asset_details WHERE identifier="121-ada-FADS-as";').fetchone()[0] == 1  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier="121-ada-FADS-as";').fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) from common_asset_details WHERE identifier=?', ('121-ada-FADS-as',)).fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier=?', ('121-ada-FADS-as',)).fetchone()[0] == 1  # noqa: E501
 
         ctk = EvmToken('eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F')
         assert ctk.name == 'Conflicting token'
@@ -499,8 +529,8 @@ INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x1B175474E890
         assert ctk.evm_address == '0x1B175474E89094C44Da98b954EedeAC495271d0F'
         assert ctk.decimals == 18
         assert ctk.protocol is None
-        assert cursor.execute('SELECT COUNT(*) from evm_tokens WHERE address="0x1B175474E89094C44Da98b954EedeAC495271d0F";').fetchone()[0] == 1  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier="eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F";').fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) from evm_tokens WHERE address=?', ('0x1B175474E89094C44Da98b954EedeAC495271d0F',)).fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) from assets WHERE identifier=?', ('eip155:1/erc20:0x1B175474E89094C44Da98b954EedeAC495271d0F',)).fetchone()[0] == 1  # noqa: E501
 
 
 @pytest.mark.skip('Broken after changes in the assets. Check #4876')
@@ -692,23 +722,23 @@ def test_update_from_early_clean_db(
     version key set we still upgrade properly and set the assets version properly.
     """
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
-    update_1 = """INSERT INTO assets(identifier, name, type) VALUES("121-ada-FADS-as", "A name", "F"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("121-ada-FADS-as", "SYMBOL", "", "", "BTC", NULL, NULL);
+    update_15 = """INSERT INTO assets(identifier, name, type) VALUES('121-ada-FADS-as', 'A name', 'F'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('121-ada-FADS-as', 'SYMBOL', '', '', 'BTC', NULL, NULL);
 *
-UPDATE assets SET swapped_for="eip155:1/erc20:0xA8d35739EE92E69241A2Afd9F513d41021A07972" WHERE identifier="eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d";
-INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES("eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d", "A", 1, "0xa74476443119A942dE498590Fe1f2454d7D4aC0d", 18, NULL);INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d", "Golem", "C"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d", "GNT", "golem", NULL, NULL,1478810650, "eip155:1/erc20:0xA8d35739EE92E69241A2Afd9F513d41021A07972")
+UPDATE assets SET swapped_for='eip155:1/erc20:0xA8d35739EE92E69241A2Afd9F513d41021A07972' WHERE identifier='eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d';
+INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d', 'A', 1, '0xa74476443119A942dE498590Fe1f2454d7D4aC0d', 18, NULL);INSERT INTO assets(identifier, name, type) VALUES('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d', 'Golem', 'C'); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d', 'GNT', 'golem', NULL, NULL,1478810650, 'eip155:1/erc20:0xA8d35739EE92E69241A2Afd9F513d41021A07972')
     """  # noqa: E501
     update_patch = mock_asset_updates(
         original_requests_get=requests.get,
-        latest=1,
-        updates={'1': {
+        latest=15,
+        updates={'15': {
             'changes': 2,
             'min_schema_version': GLOBAL_DB_VERSION,
             'max_schema_version': GLOBAL_DB_VERSION,
         }},
-        sql_actions={'1': {'assets': update_1, 'collections': '', 'mappings': ''}},
+        sql_actions={'15': {'assets': update_15, 'collections': '', 'mappings': ''}},
     )
     cursor = globaldb.conn.cursor()
-    cursor.execute(f'DELETE FROM settings WHERE name="{ASSETS_VERSION_KEY}"')
+    cursor.execute('DELETE FROM settings WHERE name=?', (ASSETS_VERSION_KEY,))
     start_assets_num = count_total_assets()
     with update_patch:
         response = requests.get(
@@ -719,7 +749,7 @@ INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protoco
         )
         result = assert_proper_sync_response_with_result(response)
         assert result['local'] == 0
-        assert result['remote'] == 1
+        assert result['remote'] == 15
         assert result['new_changes'] == 2
 
         response = requests.post(
@@ -797,7 +827,7 @@ INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protoco
         # check new asset was added and conflict was ignored with an error due to
         # inability to do anything with the missing swapped_for
         assert result is True
-        assert globaldb.get_setting_value(ASSETS_VERSION_KEY, 0) == 1
+        assert globaldb.get_setting_value(ASSETS_VERSION_KEY, 0) == 15
         # TODO: Needs to be fixed as described in # 4876
         """
         gnt = EvmToken('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d')
@@ -830,7 +860,48 @@ INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protoco
         warnings = rotki.msg_aggregator.consume_warnings()
         assert len(errors) == 0, f'Found errors: {errors}'
         assert len(warnings) == 1
-        assert 'Failed to resolve conflict for eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d in the DB during the v1 assets update. Skipping entry' in warnings[0]  # noqa: E501
+        assert 'Failed to resolve conflict for eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d in the DB during the v15 assets update. Skipping entry' in warnings[0]  # noqa: E501
+
+
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+def test_update_underlying_tokens(rotkehlchen_api_server: 'APIServer', globaldb: GlobalDBHandler) -> None:  # noqa: E501
+    """Test that updating underlying tokens is handled properly."""
+    update_1 = """DELETE FROM underlying_tokens_list WHERE parent_token_entry="eip155:1/erc20:0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c"; INSERT INTO underlying_tokens_list(identifier, weight, parent_token_entry) VALUES("eip155:1/erc20:0xdF5e0e81Dff6FAF3A7e52BA697820c5e32D806A8", "1", "eip155:1/erc20:0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c");
+INSERT INTO assets(identifier, name, type) VALUES("eip155:1/erc20:0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c", "yearn Curve.fi yDAI/yUSDC/yUSDT/yTUSD", "C"); INSERT INTO evm_tokens(identifier, token_kind, chain, address, decimals, protocol) VALUES("eip155:1/erc20:0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c", "A", 1, "0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c", 18, "yearn_vaults_v1"); INSERT INTO common_asset_details(identifier, symbol, coingecko, cryptocompare, forked, started, swapped_for) VALUES("eip155:1/erc20:0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c", "yyDAI+yUSDC+yUSDT+yTUSD", "yvault-lp-ycurve", "", NULL, 1596091760, NULL); INSERT INTO underlying_tokens_list(identifier, weight, parent_token_entry) VALUES("eip155:1/erc20:0xdF5e0e81Dff6FAF3A7e52BA697820c5e32D806A8", "1", "eip155:1/erc20:0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c");
+    """  # noqa: E501
+    update_patch = mock_asset_updates(
+        original_requests_get=requests.get,
+        latest=999999991,
+        updates={'999999991': {
+            'changes': 1,
+            'min_schema_version': GLOBAL_DB_VERSION,
+            'max_schema_version': GLOBAL_DB_VERSION,
+        }},
+        sql_actions={'999999991': {'assets': update_1, 'collections': '', 'mappings': ''}},
+    )
+    globaldb.add_setting_value(ASSETS_VERSION_KEY, 999999990)
+    with update_patch:
+        response = requests.get(
+            api_url_for(
+                rotkehlchen_api_server,
+                'assetupdatesresource',
+            ),
+        )
+        result = assert_proper_sync_response_with_result(response)
+        assert result['local'] == 999999990
+        assert result['remote'] == 999999991
+        assert result['new_changes'] == 1
+
+    token = globaldb.get_evm_token(
+        address=string_to_evm_address('0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c'),
+        chain_id=ChainID.ETHEREUM,
+    )
+    assert token is not None
+    assert token.underlying_tokens == [UnderlyingToken(
+        address=string_to_evm_address('0xdF5e0e81Dff6FAF3A7e52BA697820c5e32D806A8'),
+        token_kind=EvmTokenKind.ERC20,
+        weight=ONE,
+    )]
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
@@ -851,7 +922,7 @@ def test_update_no_user_loggedin(rotkehlchen_api_server: 'APIServer') -> None:
 
 
 def test_async_db_reset(rotkehlchen_api_server: 'APIServer') -> None:
-    """Test the endpoint for reseting the globaldb using an async task"""
+    """Test the endpoint for resetting the globaldb using an async task"""
     asset_id = 'my_custom_id'
     GlobalDBHandler.add_asset(CryptoAsset.initialize(
         identifier=asset_id,

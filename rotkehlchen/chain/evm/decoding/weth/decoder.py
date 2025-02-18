@@ -2,7 +2,6 @@ import logging
 from abc import ABC
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import CryptoAsset, EvmToken
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
@@ -18,7 +17,7 @@ from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
@@ -61,8 +60,8 @@ class WethDecoderBase(DecoderInterface, ABC):
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_deposit_event(self, context: DecoderContext) -> DecodingOutput:
-        depositor = hex_or_bytes_to_address(context.tx_log.topics[1])
-        deposited_amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        depositor = bytes_to_address(context.tx_log.topics[1])
+        deposited_amount_raw = int.from_bytes(context.tx_log.data[:32])
         deposited_amount = asset_normalized_value(
             amount=deposited_amount_raw,
             asset=self.base_asset,
@@ -73,12 +72,12 @@ class WethDecoderBase(DecoderInterface, ABC):
             if (
                 event.event_type == HistoryEventType.SPEND and
                 event.address == self.wrapped_token.evm_address and
-                event.balance.amount == deposited_amount and
+                event.amount == deposited_amount and
                 event.asset == self.base_asset
             ):
                 event.counterparty = self.counterparty
                 event.event_type = HistoryEventType.DEPOSIT
-                event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                event.event_subtype = HistoryEventSubType.DEPOSIT_FOR_WRAPPED
                 event.notes = f'Wrap {deposited_amount} {self.base_asset.symbol} in {self.wrapped_token.symbol}'  # noqa: E501
                 out_event = event
 
@@ -91,17 +90,23 @@ class WethDecoderBase(DecoderInterface, ABC):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
             asset=self.wrapped_token,
-            balance=Balance(amount=deposited_amount),
+            amount=deposited_amount,
             location_label=depositor,
             counterparty=self.counterparty,
             notes=f'Receive {deposited_amount} {self.wrapped_token.symbol}',
             address=context.transaction.to_address,
         )
+        maybe_reshuffle_events(
+            ordered_events=[out_event, in_event],
+            events_list=context.decoded_events + [in_event],
+        )
         return DecodingOutput(event=in_event)
 
     def _decode_withdrawal_event(self, context: DecoderContext) -> DecodingOutput:
-        withdrawer = hex_or_bytes_to_address(context.tx_log.topics[1])
-        withdrawn_amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        if not self.base.is_tracked(withdrawer := bytes_to_address(context.tx_log.topics[1])):
+            return DEFAULT_DECODING_OUTPUT
+
+        withdrawn_amount_raw = int.from_bytes(context.tx_log.data[:32])
         withdrawn_amount = asset_normalized_value(
             amount=withdrawn_amount_raw,
             asset=self.base_asset,
@@ -111,7 +116,7 @@ class WethDecoderBase(DecoderInterface, ABC):
             if (
                 event.event_type == HistoryEventType.RECEIVE and
                 event.address == self.wrapped_token.evm_address and
-                event.balance.amount == withdrawn_amount and
+                event.amount == withdrawn_amount and
                 event.asset == self.base_asset
             ):
                 in_event = event
@@ -127,7 +132,7 @@ class WethDecoderBase(DecoderInterface, ABC):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.RETURN_WRAPPED,
             asset=self.wrapped_token,
-            balance=Balance(amount=withdrawn_amount),
+            amount=withdrawn_amount,
             location_label=withdrawer,
             counterparty=self.counterparty,
             notes=f'Unwrap {withdrawn_amount} {self.wrapped_token.symbol}',

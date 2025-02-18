@@ -9,16 +9,15 @@ def fixture_binance_location() -> Location:
     return Location.BINANCE
 
 
-@pytest.fixture()
+@pytest.fixture
 def function_scope_binance(
         database,
         inquirer,  # pylint: disable=unused-argument
         function_scope_messages_aggregator,
         binance_location,
 ):
-    binance = create_test_binance(
+    return create_test_binance(
         database=database,
         msg_aggregator=function_scope_messages_aggregator,
         location=binance_location,
     )
-    return binance

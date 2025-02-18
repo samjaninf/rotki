@@ -1,130 +1,139 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { startPromise } from '@shared/utils';
 import {
   type AccountManageState,
   createNewBlockchainAccount,
-  editBlockchainAccount,
 } from '@/composables/accounts/blockchain/use-account-manage';
-import type { BlockchainAccountWithBalance } from '@/types/blockchain/accounts';
+import { NoteLocation } from '@/types/notes';
+import { BalanceSource, DashboardTableType } from '@/types/settings/frontend-settings';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useAccountLoading } from '@/composables/accounts/loading';
+import { useBlockchainAggregatedBalances } from '@/composables/blockchain/balances/aggregated';
+import AssetBalances from '@/components/AssetBalances.vue';
+import VisibleColumnsSelector from '@/components/dashboard/VisibleColumnsSelector.vue';
+import ChainSelect from '@/components/accounts/blockchain/ChainSelect.vue';
+import CardTitle from '@/components/typography/CardTitle.vue';
+import HideSmallBalances from '@/components/settings/HideSmallBalances.vue';
+import PriceRefresh from '@/components/helper/PriceRefresh.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import BlockchainBalanceRefreshBehaviourMenu
+  from '@/components/dashboard/blockchain-balance/BlockchainBalanceRefreshBehaviourMenu.vue';
+import { useBlockchainAccountLoading } from '@/composables/accounts/blockchain/use-account-loading';
+import { useRefresh } from '@/composables/balances/refresh';
+import SummaryCardRefreshMenu from '@/components/dashboard/summary-card/SummaryCardRefreshMenu.vue';
 
-type Busy = Record<string, ComputedRef<boolean>>;
+definePage({
+  meta: {
+    canNavigateBack: true,
+    noteLocation: NoteLocation.BALANCES_BLOCKCHAIN,
+  },
+  name: 'balances-blockchain',
+  props: true,
+});
 
 const account = ref<AccountManageState>();
+const search = ref('');
+const chainsFilter = ref<string[]>([]);
 
 const { t } = useI18n();
-const router = useRouter();
-const route = useRoute();
-
-const { getBlockchainAccounts } = useBlockchainStore();
+const route = useRoute('balances-blockchain');
 
 const { blockchainAssets } = useBlockchainAggregatedBalances();
-const { isBlockchainLoading, isAccountOperationRunning } = useAccountLoading();
-const { supportedChains, txEvmChains } = useSupportedChains();
+const { isBlockchainLoading } = useAccountLoading();
+const { dashboardTablesVisibleColumns } = storeToRefs(useFrontendSettingsStore());
 
-const busy = computed<Busy>(() => Object.fromEntries(
-  get(supportedChains).map(chain => ([chain.id, isAccountOperationRunning(chain.id)])),
-));
+const { isDetectingTokens, refreshDisabled } = useBlockchainAccountLoading();
 
-const customTitles = computed<Record<string, string>>(() => ({
-  [Blockchain.ETH2]: t('blockchain_balances.balances.eth2'),
-}));
+const tableType = DashboardTableType.BLOCKCHAIN_ASSET_BALANCES;
 
-const accounts = computed<Record<string, BlockchainAccountWithBalance[]>>(() => Object.fromEntries(
-  get(supportedChains).map(chain => [
-    chain.id,
-    getBlockchainAccounts(chain.id),
-  ]),
-));
+const aggregatedBalances = blockchainAssets(chainsFilter);
 
-const showDetectEvmAccountsButton: Readonly<Ref<boolean>> = computedEager(
-  () => get(txEvmChains).some(chain => get(accounts)[chain.id]?.length > 0),
-);
-
-const loopringAccounts = computed<BlockchainAccountWithBalance[]>(() => getBlockchainAccounts('loopring'));
-
-const { getChainName } = useSupportedChains();
-
-function getTitle(chain: string) {
-  const name = getChainName(chain);
-  const title = get(customTitles)[chain] ?? toSentenceCase(get(name));
-
-  return t('blockchain_balances.balances.common', { chain: title });
-}
-
-function editAccount(balanceAccount: BlockchainAccountWithBalance) {
-  set(account, editBlockchainAccount(balanceAccount));
-}
-
-onMounted(async () => {
-  const query = get(route).query;
+onMounted(() => {
+  const { query } = get(route);
 
   if (query.add) {
-    set(account, createNewBlockchainAccount());
-    await router.replace({ query: {} });
+    startPromise(nextTick(() => {
+      set(account, createNewBlockchainAccount());
+    }));
   }
 });
+
+const { handleBlockchainRefresh } = useRefresh();
 </script>
 
 <template>
   <TablePageLayout
     :title="[
-      t('navigation_menu.accounts_balances'),
-      t('navigation_menu.accounts_balances_sub.blockchain_balances'),
+      t('navigation_menu.balances'),
+      t('navigation_menu.balances_sub.blockchain_balances'),
     ]"
   >
     <template #buttons>
       <PriceRefresh />
-      <RuiButton
-        v-blur
-        data-cy="add-blockchain-balance"
-        color="primary"
-        @click="account = createNewBlockchainAccount()"
-      >
-        <template #prepend>
-          <RuiIcon name="add-line" />
-        </template>
-        {{ t('blockchain_balances.add_account') }}
-      </RuiButton>
+      <HideSmallBalances :source="BalanceSource.BLOCKCHAIN" />
     </template>
 
     <div class="flex flex-col gap-8">
       <RuiCard>
-        <template #header>
-          <CardTitle>{{ t('blockchain_balances.title') }}</CardTitle>
-        </template>
+        <div class="pb-6 flex flex-wrap xl:flex-nowrap justify-between gap-2 items-center">
+          <div class="flex flex-row items-center gap-2">
+            <SummaryCardRefreshMenu
+              data-cy="blockchain-balances-refresh-menu"
+              :disabled="refreshDisabled"
+              :loading="isDetectingTokens"
+              :tooltip="t('account_balances.refresh_tooltip')"
+              @refresh="handleBlockchainRefresh()"
+            >
+              <template #refreshMenu>
+                <BlockchainBalanceRefreshBehaviourMenu />
+              </template>
+            </SummaryCardRefreshMenu>
+            <CardTitle class="ml-2">
+              {{ t('blockchain_balances.title') }}
+            </CardTitle>
+          </div>
+          <CardTitle class="order-0 whitespace-nowrap" />
+          <div class="order-3 xl:order-1 flex flex-wrap md:flex-nowrap grow justify-end w-full xl:w-auto items-center gap-2 overflow-hidden pt-1.5 -mt-1 xl:pl-6">
+            <ChainSelect
+              v-model="chainsFilter"
+              class="w-full xl:w-[30rem]"
+              dense
+              hide-details
+              clearable
+              chips
+            />
+            <RuiTextField
+              v-model="search"
+              variant="outlined"
+              color="primary"
+              dense
+              prepend-icon="lu-search"
+              :label="t('common.actions.search')"
+              hide-details
+              clearable
+              class="w-full xl:w-[16rem]"
+              @click:clear="search = ''"
+            />
+          </div>
+          <VisibleColumnsSelector
+            class="order-2"
+            :group="tableType"
+            :group-label="t('blockchain_balances.group_label')"
+          />
+        </div>
 
-        <AccountDialog v-model="account" />
         <AssetBalances
           data-cy="blockchain-asset-balances"
           :loading="isBlockchainLoading"
-          :title="t('blockchain_balances.per_asset.title')"
-          :balances="blockchainAssets"
+          :balances="aggregatedBalances"
+          :search="search"
+          :details="{
+            chains: chainsFilter,
+          }"
+          :visible-columns="dashboardTablesVisibleColumns[tableType]"
           sticky-header
         />
       </RuiCard>
-
-      <div>
-        <DetectEvmAccounts v-if="showDetectEvmAccountsButton" />
-      </div>
-
-      <template v-for="chain in supportedChains">
-        <AccountBalances
-          v-if="accounts[chain.id] && accounts[chain.id].length > 0 || busy[chain.id].value"
-          :key="chain.id"
-          :title="getTitle(chain.id)"
-          :blockchain="chain.id"
-          :balances="accounts[chain.id]"
-          @edit-account="editAccount($event)"
-        />
-      </template>
-
-      <AccountBalances
-        v-if="loopringAccounts.length > 0"
-        loopring
-        :title="t('blockchain_balances.balances.common', { chain: 'Loopring' })"
-        :blockchain="Blockchain.ETH"
-        :balances="loopringAccounts"
-      />
     </div>
   </TablePageLayout>
 </template>

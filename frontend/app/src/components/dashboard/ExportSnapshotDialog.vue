@@ -1,32 +1,37 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
-import type { BigNumber } from '@rotki/common';
-import type { Message } from '@rotki/common/lib/messages';
+import { downloadFileByBlobResponse } from '@/utils/download';
+import { bigNumberifyFromRef } from '@/utils/bignumbers';
+import { useStatisticsStore } from '@/store/statistics';
+import { useConfirmStore } from '@/store/confirm';
+import { useMessageStore } from '@/store/message';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useSnapshotApi } from '@/composables/api/settings/snapshot-api';
+import { useInterop } from '@/composables/electron-interop';
+import EditSnapshotDialog from '@/components/dashboard/edit-snapshot/EditSnapshotDialog.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import type { BigNumber, Message } from '@rotki/common';
+
+const display = defineModel<boolean>({ default: false, required: true });
 
 const props = withDefaults(
   defineProps<{
-    value?: boolean;
     timestamp?: number;
     balance?: number;
   }>(),
   {
-    value: false,
-    timestamp: 0,
     balance: 0,
+    timestamp: 0,
   },
 );
 
-const emit = defineEmits<{
-  (e: 'input', visible: boolean): void;
-}>();
-
 const { t } = useI18n();
 
-const { timestamp, balance } = toRefs(props);
+const { balance, timestamp } = toRefs(props);
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
 const editMode = ref<boolean>(false);
-const display = useSimpleVModel(props, emit);
 const { setMessage } = useMessageStore();
 const snapshotApi = useSnapshotApi();
 const { appSession, openDirectory } = useInterop();
@@ -65,11 +70,11 @@ async function exportSnapshotCSV() {
       });
 
       message = {
-        title: t('dashboard.snapshot.download.message.title').toString(),
         description: success
-          ? t('dashboard.snapshot.download.message.success').toString()
-          : t('dashboard.snapshot.download.message.failure').toString(),
+          ? t('dashboard.snapshot.download.message.success')
+          : t('dashboard.snapshot.download.message.failure'),
         success,
+        title: t('dashboard.snapshot.download.message.title'),
       };
 
       set(display, false);
@@ -80,9 +85,9 @@ async function exportSnapshotCSV() {
   }
   catch (error: any) {
     message = {
-      title: t('dashboard.snapshot.download.message.title').toString(),
       description: error.message,
       success: false,
+      title: t('dashboard.snapshot.download.message.title'),
     };
   }
 
@@ -93,8 +98,7 @@ async function exportSnapshotCSV() {
 async function exportSnapshot() {
   if (appSession)
     await exportSnapshotCSV();
-  else
-    await downloadSnapshot();
+  else await downloadSnapshot();
 }
 
 const { fetchNetValue } = useStatisticsStore();
@@ -108,11 +112,11 @@ async function deleteSnapshot() {
     });
 
     message = {
-      title: t('dashboard.snapshot.delete.message.title').toString(),
       description: success
-        ? t('dashboard.snapshot.delete.message.success').toString()
-        : t('dashboard.snapshot.delete.message.failure').toString(),
+        ? t('dashboard.snapshot.delete.message.success')
+        : t('dashboard.snapshot.delete.message.failure'),
       success,
+      title: t('dashboard.snapshot.delete.message.title'),
     };
 
     set(display, false);
@@ -120,9 +124,9 @@ async function deleteSnapshot() {
   }
   catch (error: any) {
     message = {
-      title: t('dashboard.snapshot.download.message.title').toString(),
       description: error.message,
       success: false,
+      title: t('dashboard.snapshot.download.message.title'),
     };
   }
 
@@ -139,8 +143,8 @@ const { show } = useConfirmStore();
 function showDeleteConfirmation() {
   show(
     {
-      title: t('dashboard.snapshot.delete.dialog.title'),
       message: t('dashboard.snapshot.delete.dialog.message'),
+      title: t('dashboard.snapshot.delete.dialog.title'),
     },
     deleteSnapshot,
   );
@@ -185,7 +189,7 @@ function showDeleteConfirmation() {
           @click="editMode = true"
         >
           <template #prepend>
-            <RuiIcon name="edit-line" />
+            <RuiIcon name="lu-pencil-line" />
           </template>
           {{ t('common.actions.edit') }}
         </RuiButton>
@@ -194,7 +198,7 @@ function showDeleteConfirmation() {
           @click="showDeleteConfirmation()"
         >
           <template #prepend>
-            <RuiIcon name="delete-bin-5-line" />
+            <RuiIcon name="lu-trash-2" />
           </template>
           {{ t('common.actions.delete') }}
         </RuiButton>
@@ -204,7 +208,7 @@ function showDeleteConfirmation() {
           @click="exportSnapshot()"
         >
           <template #prepend>
-            <RuiIcon name="file-download-line" />
+            <RuiIcon name="lu-file-down" />
           </template>
           {{ t('common.actions.download') }}
         </RuiButton>

@@ -1,23 +1,28 @@
 <script setup lang="ts">
 import { displayDateFormatter } from '@/data/date-formatter';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useScramble } from '@/composables/scramble';
+import { useCopy } from '@/composables/copy';
+import CopyTooltip from '@/components/helper/CopyTooltip.vue';
 
 const props = withDefaults(
   defineProps<{
-    timestamp: number;
+    timestamp: number | string;
     showTimezone?: boolean;
     noTime?: boolean;
     milliseconds?: boolean;
     hideTooltip?: boolean;
   }>(),
   {
-    showTimezone: false,
-    noTime: false,
-    milliseconds: false,
     hideTooltip: false,
+    milliseconds: false,
+    noTime: false,
+    showTimezone: false,
   },
 );
 
-const { timestamp, showTimezone, noTime, milliseconds } = toRefs(props);
+const { milliseconds, noTime, showTimezone, timestamp } = toRefs(props);
 const { dateDisplayFormat } = storeToRefs(useGeneralSettingsStore());
 const { shouldShowAmount } = storeToRefs(useSessionSettingsStore());
 
@@ -34,8 +39,9 @@ const dateFormat = computed<string>(() => {
 
 const { scrambleTimestamp } = useScramble();
 
+const numericTimestamp = useToNumber(timestamp);
 const reactiveScramble = reactify(scrambleTimestamp);
-const displayTimestamp = reactiveScramble(timestamp, milliseconds);
+const displayTimestamp = reactiveScramble(numericTimestamp, milliseconds);
 
 const date = computed(() => {
   const display = get(displayTimestamp);
@@ -55,11 +61,9 @@ const showTooltip = computed(() => {
   return !timezone && (format.includes('%z') || format.includes('%Z'));
 });
 
-const splittedByMillisecondsPart = computed(() =>
-  get(formattedDate).split('.'),
-);
+const splitByMillisecondsPart = computed(() => get(formattedDate).split('.'));
 
-const { copy, copied } = useCopy(formattedDate);
+const { copied, copy } = useCopy(formattedDate);
 </script>
 
 <template>
@@ -71,12 +75,12 @@ const { copy, copied } = useCopy(formattedDate);
     :disabled="hideTooltip"
     @click="copy()"
   >
-    {{ splittedByMillisecondsPart[0] }}
+    {{ splitByMillisecondsPart[0] }}
     <span
-      v-if="splittedByMillisecondsPart[1]"
+      v-if="splitByMillisecondsPart[1]"
       class="text-[0.625rem]"
     >
-      .{{ splittedByMillisecondsPart[1] }}
+      .{{ splitByMillisecondsPart[1] }}
     </span>
   </CopyTooltip>
 </template>

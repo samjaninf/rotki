@@ -20,8 +20,8 @@ from rotkehlchen.types import ChecksumEvmAddress, EvmTokenKind
 from .constants import CPT_COMPOUND_V3
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.evm.decoding.decoder import EVMTransactionDecoder
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -34,13 +34,68 @@ class CompoundArguments(NamedTuple):
 
 
 class Compoundv3Balances(ProtocolWithBalance):
-    def __init__(self, database: 'DBHandler', evm_inquirer: 'EvmNodeInquirer'):
+    """
+    It seems that for compound there is the various COMET contracts
+    which are the proxies to which the user supplies collateral. We
+    have those marked with compound-v3 protocol in the global DB.
+
+    The underlying token of the cometContract is what is primarily borrowed
+    from it. For example for:
+    https://basescan.org/address/0xb125e6687d4313864e53df431d5425969c15eb2f#readProxyContract
+    it's USDC.
+
+    If you supply USDC to it you can get the balance of your supplied collateral by
+    balanceOf on that contract. If you borrow USDC you can get it from borrowBalanceOf
+    on that contract.
+
+    But you can also supply other types of collateral to this contract. And to see those
+    the user needs to call `userCollateral` on that contract with user address and
+    collateral address as arguments.
+    """
+
+    def __init__(
+            self,
+            evm_inquirer: 'EvmNodeInquirer',
+            tx_decoder: 'EVMTransactionDecoder',
+    ):
         super().__init__(
-            database=database,
             evm_inquirer=evm_inquirer,
+            tx_decoder=tx_decoder,
             counterparty=CPT_COMPOUND_V3,
-            deposit_event_types={(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET)},
+            deposit_event_types=set(),
         )
+
+    def _extract_unique_collateral_tokens(self) -> dict[ChecksumEvmAddress, set[CompoundArguments]]:  # noqa: E501
+        """Fetch the unique collateral tokens we need to query the comet contracts for"""
+        unique_collaterals: dict[ChecksumEvmAddress, set[CompoundArguments]] = defaultdict(set)
+        for user_address, events in self.addresses_with_activity(
+            event_types={(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_FOR_WRAPPED)},
+        ).items():
+            for event in events:
+                if event.address is None:
+                    continue
+
+                try:
+                    compound_token = event.asset.resolve_to_evm_token()
+                except (UnknownAsset, WrongAssetType):
+                    log.warning(
+                        'Skipping compound v3 supply event during balance query since the asset '
+                        'is not an EVM token so not needed in COMET query',
+                    )
+                    continue
+
+                unique_collaterals[event.address].add(
+                    CompoundArguments(
+                        user_address=user_address,
+                        compound_asset=EvmToken(evm_address_to_identifier(
+                            address=compound_token.evm_address,
+                            chain_id=self.evm_inquirer.chain_id,
+                            token_type=EvmTokenKind.ERC20,
+                        )),
+                    ),
+                )
+
+        return unique_collaterals
 
     def _extract_unique_borrowed_tokens(self) -> tuple[dict['EvmToken', set['ChecksumEvmAddress']], dict['ChecksumEvmAddress', 'EvmToken']]:  # noqa: E501
         """
@@ -57,6 +112,7 @@ class Compoundv3Balances(ProtocolWithBalance):
             for event in events:
                 if event.address is None:
                     continue
+
                 try:
                     compound_token = EvmToken(evm_address_to_identifier(
                         address=event.address,
@@ -78,7 +134,7 @@ class Compoundv3Balances(ProtocolWithBalance):
                 except (UnknownAsset, WrongAssetType) as e:
                     log.error(
                         "Failed to resolve compound v3 borrow event's token and/or its "
-                        f'underlying token in {event.tx_hash.hex()} due to {e!s}. Skipping.',
+                        f'underlying token in {event.location} {event.tx_hash.hex()} due to {e!s}. Skipping.',  # noqa: E501
                     )
                     continue
 
@@ -87,10 +143,73 @@ class Compoundv3Balances(ProtocolWithBalance):
 
         return unique_borrows, underlying_tokens
 
-    def query_balances(self) -> 'BalancesSheetType':
+    def query_collateral(self, balances: BalancesSheetType) -> 'BalancesSheetType':
+        """Query for the collateral assets saved in the protocol that are in the
+        COMET Contract and not as balanceOf in those contracts.
         """
-        Query liabilities for Compound v3 open positions and return them. The assets are handled
-        by the wrapped compound v3 tokens, so those are not queried here.
+        unique_collaterals_mapping = self._extract_unique_collateral_tokens()
+        if len(unique_collaterals_mapping) == 0:
+            return balances
+
+        calls: list[tuple[ChecksumEvmAddress, str]] = []
+        calls_arguments: list[CompoundArguments] = []
+        comet_contract = EvmContract(
+            address=ZERO_ADDRESS,  # not used here
+            abi=self.evm_inquirer.contracts.abi('COMPOUND_V3_TOKEN'),
+            deployed_block=0,  # not used here
+        )
+        for comet_address, collateral_args in unique_collaterals_mapping.items():
+            for arguments in collateral_args:
+                calls_arguments.append(arguments)
+                calls.append((
+                    comet_address,
+                    comet_contract.encode(
+                        method_name='userCollateral',
+                        arguments=[arguments.user_address, arguments.compound_asset.evm_address],
+                    ),
+                ))
+
+        try:
+            call_output = self.evm_inquirer.multicall(calls=calls)
+        except RemoteError as e:
+            log.error(f'Failed to query Compound v3 collateral due to {e!s}')
+            return balances
+
+        for idx, result in enumerate(call_output):
+            raw_amount = comet_contract.decode(
+                result=result,
+                method_name='userCollateral',
+                arguments=[
+                    calls_arguments[idx].user_address,
+                    calls_arguments[idx].compound_asset.evm_address,
+                ],
+            )[0]
+            if raw_amount <= 0:
+                continue
+
+            collateral_asset = calls_arguments[idx].compound_asset
+            collateral_balance = token_normalized_value_decimals(
+                token_amount=raw_amount,
+                token_decimals=collateral_asset.decimals,
+            )
+
+            if (asset_price := Inquirer.find_usd_price(asset=collateral_asset)) == ZERO:
+                log.error(
+                    f'Failed to query price of {collateral_asset!s} '
+                    'while fetching the collateral balances of Compound v3',
+                )
+                continue
+
+            balances[calls_arguments[idx].user_address].assets[collateral_asset] += Balance(
+                amount=collateral_balance,
+                usd_value=collateral_balance * asset_price,
+            )
+
+        return balances
+
+    def query_liabilities(self) -> 'BalancesSheetType':
+        """
+        Query liabilities for Compound v3 open positions and return them.
 
         It calls the Compound token contracts to get the borrow balances of the addresses and
         tokens whose borrow history events are found in the userDB.
@@ -129,12 +248,16 @@ class Compoundv3Balances(ProtocolWithBalance):
             return balances
 
         for idx, result in enumerate(call_output):
+            raw_amount = token_contract.decode(
+                result=result,
+                method_name='borrowBalanceOf',
+                arguments=[calls_arguments[idx].user_address],
+            )[0]
+            if raw_amount <= 0:
+                continue
+
             borrow_balance = token_normalized_value_decimals(
-                token_amount=token_contract.decode(
-                    result=result,
-                    method_name='borrowBalanceOf',
-                    arguments=[calls_arguments[idx].user_address],
-                )[0],
+                token_amount=raw_amount,
                 token_decimals=calls_arguments[idx].compound_asset.decimals,
             )
 
@@ -142,7 +265,7 @@ class Compoundv3Balances(ProtocolWithBalance):
             if (asset_price := Inquirer.find_usd_price(asset=underlying_token[calls[idx][0]])) == ZERO:  # noqa: E501
                 log.error(
                     f'Failed to query price of {underlying_token[calls[idx][0]]!s} '
-                    'while fetching the balances of Compound v3',
+                    'while fetching the liability balances of Compound v3',
                 )
                 continue
 
@@ -152,3 +275,7 @@ class Compoundv3Balances(ProtocolWithBalance):
             )
 
         return balances
+
+    def query_balances(self) -> 'BalancesSheetType':
+        balances = self.query_liabilities()
+        return self.query_collateral(balances)

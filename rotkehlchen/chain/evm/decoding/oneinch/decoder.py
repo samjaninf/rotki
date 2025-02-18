@@ -14,9 +14,9 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.types import ChecksumEvmAddress
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
 
 from .constants import CPT_ONEINCH, ONEINCH_ICON
 
@@ -60,14 +60,14 @@ class OneinchCommonDecoder(DecoderInterface, ABC):
         out_event = in_event = None
         for event in context.decoded_events:
             # Now find the sending and receiving events
-            if event.event_type == HistoryEventType.SPEND and event.location_label == sender and spent_amount == event.balance.amount and source_token == event.asset:  # noqa: E501
+            if event.event_type == HistoryEventType.SPEND and event.location_label == sender and spent_amount == event.amount and source_token == event.asset:  # noqa: E501
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.SPEND
                 event.counterparty = self.counterparty
                 event.notes = f'Swap {spent_amount} {source_token.symbol} in {self.counterparty}'
                 event.address = self.router_address
                 out_event = event
-            elif event.event_type == HistoryEventType.RECEIVE and event.location_label == sender and receiver == event.location_label and return_amount == event.balance.amount and destination_token == event.asset:  # noqa: E501
+            elif event.event_type == HistoryEventType.RECEIVE and event.location_label == sender and receiver == event.location_label and return_amount == event.amount and destination_token == event.asset:  # noqa: E501
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
                 event.counterparty = self.counterparty

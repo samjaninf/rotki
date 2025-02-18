@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { type NoteFormat, NoteType } from '@/composables/history/events/notes';
-import type { BigNumber } from '@rotki/common';
+import { type BigNumber, Blockchain } from '@rotki/common';
+import { type NoteFormat, NoteType, useHistoryEventNote } from '@/composables/history/events/notes';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import HashLink from '@/components/helper/HashLink.vue';
+import Flag from '@/components/common/Flag.vue';
 import type { ExplorerUrls } from '@/types/asset/asset-urls';
 
 defineOptions({
@@ -13,39 +16,36 @@ const props = withDefaults(
     notes?: string;
     amount?: BigNumber;
     asset?: string;
-    chain?: Blockchain;
+    chain?: string;
     noTxHash?: boolean;
     validatorIndex?: number;
     blockNumber?: number;
     counterparty?: string;
   }>(),
   {
-    notes: '',
     amount: undefined,
     asset: '',
+    blockNumber: undefined,
     chain: Blockchain.ETH,
+    notes: '',
     noTxHash: false,
     validatorIndex: undefined,
-    blockNumber: undefined,
   },
 );
 
-const { notes, amount, asset, noTxHash, validatorIndex, blockNumber, counterparty }
-  = toRefs(props);
+const { amount, asset, blockNumber, counterparty, notes, noTxHash, validatorIndex } = toRefs(props);
 
 const { formatNotes } = useHistoryEventNote();
 
 const formattedNotes: ComputedRef<NoteFormat[]> = formatNotes({
-  notes,
   amount,
   assetId: asset,
-  noTxHash,
-  validatorIndex,
   blockNumber,
   counterparty,
+  notes,
+  noTxHash,
+  validatorIndex,
 });
-
-const css = useCssModule();
 
 function isLinkType(t: any): t is keyof ExplorerUrls {
   return [NoteType.TX, NoteType.ADDRESS, NoteType.BLOCK].includes(t);
@@ -53,14 +53,29 @@ function isLinkType(t: any): t is keyof ExplorerUrls {
 </script>
 
 <template>
-  <div>
-    <template v-for="(note, index) in formattedNotes">
+  <div
+    v-bind="$attrs"
+    class="inline"
+  >
+    <template
+      v-for="(note, index) in formattedNotes"
+      :key="index"
+    >
+      <template v-if="note.type === NoteType.FLAG && note.countryCode">
+        <Flag
+          :iso="note.countryCode"
+          class="mx-1 rounded-sm"
+        />
+      </template>
+      <template v-else-if="note.type === NoteType.WORD && note.word">
+        {{ ` ${note.word} ` }}
+      </template>
       <HashLink
-        v-if="note.showHashLink && isLinkType(note.type)"
+        v-else-if="note.showHashLink && isLinkType(note.type)"
         :key="index"
         class="inline-flex"
         :class="{
-          [css.address]: true,
+          [$style.address]: true,
           'pl-2': !note.showIcon,
         }"
         :text="note.address"
@@ -68,14 +83,16 @@ function isLinkType(t: any): t is keyof ExplorerUrls {
         :chain="note.chain ?? chain"
         :show-icon="!!note.showIcon"
       />
-
       <AmountDisplay
         v-else-if="note.type === NoteType.AMOUNT && note.amount"
         :key="`${index}-amount`"
+        no-truncate
         :asset="note.asset"
         :value="note.amount"
+        :resolution-options="{
+          collectionParent: false,
+        }"
       />
-
       <ExternalLink
         v-else-if="note.type === NoteType.URL && note.url"
         :key="`${index}-link`"
@@ -85,9 +102,8 @@ function isLinkType(t: any): t is keyof ExplorerUrls {
         color="primary"
         custom
       />
-
       <template v-else>
-        {{ note.word }}
+        {{ ` ${note.word} ` }}
       </template>
     </template>
   </div>

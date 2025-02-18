@@ -1,17 +1,41 @@
 <script setup lang="ts">
+import { omit } from 'es-toolkit';
 import { Routes } from '@/router/routes';
 import { Section } from '@/types/status';
 import { IgnoreActionType } from '@/types/history/ignored';
 import { SavedFilterLocation } from '@/types/filtering';
-import type { Writeable } from '@/types';
-import type {
-  Trade,
-  TradeEntry,
-  TradeRequestPayload,
-} from '@/types/history/trade';
-import type { Collection } from '@/types/collection';
-import type { Filters, Matcher } from '@/composables/filters/trades';
-import type { DataTableColumn } from '@rotki/ui-library-compat';
+import { useConfirmStore } from '@/store/confirm';
+import { useStatusStore } from '@/store/status';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useIgnore } from '@/composables/history';
+import { useHistoryAutoRefresh } from '@/composables/history/auto-refresh';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useCommonTableProps } from '@/composables/use-common-table-props';
+import { useTrades } from '@/composables/history/trades';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { type Filters, type Matcher, useTradeFilters } from '@/composables/filters/trades';
+import ExternalTradeFormDialog from '@/components/history/trades/ExternalTradeFormDialog.vue';
+import UpgradeRow from '@/components/history/UpgradeRow.vue';
+import TradeDetails from '@/components/history/trades/TradeDetails.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import IgnoredInAcountingIcon from '@/components/history/IgnoredInAcountingIcon.vue';
+import CollectionHandler from '@/components/helper/CollectionHandler.vue';
+import IgnoreButtons from '@/components/history/IgnoreButtons.vue';
+import TableFilter from '@/components/table-filter/TableFilter.vue';
+import TableStatusFilter from '@/components/helper/TableStatusFilter.vue';
+import HistoryTableActions from '@/components/history/HistoryTableActions.vue';
+import NavigatorLink from '@/components/helper/NavigatorLink.vue';
+import CardTitle from '@/components/typography/CardTitle.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import { createNewTrade } from '@/utils/history/trades';
+import type { Trade, TradeEntry, TradeRequestPayload } from '@/types/history/trade';
+import type { DataTableColumn } from '@rotki/ui-library';
+import type { Writeable } from '@rotki/common';
 
 const props = withDefaults(
   defineProps<{
@@ -26,75 +50,84 @@ const { t } = useI18n();
 
 const { locationOverview } = toRefs(props);
 
-const hideIgnoredTrades: Ref<boolean> = ref(false);
-const showIgnoredAssets: Ref<boolean> = ref(false);
+const hideIgnoredTrades = ref<boolean>(false);
+const showIgnoredAssets = ref<boolean>(false);
 
 const router = useRouter();
 const route = useRoute();
 
 const mainPage = computed(() => get(locationOverview) === '');
 
-const tableHeaders = computed<DataTableColumn[]>(() => {
+const tableHeaders = computed<DataTableColumn<TradeEntry>[]>(() => {
   const overview = !get(mainPage);
-  const headers: DataTableColumn[] = [
+  const headers: DataTableColumn<TradeEntry>[] = [
     {
-      label: '',
-      key: 'ignoredInAccounting',
-      class: !overview ? '!p-0' : '',
       cellClass: !overview ? '!p-0' : '!w-0 !max-w-[4rem]',
-    },
-    {
-      label: t('common.location'),
-      key: 'location',
-      class: '!w-[7.5rem]',
-      cellClass: '!py-1',
-      align: 'center',
-      sortable: true,
-    },
-    {
-      label: t('closed_trades.headers.action'),
-      key: 'type',
-      align: overview ? 'start' : 'center',
-      class: `text-no-wrap${overview ? ' !pl-0' : ''}`,
-      cellClass: overview ? '!pl-0' : 'py-1',
-      sortable: true,
-    },
-    {
-      label: t('common.amount'),
-      key: 'amount',
-      align: 'end',
-      sortable: true,
-    },
-    {
-      label: t('closed_trades.headers.base'),
-      key: 'baseAsset',
-      cellClass: '!py-1',
-    },
-    {
+      class: !overview ? '!p-0' : '',
+      key: 'ignoredInAccounting',
       label: '',
-      key: 'description',
     },
     {
-      label: t('closed_trades.headers.quote'),
-      key: 'quoteAsset',
-      cellClass: '!py-1',
-    },
-    {
-      label: t('closed_trades.headers.rate'),
-      key: 'rate',
-      align: 'end',
-      sortable: true,
-    },
-    {
-      label: t('common.datetime'),
-      key: 'timestamp',
-      sortable: true,
-    },
-    {
-      label: t('common.actions_text'),
-      key: 'actions',
       align: 'center',
-      class: '!w-px',
+      cellClass: '!py-1',
+      class: '!w-[7.5rem]',
+      key: 'location',
+      label: t('common.location'),
+      sortable: true,
+    },
+    {
+      align: overview ? 'start' : 'center',
+      cellClass: '!px-0',
+      class: '!px-0',
+      key: 'type',
+      label: t('closed_trades.headers.action'),
+      sortable: true,
+    },
+    {
+      align: 'end',
+      key: 'amount',
+      label: t('common.amount'),
+      sortable: true,
+    },
+    {
+      cellClass: '!py-1 !pl-0',
+      class: '!pl-0',
+      key: 'baseAsset',
+      label: t('closed_trades.headers.base'),
+    },
+    {
+      align: 'center',
+      cellClass: '!px-0',
+      class: '!px-0',
+      key: 'description',
+      label: '',
+    },
+    {
+      align: 'end',
+      key: 'quoteAmount',
+      label: t('closed_trades.headers.quote_amount'),
+    },
+    {
+      cellClass: '!py-1 !pl-0',
+      class: '!pl-0',
+      key: 'quoteAsset',
+      label: t('closed_trades.headers.quote'),
+    },
+    {
+      align: 'end',
+      key: 'rate',
+      label: t('closed_trades.headers.rate'),
+      sortable: true,
+    },
+    {
+      key: 'timestamp',
+      label: t('common.datetime'),
+      sortable: true,
+    },
+    {
+      align: 'center',
+      key: 'actions',
+      label: t('common.actions_text'),
     },
   ];
 
@@ -107,43 +140,42 @@ const tableHeaders = computed<DataTableColumn[]>(() => {
 });
 
 const extraParams = computed(() => ({
-  includeIgnoredTrades: !get(hideIgnoredTrades),
   excludeIgnoredAssets: !get(showIgnoredAssets),
+  includeIgnoredTrades: !get(hideIgnoredTrades),
 }));
 
 const assetInfoRetrievalStore = useAssetInfoRetrieval();
 const { assetSymbol } = assetInfoRetrievalStore;
-
 const { deleteExternalTrade, fetchTrades, refreshTrades } = useTrades();
+const { confirmationMessage, expanded, itemsToDelete: tradesToDelete, selected } = useCommonTableProps<TradeEntry>();
+
+const editMode = ref<boolean>(false);
+const modelValue = ref<Trade>();
 
 const {
-  selected,
-  editableItem,
-  itemsToDelete: tradesToDelete,
-  confirmationMessage,
-  expanded,
-  isLoading,
-  state: trades,
-  filters,
-  matchers,
-  setPage,
-  pagination,
-  sort,
-  setFilter,
   fetchData,
+  filters,
+  isLoading,
+  matchers,
+  pagination,
+  setPage,
+  sort,
+  state: trades,
 } = usePaginationFilters<
-  Trade,
-  TradeRequestPayload,
   TradeEntry,
-  Collection<TradeEntry>,
+  TradeRequestPayload,
   Filters,
   Matcher
->(locationOverview, mainPage, useTradeFilters, fetchTrades, {
+>(fetchTrades, {
+  extraParams,
+  filterSchema: useTradeFilters,
+  history: get(mainPage) ? 'router' : false,
+  locationOverview,
   onUpdateFilters(query) {
     set(hideIgnoredTrades, query.includeIgnoredTrades === 'false');
     set(showIgnoredAssets, query.excludeIgnoredAssets === 'false');
   },
-  customPageParams: computed<Partial<TradeRequestPayload>>(() => {
+  requestParams: computed<Partial<TradeRequestPayload>>(() => {
     const params: Writeable<Partial<TradeRequestPayload>> = {};
     const location = get(locationOverview);
 
@@ -152,32 +184,25 @@ const {
 
     return params;
   }),
-  extraParams,
 });
 
 useHistoryAutoRefresh(fetchData);
 
-const { setOpenDialog, setPostSubmitFunc } = useTradesForm();
-
-setPostSubmitFunc(fetchData);
-
 function newExternalTrade() {
-  set(editableItem, null);
-  setOpenDialog(true);
+  set(modelValue, createNewTrade());
+  set(editMode, false);
 }
 
 function editTradeHandler(trade: TradeEntry) {
-  set(editableItem, trade);
-  setOpenDialog(true);
+  set(modelValue, omit(trade, ['ignoredInAccounting']));
+  set(editMode, true);
 }
 
 const { floatingPrecision } = storeToRefs(useGeneralSettingsStore());
 
 function promptForDelete(trade: TradeEntry) {
   const prep = (
-    trade.tradeType === 'buy'
-      ? t('closed_trades.description.with')
-      : t('closed_trades.description.for')
+    trade.tradeType === 'buy' ? t('closed_trades.description.with') : t('closed_trades.description.for')
   ).toLocaleLowerCase();
 
   const base = get(assetSymbol(trade.baseAsset));
@@ -185,9 +210,9 @@ function promptForDelete(trade: TradeEntry) {
   set(
     confirmationMessage,
     t('closed_trades.confirmation.message', {
-      pair: `${base} ${prep} ${quote}`,
       action: trade.tradeType,
       amount: trade.amount.toFormat(get(floatingPrecision)),
+      pair: `${base} ${prep} ${quote}`,
     }),
   );
   set(tradesToDelete, [trade]);
@@ -250,8 +275,8 @@ const { show } = useConfirmStore();
 function showDeleteConfirmation() {
   show(
     {
-      title: t('closed_trades.confirmation.title'),
       message: get(confirmationMessage),
+      title: t('closed_trades.confirmation.title'),
     },
     deleteTradeHandler,
   );
@@ -268,7 +293,10 @@ const value = computed({
     return get(selected).map(({ tradeId }: TradeEntry) => tradeId);
   },
   set: (values) => {
-    set(selected, get(trades).data.filter(({ tradeId }: TradeEntry) => values?.includes(tradeId)));
+    set(
+      selected,
+      get(trades).data.filter(({ tradeId }: TradeEntry) => values?.includes(tradeId)),
+    );
   },
 });
 
@@ -313,7 +341,7 @@ watch(loading, async (isLoading, wasLoading) => {
             @click="refreshTrades(true)"
           >
             <template #prepend>
-              <RuiIcon name="refresh-line" />
+              <RuiIcon name="lu-refresh-ccw" />
             </template>
             {{ t('common.refresh') }}
           </RuiButton>
@@ -326,7 +354,7 @@ watch(loading, async (isLoading, wasLoading) => {
         @click="newExternalTrade()"
       >
         <template #prepend>
-          <RuiIcon name="add-line" />
+          <RuiIcon name="lu-plus" />
         </template>
         {{ t('closed_trades.dialog.add.title') }}
       </RuiButton>
@@ -338,7 +366,7 @@ watch(loading, async (isLoading, wasLoading) => {
         #header
       >
         <CardTitle>
-          <NavigatorLink :to="{ path: pageRoute }">
+          <NavigatorLink :to="pageRoute">
             {{ t('closed_trades.title') }}
           </NavigatorLink>
         </CardTitle>
@@ -366,11 +394,10 @@ watch(loading, async (isLoading, wasLoading) => {
             </div>
           </TableStatusFilter>
           <TableFilter
-            class="min-w-full sm:min-w-[20rem]"
-            :matches="filters"
+            v-model:matches="filters"
+            class="min-w-full sm:min-w-[26rem]"
             :matchers="matchers"
             :location="SavedFilterLocation.HISTORY_TRADES"
-            @update:matches="setFilter($event)"
           />
         </template>
 
@@ -380,7 +407,7 @@ watch(loading, async (isLoading, wasLoading) => {
           :disabled="selected.length === 0"
           @click="massDelete()"
         >
-          <RuiIcon name="delete-bin-line" />
+          <RuiIcon name="lu-trash-2" />
         </RuiButton>
 
         <IgnoreButtons
@@ -408,15 +435,13 @@ watch(loading, async (isLoading, wasLoading) => {
         <template #default="{ data, limit, total, showUpgradeRow }">
           <RuiDataTable
             v-model="value"
-            :expanded.sync="expanded"
+            v-model:expanded="expanded"
+            v-model:sort.external="sort"
+            v-model:pagination.external="pagination"
             :cols="tableHeaders"
             :rows="data"
             :loading="isLoading || loading"
             :loading-text="t('trade_history.loading')"
-            :pagination.sync="pagination"
-            :pagination-modifiers="{ external: true }"
-            :sort.sync="sort"
-            :sort-modifiers="{ external: true }"
             data-cy="closed-trades"
             :item-class="getItemClass"
             row-attr="tradeId"
@@ -435,11 +460,7 @@ watch(loading, async (isLoading, wasLoading) => {
               />
             </template>
             <template #item.type="{ row }">
-              <BadgeDisplay
-                :color="
-                  row.tradeType.toLowerCase() === 'sell' ? 'red' : 'green'
-                "
-              >
+              <BadgeDisplay :color="row.tradeType.toLowerCase() === 'sell' ? 'red' : 'green'">
                 {{ row.tradeType }}
               </BadgeDisplay>
             </template>
@@ -460,11 +481,7 @@ watch(loading, async (isLoading, wasLoading) => {
               />
             </template>
             <template #item.description="{ row }">
-              {{
-                row.tradeType === 'buy'
-                  ? t('closed_trades.description.with')
-                  : t('closed_trades.description.for')
-              }}
+              {{ row.tradeType === 'buy' ? t('closed_trades.description.with') : t('closed_trades.description.for') }}
             </template>
             <template #item.rate="{ row }">
               <AmountDisplay
@@ -476,6 +493,12 @@ watch(loading, async (isLoading, wasLoading) => {
               <AmountDisplay
                 class="closed-trades__trade__amount"
                 :value="row.amount"
+              />
+            </template>
+            <template #item.quoteAmount="{ row }">
+              <AmountDisplay
+                class="closed-trades__trade__quote_amount"
+                :value="row.amount.multipliedBy(row.rate)"
               />
             </template>
             <template #item.timestamp="{ row }">
@@ -509,8 +532,10 @@ watch(loading, async (isLoading, wasLoading) => {
         </template>
       </CollectionHandler>
       <ExternalTradeFormDialog
+        v-model="modelValue"
+        :edit-mode="editMode"
         :loading="loading"
-        :editable-item="editableItem"
+        @refresh="fetchData()"
       />
     </RuiCard>
   </TablePageLayout>

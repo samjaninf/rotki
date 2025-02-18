@@ -9,37 +9,42 @@ import {
 import { DefiProtocol, Module } from '@/types/modules';
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
+import { logger } from '@/utils/logging';
+import { getProtocolAddresses } from '@/utils/addresses';
+import { isTaskCancelled } from '@/utils';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useMakerDaoApi } from '@/composables/api/defi/makerdao';
+import { useStatusUpdater } from '@/composables/status';
+import { usePremium } from '@/composables/premium';
+import { useModules } from '@/composables/session/modules';
 import type { TaskMeta } from '@/types/task';
 
 function convertMakerDAOVaults(vaults: ApiMakerDAOVault[]): MakerDAOVault[] {
   return vaults.map(vault => ({
     ...vault,
-    identifier: vault.identifier.toString(),
-    protocol: DefiProtocol.MAKERDAO_VAULTS,
     collateral: { ...vault.collateral, asset: vault.collateralAsset },
     collateralizationRatio: vault.collateralizationRatio ?? undefined,
-    liquidationPrice: vault.liquidationPrice
-      ? vault.liquidationPrice
-      : bigNumberify(Number.NaN),
+    identifier: vault.identifier.toString(),
+    liquidationPrice: vault.liquidationPrice ? vault.liquidationPrice : bigNumberify(Number.NaN),
+    protocol: DefiProtocol.MAKERDAO_VAULTS,
   }));
 }
 
 function defaultDsrBalances(): DSRBalances {
   return {
-    currentDsr: Zero,
     balances: {},
+    currentDsr: Zero,
   };
 }
 
-type MakerDAOProtocol =
-  | typeof Module.MAKERDAO_DSR
-  | typeof Module.MAKERDAO_VAULTS;
+type MakerDAOProtocol = typeof Module.MAKERDAO_DSR | typeof Module.MAKERDAO_VAULTS;
 
 export const useMakerDaoStore = defineStore('defi/makerDao', () => {
-  const dsrHistory: Ref<DSRHistory> = ref({});
-  const dsrBalances: Ref<DSRBalances> = ref(defaultDsrBalances());
-  const makerDAOVaults: Ref<MakerDAOVault[]> = ref([]);
-  const makerDAOVaultDetails: Ref<MakerDAOVaultDetails> = ref([]);
+  const dsrHistory = ref<DSRHistory>({});
+  const dsrBalances = ref<DSRBalances>(defaultDsrBalances());
+  const makerDAOVaults = ref<MakerDAOVault[]>([]);
+  const makerDAOVaultDetails = ref<MakerDAOVaultDetails>([]);
 
   const { awaitTask } = useTaskStore();
   const { notify } = useNotificationsStore();
@@ -49,11 +54,11 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
   const {
     fetchDsrBalances: fetchDSRBalancesCaller,
     fetchDsrHistories: fetchDsrHistoriesCaller,
-    fetchMakerDAOVaults: fetchMakerDAOVaultsCaller,
     fetchMakerDAOVaultDetails: fetchMakerDAOVaultDetailsCaller,
+    fetchMakerDAOVaults: fetchMakerDAOVaultsCaller,
   } = useMakerDaoApi();
 
-  const { resetStatus, setStatus, fetchDisabled } = useStatusUpdater(Section.DEFI_DSR_BALANCES);
+  const { fetchDisabled, resetStatus, setStatus } = useStatusUpdater(Section.DEFI_DSR_BALANCES);
 
   const fetchDSRBalances = async (refresh = false): Promise<void> => {
     if (!get(activeModules).includes(Module.MAKERDAO_DSR))
@@ -68,13 +73,9 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
     try {
       const taskType = TaskType.DSR_BALANCE;
       const { taskId } = await fetchDSRBalancesCaller();
-      const { result } = await awaitTask<DSRBalances, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: t('actions.defi.dsr_balances.task.title'),
-        },
-      );
+      const { result } = await awaitTask<DSRBalances, TaskMeta>(taskId, taskType, {
+        title: t('actions.defi.dsr_balances.task.title'),
+      });
       set(dsrBalances, DSRBalances.parse(result));
     }
     catch (error: any) {
@@ -85,9 +86,9 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
         });
         const title = t('actions.defi.dsr_balances.error.title');
         notify({
-          title,
-          message,
           display: true,
+          message,
+          title,
         });
       }
     }
@@ -110,13 +111,9 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
     try {
       const taskType = TaskType.DSR_HISTORY;
       const { taskId } = await fetchDsrHistoriesCaller();
-      const { result } = await awaitTask<DSRHistory, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: t('actions.defi.dsr_history.task.title'),
-        },
-      );
+      const { result } = await awaitTask<DSRHistory, TaskMeta>(taskId, taskType, {
+        title: t('actions.defi.dsr_history.task.title'),
+      });
 
       set(dsrHistory, DSRHistory.parse(result));
     }
@@ -127,9 +124,9 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
         });
         const title = t('actions.defi.dsr_history.error.title');
         notify({
-          title,
-          message,
           display: true,
+          message,
+          title,
         });
       }
     }
@@ -151,18 +148,11 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
     try {
       const taskType = TaskType.MAKERDAO_VAULTS;
       const { taskId } = await fetchMakerDAOVaultsCaller();
-      const { result } = await awaitTask<ApiMakerDAOVaults, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: t('actions.defi.makerdao_vaults.task.title'),
-        },
-      );
+      const { result } = await awaitTask<ApiMakerDAOVaults, TaskMeta>(taskId, taskType, {
+        title: t('actions.defi.makerdao_vaults.task.title'),
+      });
 
-      set(
-        makerDAOVaults,
-        convertMakerDAOVaults(ApiMakerDAOVaults.parse(result)),
-      );
+      set(makerDAOVaults, convertMakerDAOVaults(ApiMakerDAOVaults.parse(result)));
     }
     catch (error: any) {
       if (!isTaskCancelled(error)) {
@@ -173,9 +163,9 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
         const title = t('actions.defi.makerdao_vaults.error.title');
         const { notify } = useNotificationsStore();
         notify({
-          title,
-          message,
           display: true,
+          message,
+          title,
         });
       }
     }
@@ -196,28 +186,21 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
 
     try {
       const { taskId } = await fetchMakerDAOVaultDetailsCaller();
-      const { result } = await awaitTask<MakerDAOVaultDetails, TaskMeta>(
-        taskId,
-        TaskType.MAKERDAO_VAULT_DETAILS,
-        {
-          title: t('actions.defi.makerdao_vault_details.task.title'),
-        },
-      );
+      const { result } = await awaitTask<MakerDAOVaultDetails, TaskMeta>(taskId, TaskType.MAKERDAO_VAULT_DETAILS, {
+        title: t('actions.defi.makerdao_vault_details.task.title'),
+      });
 
       set(makerDAOVaultDetails, MakerDAOVaultDetails.parse(result));
     }
     catch (error: any) {
       if (!isTaskCancelled(error)) {
         logger.error(error);
-        const message = t(
-          'actions.defi.makerdao_vault_details.error.description',
-          { error: error.message },
-        );
+        const message = t('actions.defi.makerdao_vault_details.error.description', { error: error.message });
         const title = t('actions.defi.makerdao_vault_details.error.title');
         notify({
-          title,
-          message,
           display: true,
+          message,
+          title,
         });
       }
     }
@@ -241,20 +224,20 @@ export const useMakerDaoStore = defineStore('defi/makerDao', () => {
     }
   };
 
-  const addresses: ComputedRef<string[]> = computed(() =>
+  const addresses = computed<string[]>(() =>
     getProtocolAddresses(get(dsrBalances).balances, get(dsrHistory)),
   );
 
   return {
-    dsrHistory,
-    dsrBalances,
-    makerDAOVaults,
-    makerDAOVaultDetails,
     addresses,
+    dsrBalances,
+    dsrHistory,
     fetchDSRBalances,
     fetchDSRHistory,
-    fetchMakerDAOVaults,
     fetchMakerDAOVaultDetails,
+    fetchMakerDAOVaults,
+    makerDAOVaultDetails,
+    makerDAOVaults,
     reset,
   };
 });

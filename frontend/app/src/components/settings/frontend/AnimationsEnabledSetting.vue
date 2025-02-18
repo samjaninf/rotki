@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useSessionSettingsStore } from '@/store/settings/session';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const animationsEnabled = ref<boolean>(true);
 const { t } = useI18n();
 
@@ -17,20 +20,23 @@ function updateSetting(value: boolean, update: (newValue: any) => void) {
 
 <template>
   <SettingsOption
-    #default="{ error, success, update }"
     setting="animationsEnabled"
     session-setting
     :transform="transform"
-    :error-message="t('frontend_settings.validation.animations.error')"
+    :error-message="t('frontend_settings.animations.validation.error')"
   >
-    <RuiSwitch
-      color="primary"
-      :value="!animationsEnabled"
-      class="general-settings__fields__animation-enabled"
-      :label="t('frontend_settings.label.animations')"
-      :success-messages="success"
-      :error-messages="error"
-      @input="updateSetting($event, update)"
-    />
+    <template #title>
+      {{ t('frontend_settings.animations.title') }}
+    </template>
+    <template #default="{ error, success, update }">
+      <RuiSwitch
+        color="primary"
+        :model-value="!animationsEnabled"
+        :label="t('frontend_settings.animations.animations_note')"
+        :success-messages="success"
+        :error-messages="error"
+        @update:model-value="updateSetting($event, update)"
+      />
+    </template>
   </SettingsOption>
 </template>

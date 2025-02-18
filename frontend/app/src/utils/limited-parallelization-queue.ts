@@ -1,3 +1,5 @@
+import { startPromise } from '@shared/utils';
+
 type Fn = () => Promise<void>;
 
 type OnCompletion = (() => void) | undefined;
@@ -52,7 +54,7 @@ export class LimitedParallelizationQueue {
     }
   }
 
-  setOnCompletion(onCompletion: OnCompletion) {
+  setOnCompletion(onCompletion: OnCompletion): void {
     this.onCompletion = onCompletion;
   }
 

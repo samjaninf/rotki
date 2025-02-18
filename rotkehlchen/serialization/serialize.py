@@ -6,6 +6,7 @@ from web3.datastructures import AttributeDict
 
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.structures.balance import AssetBalance, Balance, BalanceType
+from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalanceWithValue
 from rotkehlchen.chain.accounts import BlockchainAccountData, SingleBlockchainAccountData
@@ -26,10 +27,6 @@ from rotkehlchen.chain.ethereum.modules.aave.aave import (
     AaveLendingBalance,
 )
 from rotkehlchen.chain.ethereum.modules.aave.common import AaveStats
-from rotkehlchen.chain.ethereum.modules.balancer import (
-    BalancerPoolBalance,
-    BalancerPoolTokenBalance,
-)
 from rotkehlchen.chain.ethereum.modules.compound.utils import CompoundBalance
 from rotkehlchen.chain.ethereum.modules.liquity.trove import Trove
 from rotkehlchen.chain.ethereum.modules.makerdao.dsr import DSRAccountReport, DSRCurrentBalances
@@ -64,7 +61,6 @@ from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.inquirer import CurrentPriceOracle
 from rotkehlchen.types import (
     AddressbookEntry,
-    AssetMovementCategory,
     ChainID,
     CostBasisMethod,
     EvmTokenKind,
@@ -92,7 +88,7 @@ def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
             new_dict[k] = _process_entry(v)
         return new_dict
     if isinstance(entry, HexBytes):
-        return entry.hex()
+        return entry.to_0x_hex()
     if isinstance(entry, LocationData):
         return {
             'time': entry.time,
@@ -148,8 +144,6 @@ def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
             LiquidityPool |
             LiquidityPoolAsset |
             LiquidityPoolEventsBalance |
-            BalancerPoolBalance |
-            BalancerPoolTokenBalance |
             ManuallyTrackedBalanceWithValue |
             Trove |
             DillBalance |
@@ -180,7 +174,6 @@ def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
             KrakenAccountType |
             Location |
             VaultEventType |
-            AssetMovementCategory |
             CurrentPriceOracle |
             HistoricalPriceOracle |
             BalanceType |
@@ -189,7 +182,8 @@ def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
             HistoryBaseEntryType |
             EventCategory |
             AccountingEventType |
-            Version
+            Version |
+            WSMessageType
     )):
         return str(entry)
     if isinstance(entry, ChainID):

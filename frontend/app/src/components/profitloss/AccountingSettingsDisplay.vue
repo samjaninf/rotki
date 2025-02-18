@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import type {
-  BaseAccountingSettings,
-  CostBasisMethod,
-} from '@/types/user';
+import { useCostBasisMethod } from '@/composables/reports';
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+import type { BaseAccountingSettings, CostBasisMethod } from '@/types/user';
 import type { ActionDataEntry } from '@/types/action';
 
 const props = defineProps<{ accountingSettings: BaseAccountingSettings }>();
@@ -16,64 +15,52 @@ function taxFreePeriod(period: number) {
   return t('account_settings_display.days', { days });
 }
 
-const costBasisMethodItem = computed<ActionDataEntry<CostBasisMethod> | null>(
-  () => {
-    const method = get(accountingSettings).costBasisMethod;
-    if (!method)
-      return null;
+const costBasisMethodItem = computed<ActionDataEntry<CostBasisMethod> | null>(() => {
+  const method = get(accountingSettings).costBasisMethod;
+  if (!method)
+    return null;
 
-    return (
-      get(costBasisMethodData).find(item => item.identifier === method) || null
-    );
-  },
-);
+  return get(costBasisMethodData).find(item => item.identifier === method) || null;
+});
 
 interface Item {
   label: string;
   data: boolean | string;
 }
 
-const items: ComputedRef<Item[]> = computed(() => {
+const items = computed<Item[]>(() => {
   const settings = get(accountingSettings);
   const items = [
     {
-      label: t('account_settings_display.past_cost_basis'),
       data: settings.calculatePastCostBasis,
+      label: t('account_settings_display.past_cost_basis'),
     },
     {
-      label: t('account_settings_display.crypto2crypto'),
       data: settings.includeCrypto2crypto,
+      label: t('account_settings_display.crypto2crypto'),
     },
     {
-      label: t('account_settings_display.cost_basis_fees'),
       data: settings.includeFeesInCostBasis || false,
+      label: t('account_settings_display.cost_basis_fees'),
     },
     {
-      label: t('account_settings_display.gas_costs'),
       data: settings.includeGasCosts,
+      label: t('account_settings_display.gas_costs'),
     },
     {
-      label: t('account_settings_display.profit_currency'),
       data: settings.profitCurrency || '',
+      label: t('account_settings_display.profit_currency'),
     },
     {
-      label: t('account_settings_display.account_asset_movement'),
-      data: settings.accountForAssetsMovements,
-    },
-    {
+      data: settings.taxfreeAfterPeriod ? taxFreePeriod(settings.taxfreeAfterPeriod) : false,
       label: t('account_settings_display.tax_free_period'),
-      data: settings.taxfreeAfterPeriod
-        ? taxFreePeriod(settings.taxfreeAfterPeriod)
-        : false,
     },
   ];
 
   if (settings.ethStakingTaxableAfterWithdrawalEnabled !== undefined) {
     items.push({
-      label: t(
-        'account_settings_display.eth_staking_taxable_after_withdrawal_enabled',
-      ),
       data: !!settings.ethStakingTaxableAfterWithdrawalEnabled,
+      label: t('account_settings_display.eth_staking_taxable_after_withdrawal_enabled'),
     });
   }
 
@@ -81,8 +68,8 @@ const items: ComputedRef<Item[]> = computed(() => {
 
   if (costBasis) {
     items.push({
-      label: t('account_settings_display.cost_basis_method'),
       data: `${costBasis.identifier.toUpperCase()} (${costBasis.label})`,
+      label: t('account_settings_display.cost_basis_method'),
     });
   }
 

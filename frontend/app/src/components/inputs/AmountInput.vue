@@ -1,134 +1,173 @@
 <script setup lang="ts">
 import IMask, { type InputMask } from 'imask';
+import { RuiTextField } from '@rotki/ui-library';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { logger } from '@/utils/logging';
 
-const props = withDefaults(
-  defineProps<{
-    integer?: boolean;
-    value?: string;
-    hideDetails?: boolean;
-  }>(),
-  {
-    integer: false,
-    value: '',
-    hideDetails: false,
-  },
-);
-
-const emit = defineEmits<{
-  (e: 'input', value: string): void;
-}>();
-
-const attrs = useAttrs();
-const slots = useSlots();
-
-function filteredListeners(listeners: any) {
-  return {
-    ...listeners,
-    input: () => {},
-  };
+interface AmountInputProps {
+  integer?: boolean;
+  hideDetails?: boolean;
 }
 
-const { integer, value } = toRefs(props);
-const { thousandSeparator, decimalSeparator } = storeToRefs(
-  useFrontendSettingsStore(),
-);
+interface MaskConfig {
+  mask: NumberConstructor;
+  radix: string;
+  scale: number;
+  thousandsSeparator: string;
+}
 
-const textInput: Ref<any> = ref(null);
-const imask: Ref<InputMask<any> | null> = ref(null);
-const currentValue: Ref<string> = ref('');
-
-onMounted(() => {
-  const inputWrapper = get(textInput)!;
-  const input = inputWrapper.$el.querySelector('input') as HTMLInputElement;
-
-  const newImask = IMask(input, {
-    mask: Number,
-    thousandsSeparator: get(thousandSeparator),
-    radix: get(decimalSeparator),
-    scale: get(integer) ? 0 : 100,
-  });
-
-  const propValue = get(value);
-  if (propValue) {
-    newImask.unmaskedValue = propValue;
-    set(currentValue, newImask.value);
-  }
-
-  set(imask, newImask);
+defineOptions({
+  inheritAttrs: false,
 });
 
-watch(value, (value) => {
-  const imaskVal = get(imask);
-  if (imaskVal) {
-    imaskVal.unmaskedValue = value;
-    set(currentValue, imaskVal.value);
-  }
+const modelValue = defineModel<string>({ required: true });
+
+const props = withDefaults(defineProps<AmountInputProps>(), {
+  hideDetails: false,
+  integer: false,
 });
 
-watch(
-  () => get(imask)?.unmaskedValue,
-  (unmasked) => {
-    const value = get(imask)?.value || '';
-    set(currentValue, value);
-    emit('input', unmasked || '');
-  },
-);
+const { integer } = toRefs(props);
+const { decimalSeparator, thousandSeparator } = storeToRefs(useFrontendSettingsStore());
 
-watch(
-  () => get(imask)?.value,
-  (value) => {
-    set(currentValue, value);
+const textInput = useTemplateRef<InstanceType<typeof RuiTextField>>('textInput');
+const maskInstance = ref<InputMask<MaskConfig>>();
+const currentValue = ref<string>('');
+
+const EMPTY_VALUE = '';
+const SINGLE_ZERO = '0';
+
+const internalModelValue = computed({
+  get() {
+    return get(currentValue);
   },
-);
+  set(value?: string) {
+    if (value) {
+      return;
+    }
+    set(modelValue, '');
+  },
+});
+
+function removeLeadingZeros(value?: string, decimalsSeparator: string = '.'): string {
+  if (!value)
+    return EMPTY_VALUE;
+
+  if (value === SINGLE_ZERO)
+    return value;
+
+  const [integerPart, decimalPart] = value.split(decimalsSeparator);
+
+  if (integerPart === undefined || integerPart === SINGLE_ZERO)
+    return value;
+
+  const hasLeadingZeros = /^0+/.test(integerPart);
+  if (!hasLeadingZeros) {
+    return value;
+  }
+
+  const cleanIntegerPart = integerPart.replace(/^0+/, '') || SINGLE_ZERO;
+  return decimalPart ? `${cleanIntegerPart}${decimalsSeparator}${decimalPart}` : cleanIntegerPart;
+}
+
+function updateCurrentValue(mask: InputMask<any>) {
+  const formattedValue = removeLeadingZeros(mask.value, get(decimalSeparator));
+  set(currentValue, formattedValue);
+  if (formattedValue !== mask.value) {
+    nextTick(() => {
+      mask.value = formattedValue;
+      mask.updateValue();
+    });
+  }
+}
+
+function getInput(): HTMLInputElement {
+  const textField = get(textInput);
+  assert(textField, 'Input field is not defined');
+  return textField.$el.querySelector('input');
+}
 
 function focus() {
-  const inputWrapper = get(textInput) as any;
-  if (inputWrapper)
-    inputWrapper.focus();
+  getInput().focus();
 }
+
+function onFocus() {
+  nextTick(() => {
+    const input = getInput();
+    input.value = get(currentValue);
+  });
+}
+
+function initializeInputMask(input: HTMLInputElement) {
+  const maskConfig: MaskConfig = {
+    mask: Number,
+    radix: get(decimalSeparator),
+    scale: get(integer) ? 0 : 100,
+    thousandsSeparator: get(thousandSeparator),
+  };
+
+  const newMask = IMask(input, maskConfig);
+
+  newMask.on('accept', () => {
+    const mask = get(maskInstance);
+    if (mask) {
+      set(modelValue, mask?.unmaskedValue || '');
+      updateCurrentValue(mask);
+    }
+  });
+
+  const propValue = get(modelValue);
+  if (propValue) {
+    newMask.unmaskedValue = propValue;
+    updateCurrentValue(newMask);
+  }
+
+  set(maskInstance, newMask);
+}
+
+watch(modelValue, (value) => {
+  if (isNaN(parseFloat(value)) && value !== '') {
+    logger.warn('modelValue is not a number', value);
+    return;
+  }
+
+  const mask = get(maskInstance);
+  if (mask) {
+    mask.unmaskedValue = value;
+    updateCurrentValue(mask);
+  }
+});
+
+onMounted(() => {
+  initializeInputMask(getInput());
+});
+
+onBeforeUnmount(() => {
+  get(maskInstance)?.destroy();
+  set(maskInstance, undefined);
+});
 
 defineExpose({
   focus,
 });
-
-function onFocus() {
-  const inputWrapper = get(textInput)!;
-  const input = inputWrapper.$el.querySelector('input') as HTMLInputElement;
-
-  nextTick(() => {
-    input.value = get(currentValue);
-  });
-}
 </script>
 
 <template>
   <RuiTextField
     ref="textInput"
+    v-model="internalModelValue"
     color="primary"
-    :value="currentValue"
-    v-bind="attrs"
+    v-bind="$attrs"
     :hide-details="hideDetails"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      filteredListeners($listeners)
-    "
     @focus="onFocus()"
   >
-    <!-- Pass on all named slots -->
-    <slot
-      v-for="slot in Object.keys(slots)"
-      :slot="slot"
-      :name="slot"
-    />
-
-    <!-- Pass on all scoped slots -->
     <template
-      v-for="slot in Object.keys($scopedSlots)"
-      #[slot]="scope"
+      v-for="(_, name) in $slots"
+      #[name]="scope"
     >
       <slot
         v-bind="scope"
-        :name="slot"
+        :name="name"
       />
     </template>
   </RuiTextField>

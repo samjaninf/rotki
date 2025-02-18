@@ -1,9 +1,8 @@
-import { type Wrapper, mount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
-import { beforeEach } from 'vitest';
+import { type VueWrapper, mount } from '@vue/test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import OnboardingSettings from '@/components/settings/OnboardingSettings.vue';
 import { useMainStore } from '@/store/main';
-import type { Pinia } from 'pinia';
+import type { useAssetIconApi } from '@/composables/api/assets/icon';
 
 vi.mock('@/composables/electron-interop', () => ({
   useInterop: vi.fn().mockReturnValue({
@@ -15,17 +14,26 @@ vi.mock('@/composables/electron-interop', () => ({
   }),
 }));
 
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn(),
+  useRouter: vi.fn().mockReturnValue({
+    push: vi.fn(),
+  }),
+  createRouter: vi.fn().mockImplementation(() => ({
+    beforeEach: vi.fn(),
+  })),
+  createWebHashHistory: vi.fn(),
+}));
+
 let saveOptions = vi.fn();
 vi.mock('@/composables/backend', async () => {
-  const mod = await vi.importActual<typeof import('@/composables/backend')>(
-    '@/composables/backend',
-  );
+  const mod = await vi.importActual<typeof import('@/composables/backend')>('@/composables/backend');
   return {
     ...mod,
     useBackendManagement: vi.fn().mockImplementation((loaded) => {
       const mocked = mod.useBackendManagement(loaded);
-      saveOptions = vi.fn().mockImplementation((opts) => {
-        mocked.saveOptions(opts);
+      saveOptions = vi.fn().mockImplementation(async (opts) => {
+        await mocked.saveOptions(opts);
       });
       return {
         ...mocked,
@@ -54,141 +62,108 @@ vi.mock('@/composables/api/settings/settings-api', () => ({
   }),
 }));
 
-describe('onboardingSetting.vue', () => {
-  let pinia: Pinia;
-  let wrapper: Wrapper<OnboardingSettings>;
+vi.mock('@/composables/api/assets/icon', () => ({
+  useAssetIconApi: vi.fn().mockReturnValue({
+    checkAsset: vi.fn().mockResolvedValue(404),
+  } satisfies Partial<ReturnType<typeof useAssetIconApi>>),
+}));
 
-  function createWrapper() {
-    const vuetify = new Vuetify();
+describe('onboardingSetting.vue', () => {
+  let wrapper: VueWrapper<InstanceType<typeof OnboardingSettings>>;
+
+  async function createWrapper() {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    await useMainStore().getInfo();
+
     return mount(OnboardingSettings, {
-      pinia,
-      vuetify,
-      stubs: {
-        RuiMenuSelect: {
-          template: `
+      global: {
+        plugins: [pinia],
+        stubs: {
+          RuiMenuSelect: {
+            template: `
             <div>
-              <input :value="value" class="input" type="text" @input="$emit('input', $event.value)">
+              <input :value="modelValue" class="input" type="text" @input="$emit('update:model-value', $event.value)">
             </div>
           `,
-          props: {
-            value: { type: String },
+            props: {
+              modelValue: { type: String },
+            },
           },
+          Teleport: true,
         },
       },
     });
   }
 
-  beforeAll(async () => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    await useMainStore().getInfo();
+  beforeEach(async () => {
+    wrapper = await createWrapper();
+    await nextTick();
   });
 
-  beforeEach(async () => {
-    wrapper = createWrapper();
-    await nextTick();
+  afterEach(() => {
+    wrapper.unmount();
   });
 
   describe('standard settings', () => {
     it('use default value from info api or electron config, save button should be disabled', () => {
-      const dataDirectoryInput = wrapper.find(
-        '[data-cy=user-data-directory-input] input',
-      ).element as HTMLInputElement;
+      const dataDirectoryInput = wrapper.find('[data-cy=user-data-directory-input] input').element as HTMLInputElement;
       expect(dataDirectoryInput.value).toBe('/Users/home/rotki/develop_data');
 
-      const userLogDirectoryInput = wrapper.find(
-        '[data-cy=user-log-directory-input] input',
-      ).element as HTMLInputElement;
+      const userLogDirectoryInput = wrapper.find('[data-cy=user-log-directory-input] input')
+        .element as HTMLInputElement;
       expect(userLogDirectoryInput.value).toBe('/Users/home/rotki/logs');
 
-      const logLevelInput = wrapper.find('.loglevel-input .input')
-        .element as HTMLInputElement;
+      const logLevelInput = wrapper.find('.loglevel-input .input').element as HTMLInputElement;
       expect(logLevelInput.value).toBe('debug');
 
-      expect(
-        wrapper
-          .find('[data-cy=onboarding-setting__submit-button]')
-          .attributes('disabled'),
-      ).toBe('disabled');
+      expect(wrapper.find('[data-cy=onboarding-setting__submit-button]').attributes()).toHaveProperty('disabled');
     });
 
     it('should save the data directory setting', async () => {
-      expect(
-        wrapper
-          .find('[data-cy=onboarding-setting__submit-button]')
-          .attributes('disabled'),
-      ).toBe('disabled');
+      expect(wrapper.find('[data-cy=onboarding-setting__submit-button]').attributes()).toHaveProperty('disabled');
 
       const newDataDirectory = '/Users/home/rotki/develop_data1';
 
-      await wrapper
-        .find('[data-cy=user-data-directory-input] input')
-        .setValue(newDataDirectory);
+      await wrapper.find('[data-cy=user-data-directory-input] input').setValue(newDataDirectory);
 
       await nextTick();
 
-      await wrapper
-        .find('[data-cy=onboarding-setting__submit-button]')
-        .trigger('click');
+      await wrapper.find('[data-cy=onboarding-setting__submit-button]').trigger('click');
 
       expect(saveOptions).toBeCalledWith({
         dataDirectory: newDataDirectory,
       });
 
-      expect(
-        wrapper
-          .find('[data-cy=onboarding-setting__submit-button]')
-          .attributes('disabled'),
-      ).toBe('disabled');
+      expect(wrapper.find('[data-cy=onboarding-setting__submit-button]').attributes()).toHaveProperty('disabled');
     });
 
     it('should save the loglevel setting', async () => {
-      const logLevelInput = wrapper.find('.loglevel-input .input')
-        .element as HTMLInputElement;
+      const logLevelInput = wrapper.find('.loglevel-input .input').element as HTMLInputElement;
       expect(logLevelInput.value).toBe('debug');
 
-      expect(
-        wrapper
-          .find('[data-cy=onboarding-setting__submit-button]')
-          .attributes('disabled'),
-      ).toBe('disabled');
+      expect(wrapper.find('[data-cy=onboarding-setting__submit-button]').attributes()).toHaveProperty('disabled');
 
-      await wrapper
-        .find('.loglevel-input .input')
-        .trigger('input', { value: 'warning' });
+      await wrapper.find('.loglevel-input .input').trigger('input', { value: 'warning' });
 
       await nextTick();
 
-      await wrapper
-        .find('[data-cy=onboarding-setting__submit-button]')
-        .trigger('click');
+      await wrapper.find('[data-cy=onboarding-setting__submit-button]').trigger('click');
 
       expect(saveOptions).toBeCalledWith({
         loglevel: 'warning',
       });
 
-      expect(
-        wrapper
-          .find('[data-cy=onboarding-setting__submit-button]')
-          .attributes('disabled'),
-      ).toBe('disabled');
+      expect(wrapper.find('[data-cy=onboarding-setting__submit-button]').attributes()).toHaveProperty('disabled');
 
       // should be able to change back to default loglevel (debug)
-      expect(
-        wrapper
-          .find('[data-cy=onboarding-setting__submit-button]')
-          .attributes('disabled'),
-      ).toBe('disabled');
+      expect(wrapper.find('[data-cy=onboarding-setting__submit-button]').attributes()).toHaveProperty('disabled');
 
-      await wrapper
-        .find('.loglevel-input .input')
-        .trigger('input', { value: 'debug' });
+      await wrapper.find('.loglevel-input .input').trigger('input', { value: 'debug' });
 
       await nextTick();
 
-      await wrapper
-        .find('[data-cy=onboarding-setting__submit-button]')
-        .trigger('click');
+      await wrapper.find('[data-cy=onboarding-setting__submit-button]').trigger('click');
 
       expect(saveOptions).toBeCalledWith({
         loglevel: 'debug',
@@ -198,47 +173,32 @@ describe('onboardingSetting.vue', () => {
 
   describe('advanced settings', () => {
     beforeEach(async () => {
-      await wrapper
-        .find('[data-cy=onboarding-setting__advance] .accordion__header')
-        .trigger('click');
+      await wrapper.find('[data-cy=onboarding-setting__advance] .accordion__header').trigger('click');
 
       await nextTick();
     });
 
     it('use default value from info api or electron config, save button should be disabled', () => {
-      const maxLogSizeInput = wrapper.find('[data-cy=max-log-size-input] input')
-        .element as HTMLInputElement;
+      const maxLogSizeInput = wrapper.find('[data-cy=max-log-size-input] input').element as HTMLInputElement;
       expect(maxLogSizeInput.value).toBe('300');
 
-      const maxLogFilesInput = wrapper.find(
-        '[data-cy=max-log-files-input] input',
-      ).element as HTMLInputElement;
+      const maxLogFilesInput = wrapper.find('[data-cy=max-log-files-input] input').element as HTMLInputElement;
       expect(maxLogFilesInput.value).toBe('3');
 
-      const sqliteInstructions = wrapper.find(
-        '[data-cy=sqlite-instructions-input] input',
-      ).element as HTMLInputElement;
+      const sqliteInstructions = wrapper.find('[data-cy=sqlite-instructions-input] input').element as HTMLInputElement;
       expect(sqliteInstructions.value).toBe('5000');
 
-      expect(
-        wrapper
-          .find('[data-cy=onboarding-setting__submit-button]')
-          .attributes('disabled'),
-      ).toBe('disabled');
+      expect(wrapper.find('[data-cy=onboarding-setting__submit-button]').attributes()).toHaveProperty('disabled');
     });
 
     it('should save the setting', async () => {
       await wrapper.find('[data-cy=max-log-size-input] input').setValue(301);
       await wrapper.find('[data-cy=max-log-files-input] input').setValue(4);
-      await wrapper
-        .find('[data-cy=sqlite-instructions-input] input')
-        .setValue(5001);
+      await wrapper.find('[data-cy=sqlite-instructions-input] input').setValue(5001);
 
       await nextTick();
 
-      await wrapper
-        .find('[data-cy=onboarding-setting__submit-button]')
-        .trigger('click');
+      await wrapper.find('[data-cy=onboarding-setting__submit-button]').trigger('click');
 
       expect(saveOptions).toBeCalledWith({
         maxSizeInMbAllLogs: 301,
@@ -249,38 +209,25 @@ describe('onboardingSetting.vue', () => {
       await nextTick();
 
       // reset button
-      await wrapper
-        .find('[data-cy=reset-max-log-size] button')
-        .trigger('click');
+      await wrapper.find('[data-cy=reset-max-log-size] button').trigger('click');
       await nextTick();
 
-      const maxLogSizeInput = wrapper.find('[data-cy=max-log-size-input] input')
-        .element as HTMLInputElement;
+      const maxLogSizeInput = wrapper.find('[data-cy=max-log-size-input] input').element as HTMLInputElement;
       expect(maxLogSizeInput.value).toBe('300');
 
-      await wrapper
-        .find('[data-cy=reset-max-log-files] button')
-        .trigger('click');
+      await wrapper.find('[data-cy=reset-max-log-files] button').trigger('click');
       await nextTick();
 
-      const maxLogFilesInput = wrapper.find(
-        '[data-cy=max-log-files-input] input',
-      ).element as HTMLInputElement;
+      const maxLogFilesInput = wrapper.find('[data-cy=max-log-files-input] input').element as HTMLInputElement;
       expect(maxLogFilesInput.value).toBe('3');
 
-      await wrapper
-        .find('[data-cy=reset-sqlite-instructions] button')
-        .trigger('click');
+      await wrapper.find('[data-cy=reset-sqlite-instructions] button').trigger('click');
       await nextTick();
 
-      const sqliteInstructions = wrapper.find(
-        '[data-cy=sqlite-instructions-input] input',
-      ).element as HTMLInputElement;
+      const sqliteInstructions = wrapper.find('[data-cy=sqlite-instructions-input] input').element as HTMLInputElement;
       expect(sqliteInstructions.value).toBe('5000');
 
-      await wrapper
-        .find('[data-cy=onboarding-setting__submit-button]')
-        .trigger('click');
+      await wrapper.find('[data-cy=onboarding-setting__submit-button]').trigger('click');
 
       expect(saveOptions).toBeCalledWith({});
     });

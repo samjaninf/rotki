@@ -1,9 +1,14 @@
 import { promiseTimeout } from '@vueuse/core';
+import { logger } from '@/utils/logging';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useSettingsStore } from '@/store/settings';
 import type { FrontendSettingsPayload } from '@/types/settings/frontend-settings';
 import type { BaseMessage } from '@/types/messages';
 import type { SettingsUpdate } from '@/types/user';
 import type { SessionSettings } from '@/types/session';
 import type { ActionStatus } from '@/types/action';
+import type { Ref } from 'vue';
 
 export enum SettingLocation {
   FRONTEND,
@@ -21,16 +26,16 @@ interface UnsuccessfulUpdate {
 
 type UpdateResult = SuccessfulUpdate | UnsuccessfulUpdate;
 
-async function getActionStatus(method: () => Promise<ActionStatus>, messages?: BaseMessage) {
+async function getActionStatus(method: () => Promise<ActionStatus>, messages?: BaseMessage): Promise<UpdateResult> {
   let message: UpdateResult = {
-    error: messages?.error || '',
+    error: messages?.error ?? '',
   };
   try {
     const result = await method();
 
     if (result.success) {
       message = {
-        success: messages?.success || '',
+        success: messages?.success ?? '',
       };
     }
     else if (result.message) {
@@ -44,31 +49,35 @@ async function getActionStatus(method: () => Promise<ActionStatus>, messages?: B
   return message;
 }
 
-export function useSettings() {
+interface UseSettingsReturn {
+  updateSetting: <T extends keyof SettingsUpdate | keyof FrontendSettingsPayload | keyof SessionSettings>(
+    settingKey: T,
+    settingValue: any,
+    settingLocation: SettingLocation,
+    message: BaseMessage
+  ) => Promise<UpdateResult>;
+}
+
+export function useSettings(): UseSettingsReturn {
   const { update: updateSettings } = useSettingsStore();
   const { updateSetting: updateFrontendSettings } = useFrontendSettingsStore();
   const { update: updateSessionSettings } = useSessionSettingsStore();
 
-  const updateSetting = async <
-    T extends
-    | keyof SettingsUpdate
-    | keyof FrontendSettingsPayload
-    | keyof SessionSettings,
-  >(
+  const updateSetting = async <T extends keyof SettingsUpdate | keyof FrontendSettingsPayload | keyof SessionSettings>(
     settingKey: T,
     settingValue: any,
     settingLocation: SettingLocation,
     message: BaseMessage,
-  ) => {
+  ): Promise<UpdateResult> => {
     const payload = { [settingKey]: settingValue };
 
     const updateMethods: Record<SettingLocation, () => Promise<ActionStatus>> = {
-      [SettingLocation.GENERAL]: () => updateSettings(payload),
-      [SettingLocation.FRONTEND]: () => updateFrontendSettings(payload),
-      [SettingLocation.SESSION]: () => Promise.resolve(updateSessionSettings(payload)),
+      [SettingLocation.FRONTEND]: async () => updateFrontendSettings(payload),
+      [SettingLocation.GENERAL]: async () => updateSettings(payload),
+      [SettingLocation.SESSION]: async () => Promise.resolve(updateSessionSettings(payload)),
     };
 
-    return await getActionStatus(updateMethods[settingLocation], message);
+    return getActionStatus(updateMethods[settingLocation], message);
   };
 
   return {
@@ -76,21 +85,31 @@ export function useSettings() {
   };
 }
 
-export function useClearableMessages() {
+interface UseClearableMessagesReturn {
+  clearAll: () => void;
+  error: Ref<string>;
+  setError: (message: string, useBase?: boolean) => void;
+  setSuccess: (message: string, useBase?: boolean) => void;
+  stop: () => void;
+  success: Ref<string>;
+  wait: () => Promise<void>;
+}
+
+export function useClearableMessages(): UseClearableMessagesReturn {
   const error = ref('');
   const success = ref('');
   const { t } = useI18n();
 
-  const clear = () => {
+  const clear = (): void => {
     set(success, '');
   };
 
-  const clearAll = () => {
+  const clearAll = (): void => {
     set(error, '');
     set(success, '');
   };
 
-  const formatMessage = (base: string, extra?: string) => {
+  const formatMessage = (base: string, extra?: string): string => {
     if (extra) {
       if (base)
         return `${base}: ${extra}`;
@@ -100,15 +119,15 @@ export function useClearableMessages() {
     return base;
   };
 
-  const setSuccess = (message: string, useBase = true) => {
+  const setSuccess = (message: string, useBase = false): void => {
     set(success, formatMessage(useBase ? t('settings.saved') : '', message));
   };
 
-  const setError = (message: string, useBase = true) => {
+  const setError = (message: string, useBase = false): void => {
     set(error, formatMessage(useBase ? t('settings.not_saved') : '', message));
   };
 
-  const wait = async () => await promiseTimeout(200);
+  const wait = async (): Promise<void> => promiseTimeout(200);
   const { start, stop } = useTimeoutFn(clear, 3500);
   watch(success, (success) => {
     if (success)
@@ -116,12 +135,12 @@ export function useClearableMessages() {
   });
 
   return {
-    error,
-    success,
-    setSuccess,
-    setError,
-    wait,
-    stop,
     clearAll,
+    error,
+    setError,
+    setSuccess,
+    stop,
+    success,
+    wait,
   };
 }

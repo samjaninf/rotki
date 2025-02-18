@@ -1,38 +1,27 @@
-import type { SemiPartial } from '@rotki/common';
-import type { Message } from '@rotki/common/lib/messages';
-
-function emptyMessage(): Message {
-  return {
-    title: '',
-    description: '',
-    success: false,
-  };
-}
+import type { Message, SemiPartial } from '@rotki/common';
 
 export const useMessageStore = defineStore('message', () => {
-  const message = ref(emptyMessage());
-  const showMessage = computed(() => get(message).title.length > 0);
+  const message = ref<Message>();
+  const showMessage = computed(() => isDefined(message));
 
   const { t } = useI18n();
 
-  const setMessage = (
-    msg: SemiPartial<Message, 'description'> = emptyMessage(),
-  ): void => {
+  const setMessage = (msg?: SemiPartial<Message, 'description'>): void => {
+    if (!msg) {
+      set(message, undefined);
+      return;
+    }
     set(message, {
-      ...{
-        title: msg.success
-          ? t('message.success.title')
-          : t('message.error.title'),
-        success: false,
-      },
+      success: false,
+      title: msg.success ? t('message.success.title') : t('message.error.title'),
       ...msg,
     });
   };
 
   return {
     message,
-    showMessage,
     setMessage,
+    showMessage,
   };
 });
 

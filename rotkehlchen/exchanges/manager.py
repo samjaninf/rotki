@@ -263,7 +263,7 @@ class ExchangeManager:
         elif credentials.location == Location.BINANCEUS:
             kwargs['uri'] = BINANCEUS_BASE_URL
 
-        exchange_obj = exchange_ctor(
+        return exchange_ctor(
             name=credentials.name,
             api_key=credentials.api_key,
             secret=credentials.api_secret,
@@ -272,7 +272,6 @@ class ExchangeManager:
             # remove all empty kwargs
             **{k: v for k, v in kwargs.items() if v is not None},
         )
-        return exchange_obj
 
     def initialize_exchanges(
             self,
@@ -307,11 +306,29 @@ class ExchangeManager:
             return self.database.get_binance_pairs(name, location)
         return []
 
-    def query_history_events(self) -> None:
-        """Queries all history events for exchanges that need it
+    def query_exchange_history_events(self, location: Location, name: str | None) -> None:
+        """Queries new history events for the specified exchange.
 
         May raise:
-        - RemoteError if any exchange's remote query fails
+        - RemoteError if the exchange's remote query fails
         """
-        for exchange in self.iterate_exchanges():
+        exchanges_list = []
+        if name is not None:
+            if (exchange := self.get_exchange(name=name, location=location)) is None:
+                log.error(
+                    'Failed to query history events for unknown exchange. '
+                    f'Location: {location!s}, Name: {name}',
+                )
+                return
+            exchanges_list.append(exchange)
+        else:
+            if (exchanges := self.connected_exchanges.get(location)) is None:
+                log.error(
+                    'Unable to query history events with no connected exchanges '
+                    f'for location: {location!s}',
+                )
+                return
+            exchanges_list.extend(exchanges)
+
+        for exchange in exchanges_list:
             exchange.query_history_events()

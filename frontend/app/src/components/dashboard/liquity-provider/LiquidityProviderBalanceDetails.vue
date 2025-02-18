@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import type { AssetBalanceWithPrice } from '@rotki/common';
-import type { XswapAsset } from '@rotki/common/lib/defi/xswap';
-import type {
-  DataTableColumn,
-  DataTableSortData,
-} from '@rotki/ui-library-compat';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { usePremium } from '@/composables/premium';
+import PremiumLock from '@/components/premium/PremiumLock.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
+import type { AssetBalanceWithPrice, XswapAsset } from '@rotki/common';
 
 withDefaults(
   defineProps<{
@@ -19,32 +21,32 @@ withDefaults(
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { t } = useI18n();
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const tableHeaders = computed<DataTableColumn<AssetBalanceWithPrice>[]>(() => [
   {
-    label: t('common.asset'),
-    key: 'asset',
     cellClass: 'text-no-wrap',
+    key: 'asset',
+    label: t('common.asset'),
   },
   {
+    align: 'end',
+    class: 'text-no-wrap',
+    key: 'usdPrice',
     label: t('common.price', {
       symbol: get(currencySymbol),
     }),
-    key: 'usdPrice',
+  },
+  {
+    align: 'end',
+    key: 'amount',
+    label: t('common.amount'),
+  },
+  {
     align: 'end',
     class: 'text-no-wrap',
-  },
-  {
-    label: t('common.amount'),
-    key: 'amount',
-    align: 'end',
-  },
-  {
+    key: 'usdValue',
     label: t('common.value_in_symbol', {
       symbol: get(currencySymbol),
     }),
-    key: 'usdValue',
-    align: 'end',
-    class: 'text-no-wrap',
   },
 ]);
 
@@ -54,14 +56,14 @@ const { assetPrice } = useBalancePricesStore();
 
 function transformAssets(assets: XswapAsset[]): AssetBalanceWithPrice[] {
   return assets.map(item => ({
+    amount: item.userBalance.amount,
     asset: item.asset,
     usdPrice: item.usdPrice ?? get(assetPrice(item.asset)) ?? Zero,
-    amount: item.userBalance.amount,
     usdValue: item.userBalance.usdValue,
   }));
 }
 
-const sort: Ref<DataTableSortData> = ref({
+const sort = ref<DataTableSortData<AssetBalanceWithPrice>>({
   column: 'usdValue',
   direction: 'desc' as const,
 });

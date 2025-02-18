@@ -11,30 +11,32 @@ const props = withDefaults(
     size: string;
     asset?: string;
     customAsset?: boolean;
+    flat?: boolean;
   }>(),
   {
     asset: '',
     customAsset: false,
+    flat: false,
   },
 );
 
-const { size, asset } = toRefs(props);
+const { asset, size } = toRefs(props);
 
 const dimensions = computed<Dimension>(() => {
-  const match: RegExpMatchArray | null = get(size).match(
-    /^(\d+(?:\.\d)?)(\w+|%)?$/,
-  );
+  const match: RegExpMatchArray | null = get(size).match(/^(\d+(?:\.\d)?)(\w+|%)?$/);
   const value: string = match?.[1] ?? '0';
   const unit: string = match?.[2] ?? '';
   return {
-    value: Number(value),
     unit,
+    value: Number(value),
   };
 });
 
 const wrapperStyle = computed<Style>(() => ({
-  width: get(size),
   height: get(size),
+  minHeight: get(size),
+  minWidth: get(size),
+  width: get(size),
 }));
 
 const text = computed<string>(() => {
@@ -48,23 +50,29 @@ const textStyle = computed<Style>(() => {
   const length = get(text).length;
   const { value } = get(dimensions);
 
-  const fontSize = value / length + (length - 3) * 5;
+  const fontSize = (value - 2) / Math.max(length, length < 2 ? 1.8 : 2.5);
 
   return {
     fontSize: `${fontSize}px`,
   };
+});
+
+const customIconSize = computed(() => {
+  const { value } = get(dimensions);
+
+  return Math.min(24, value / 2);
 });
 </script>
 
 <template>
   <span
     :style="{ ...wrapperStyle, ...textStyle }"
-    class="flex items-center justify-center border border-rui-light-text-secondary rounded-full whitespace-nowrap tracking-normal text-rui-light-text bg-white font-bold"
+    class="flex items-center justify-center rounded-full whitespace-nowrap tracking-normal font-semibold bg-rui-grey-200 dark:bg-rui-grey-300 text-rui-grey-600 dark:text-rui-grey-700 border border-rui-grey-300 dark:border-rui-grey-400 uppercase"
   >
     <RuiIcon
       v-if="customAsset"
-      size="16"
-      name="pencil-line"
+      :size="customIconSize"
+      name="lu-pencil"
     />
     <template v-else>
       {{ text }}

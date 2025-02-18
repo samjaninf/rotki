@@ -114,18 +114,20 @@ INSERT OR IGNORE INTO location(location, seq) VALUES ('m', 45);
 INSERT OR IGNORE INTO location(location, seq) VALUES ('n', 46);
 /* ZKSync Lite */
 INSERT OR IGNORE INTO location(location, seq) VALUES ('o', 47);
-"""
-
-# Custom enum table for AssetMovement categories (deposit/withdrawal)
-DB_CREATE_ASSET_MOVEMENT_CATEGORY = """
-CREATE TABLE IF NOT EXISTS asset_movement_category (
-  category    CHAR(1)       PRIMARY KEY NOT NULL,
-  seq     INTEGER UNIQUE
-);
-/* Deposit Category */
-INSERT OR IGNORE INTO asset_movement_category(category, seq) VALUES ('A', 1);
-/* Withdrawal Category */
-INSERT OR IGNORE INTO asset_movement_category(category, seq) VALUES ('B', 2);
+/* HTX */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('p', 48);
+/* Bitcoin */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('q', 49);
+/* Bitcoin Cash */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('r', 50);
+/* Polkadot */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('s', 51);
+/* Kusama */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('t', 52);
+/* Coinbase Prime */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('u', 53);
+/* Binance Smart Chain */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('v', 54);
 """
 
 # Custom enum table for Balance categories (asset/liability)
@@ -348,24 +350,6 @@ CREATE TABLE IF NOT EXISTS margin_positions (
 );
 """
 
-DB_CREATE_ASSET_MOVEMENTS = """
-CREATE TABLE IF NOT EXISTS asset_movements (
-    id TEXT PRIMARY KEY,
-    location CHAR(1) NOT NULL DEFAULT('A') REFERENCES location(location),
-    category CHAR(1) NOT NULL DEFAULT('A') REFERENCES asset_movement_category(category),
-    address TEXT,
-    transaction_id TEXT,
-    timestamp INTEGER,
-    asset TEXT NOT NULL,
-    amount TEXT,
-    fee_asset TEXT,
-    fee TEXT,
-    link TEXT,
-    FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE,
-    FOREIGN KEY(fee_asset) REFERENCES assets(identifier) ON UPDATE CASCADE
-);
-"""
-
 DB_CREATE_EVM_TRANSACTIONS = """
 CREATE TABLE IF NOT EXISTS evm_transactions (
     identifier INTEGER NOT NULL PRIMARY KEY,
@@ -427,7 +411,6 @@ CREATE TABLE IF NOT EXISTS evmtx_receipt_logs (
     log_index INTEGER NOT NULL,
     data BLOB NOT NULL,
     address TEXT NOT NULL,
-    removed INTEGER NOT NULL CHECK (removed IN (0, 1)),
     FOREIGN KEY(tx_id) REFERENCES evmtx_receipts(tx_id) ON DELETE CASCADE ON UPDATE CASCADE,
     UNIQUE(tx_id, log_index)
 );
@@ -541,7 +524,8 @@ CREATE TABLE IF NOT EXISTS eth2_validators (
     ownership_proportion TEXT NOT NULL,
     withdrawal_address TEXT,
     activation_timestamp INTEGER,
-    withdrawable_timestamp INTEGER
+    withdrawable_timestamp INTEGER,
+    exited_timestamp INTEGER
 );
 """
 
@@ -577,10 +561,10 @@ CREATE TABLE IF NOT EXISTS history_events (
     location_label TEXT,
     asset TEXT NOT NULL,
     amount TEXT NOT NULL,
-    usd_value TEXT NOT NULL,
     notes TEXT,
     type TEXT NOT NULL,
     subtype TEXT NOT NULL,
+    extra_data TEXT,
     FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE,
     UNIQUE(event_identifier, sequence_index)
 );
@@ -595,7 +579,6 @@ CREATE TABLE IF NOT EXISTS evm_events_info(
     counterparty TEXT,
     product TEXT,
     address TEXT,
-    extra_data TEXT,
     FOREIGN KEY(identifier) REFERENCES history_events(identifier) ON UPDATE CASCADE ON DELETE CASCADE
 );
 """  # noqa: E501
@@ -625,18 +608,22 @@ CREATE TABLE IF NOT EXISTS history_events_mappings (
 """  # noqa: E501
 
 
+# usd_price is a column of the table because we sort by price in the fiat currency and that price
+# needs to be calculated from last_price and the price of last_price_asset. If we don't sort using
+# the usd_price when the NFTs are valued in different assets the order is not correct.
 DB_CREATE_NFTS = """
 CREATE TABLE IF NOT EXISTS nfts (
     identifier TEXT NOT NULL PRIMARY KEY,
     name TEXT,
-    last_price TEXT,
-    last_price_asset TEXT,
+    last_price TEXT NOT NULL,
+    last_price_asset TEXT NOT NULL,
     manual_price INTEGER NOT NULL CHECK (manual_price IN (0, 1)),
     owner_address TEXT,
     blockchain TEXT GENERATED ALWAYS AS ('ETH') VIRTUAL,
     is_lp INTEGER NOT NULL CHECK (is_lp IN (0, 1)),
     image_url TEXT,
     collection_name TEXT,
+    usd_price REAL NOT NULL DEFAULT 0,
     FOREIGN KEY(blockchain, owner_address) REFERENCES blockchain_accounts(blockchain, account) ON DELETE CASCADE,
     FOREIGN KEY (identifier) REFERENCES assets(identifier) ON UPDATE CASCADE,
     FOREIGN KEY (last_price_asset) REFERENCES assets(identifier) ON UPDATE CASCADE
@@ -656,7 +643,7 @@ CREATE TABLE IF NOT EXISTS ens_mappings (
 DB_CREATE_ADDRESS_BOOK = """
 CREATE TABLE IF NOT EXISTS address_book (
     address TEXT NOT NULL,
-    blockchain TEXT,
+    blockchain TEXT NOT NULL,
     name TEXT NOT NULL,
     PRIMARY KEY(address, blockchain)
 );
@@ -750,13 +737,39 @@ CREATE TABLE IF NOT EXISTS calendar_reminders (
 );
 """
 
+DB_CREATE_COWSWAP_ORDERS = """
+CREATE TABLE IF NOT EXISTS cowswap_orders (
+    identifier TEXT NOT NULL PRIMARY KEY,
+    order_type TEXT NOT NULL,
+    raw_fee_amount TEXT NOT NULL
+);
+"""
+
+DB_CREATE_GNOSISPAY_DATA = """
+CREATE TABLE IF NOT EXISTS gnosispay_data (
+    identifier INTEGER PRIMARY KEY NOT NULL,
+    tx_hash BLOB NOT NULL UNIQUE,
+    timestamp INTEGER NOT NULL,
+    merchant_name TEXT NOT NULL,
+    merchant_city TEXT,
+    country TEXT NOT NULL,
+    mcc INTEGER NOT NULL,
+    transaction_symbol TEXT NOT NULL,
+    transaction_amount TEXT NOT NULL,
+    billing_symbol TEXT,
+    billing_amount TEXT,
+    reversal_symbol TEXT,
+    reversal_amount TEXT,
+    reversal_tx_hash BLOB UNIQUE
+);
+"""
+
 
 DB_SCRIPT_CREATE_TABLES = f"""
 PRAGMA foreign_keys=off;
 BEGIN TRANSACTION;
 {DB_CREATE_TRADE_TYPE}
 {DB_CREATE_LOCATION}
-{DB_CREATE_ASSET_MOVEMENT_CATEGORY}
 {DB_CREATE_BALANCE_CATEGORY}
 {DB_CREATE_ASSETS}
 {DB_CREATE_TIMED_BALANCES}
@@ -780,7 +793,6 @@ BEGIN TRANSACTION;
 {DB_CREATE_ZKSYNCLITE_TRANSACTIONS}
 {DB_CREATE_ZKSYNCLITE_SWAPS}
 {DB_CREATE_MARGIN}
-{DB_CREATE_ASSET_MOVEMENTS}
 {DB_CREATE_USED_QUERY_RANGES}
 {DB_CREATE_EVM_TX_MAPPINGS}
 {DB_CREATE_SETTINGS}
@@ -808,6 +820,8 @@ BEGIN TRANSACTION;
 {DB_CREATE_KEY_VALUE_CACHE}
 {DB_CREATE_CALENDAR}
 {DB_CREATE_CALENDAR_REMINDERS}
+{DB_CREATE_COWSWAP_ORDERS}
+{DB_CREATE_GNOSISPAY_DATA}
 COMMIT;
 PRAGMA foreign_keys=on;
 """

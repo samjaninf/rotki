@@ -1,26 +1,20 @@
 <script setup lang="ts">
+import { omit } from 'es-toolkit';
 import XpubInput from '@/components/accounts/blockchain/XpubInput.vue';
+import AccountDataInput from '@/components/accounts/management/inputs/AccountDataInput.vue';
 import type { ValidationErrors } from '@/types/api/errors';
 import type { XpubPayload } from '@/types/blockchain/accounts';
 import type { XpubManage } from '@/composables/accounts/blockchain/use-account-manage';
 
-const props = defineProps<{
-  value: XpubManage;
+const modelValue = defineModel<XpubManage>({ required: true });
+
+const errors = defineModel<ValidationErrors>('errorMessages', { required: true });
+
+defineProps<{
   loading: boolean;
-  errorMessages: ValidationErrors;
 }>();
-
-const emit = defineEmits<{
-  (e: 'input', value: XpubManage): void;
-}>();
-
-const { value: modelValue } = toRefs(props);
 
 const input = ref<InstanceType<typeof XpubInput>>();
-
-function updateVModel(value: XpubManage) {
-  emit('input', value);
-}
 
 const xpub = computed<XpubPayload>({
   get() {
@@ -29,7 +23,7 @@ const xpub = computed<XpubPayload>({
   },
   set(xpub: XpubPayload) {
     const model = get(modelValue);
-    updateVModel({
+    set(modelValue, {
       ...model,
       data: {
         ...model.data,
@@ -45,7 +39,7 @@ const tags = computed<string[]>({
   },
   set(tags: string[]) {
     const model = get(modelValue);
-    updateVModel({
+    set(modelValue, {
       ...model,
       data: {
         ...model.data,
@@ -61,11 +55,12 @@ const label = computed<string>({
   },
   set(label: string) {
     const model = get(modelValue);
-    updateVModel({
+    const labelData = label ? { label } : {};
+    set(modelValue, {
       ...model,
       data: {
-        ...model.data,
-        ...(label ? { label } : {}),
+        ...omit(model.data, ['label']),
+        ...labelData,
       },
     });
   },
@@ -85,14 +80,14 @@ defineExpose({
   <div class="flex flex-col gap-4">
     <XpubInput
       ref="input"
-      :disabled="loading || value.mode === 'edit'"
-      :error-messages="errorMessages"
-      :xpub.sync="xpub"
-      :blockchain="value.chain"
+      v-model:xpub="xpub"
+      v-model:error-messages="errors"
+      :disabled="loading || modelValue.mode === 'edit'"
+      :blockchain="modelValue.chain"
     />
     <AccountDataInput
-      :tags.sync="tags"
-      :label.sync="label"
+      v-model:tags="tags"
+      v-model:label="label"
       :disabled="loading"
     />
   </div>

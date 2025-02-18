@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { StyleValue } from 'vue/types/jsx';
+import { toRem } from '@/utils/data';
+import type { StyleValue } from 'vue';
 
 defineOptions({
   inheritAttrs: false,
@@ -11,13 +12,10 @@ const props = withDefaults(
     height?: string | number;
   }>(),
   {
-    variant: 'outlined',
     height: undefined,
+    variant: 'outlined',
   },
 );
-
-const css = useCssModule();
-const attrs = useAttrs();
 
 const style = computed<StyleValue | undefined>(() => {
   if (!props.height)
@@ -32,13 +30,13 @@ const style = computed<StyleValue | undefined>(() => {
 <template>
   <div
     :class="[
-      css.table,
+      $style.table,
       {
-        [css.outlined]: variant === 'outlined',
+        [$style.outlined]: variant === 'outlined',
       },
     ]"
     :style="style"
-    v-bind="attrs"
+    v-bind="$attrs"
   >
     <table>
       <slot />
@@ -48,7 +46,7 @@ const style = computed<StyleValue | undefined>(() => {
 
 <style module lang="scss">
 .table {
-  @apply w-full;
+  @apply w-full overflow-y-auto;
 
   table {
     @apply w-full;

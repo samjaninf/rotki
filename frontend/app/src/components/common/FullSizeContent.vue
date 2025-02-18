@@ -1,17 +1,25 @@
 <script setup lang="ts">
-const top = ref(0);
-const proxy = useProxy();
+const wrapper = ref();
+const topOffset = ref<number>(0);
+
+useResizeObserver(wrapper, (a) => {
+  if (a.length > 0)
+    set(topOffset, a[0].contentRect.top + 156);
+});
 
 onMounted(() => {
-  const { top: topBound } = proxy.$el.getBoundingClientRect();
-  set(top, topBound);
+  if (get(wrapper))
+    set(topOffset, get(wrapper).offsetTop + 156);
 });
 </script>
 
 <template>
   <div
+    ref="wrapper"
     class="flex flex-col items-center justify-center text-center p-2"
-    :style="`height: calc(100vh - ${top + 92}px);`"
+    :style="{
+      height: `calc(100vh - ${topOffset}px)`,
+    }"
   >
     <slot />
   </div>

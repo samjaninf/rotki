@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { Module } from '@/types/modules';
 import { Section } from '@/types/status';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useStatusStore } from '@/store/status';
+import { useLiquityStore } from '@/store/defi/liquity';
+import { useModules } from '@/composables/session/modules';
+import { usePremium } from '@/composables/premium';
+import ActiveModules from '@/components/defi/ActiveModules.vue';
+import LiquityStakingDetails from '@/components/staking/liquity/LiquityStakingDetails.vue';
+import ModuleNotActive from '@/components/defi/ModuleNotActive.vue';
+import NoPremiumPlaceholder from '@/components/premium/NoPremiumPlaceholder.vue';
 
 const modules = [Module.LIQUITY];
 const { isModuleEnabled } = useModules();
-const { fetchStaking, fetchPools, fetchStatistics } = useLiquityStore();
+const { fetchPools, fetchStaking, fetchStatistics } = useLiquityStore();
 const { shouldShowLoadingScreen } = useStatusStore();
 const moduleEnabled = isModuleEnabled(modules[0]);
 const premium = usePremium();
@@ -35,29 +44,20 @@ watch(moduleEnabled, async (enabled) => {
     await fetch();
 });
 
-watch(
-  shouldShowLoadingScreen(Section.DEFI_LIQUITY_STAKING),
-  async (current, old) => {
-    if (!old && current)
-      await fetchStaking();
-  },
-);
+watch(shouldShowLoadingScreen(Section.DEFI_LIQUITY_STAKING), async (current, old) => {
+  if (!old && current)
+    await fetchStaking();
+});
 
-watch(
-  shouldShowLoadingScreen(Section.DEFI_LIQUITY_STAKING_POOLS),
-  async (current, old) => {
-    if (!old && current)
-      await fetchPools();
-  },
-);
+watch(shouldShowLoadingScreen(Section.DEFI_LIQUITY_STAKING_POOLS), async (current, old) => {
+  if (!old && current)
+    await fetchPools();
+});
 
-watch(
-  shouldShowLoadingScreen(Section.DEFI_LIQUITY_STATISTICS),
-  async (current, old) => {
-    if (!old && current)
-      await fetchStatistics();
-  },
-);
+watch(shouldShowLoadingScreen(Section.DEFI_LIQUITY_STATISTICS), async (current, old) => {
+  if (!old && current)
+    await fetchStatistics();
+});
 
 const { t } = useI18n();
 </script>

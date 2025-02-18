@@ -20,6 +20,7 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes as Web3HexBytes
 
 from rotkehlchen.constants import ZERO
+from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.utils.hexbytes import HexBytes
@@ -44,13 +45,19 @@ ModuleName = Literal[
     'yearn_vaults_v2',
     'uniswap',
     'loopring',
-    'balancer',
     'eth2',
     'sushiswap',
     'liquity',
     'pickle_finance',
     'nfts',
 ]
+
+OnlyPurgeableModuleName = Literal[
+    'gnosis_pay',  # only to purge DB table
+    'cowswap',     # only to purge DB table
+]
+
+PurgeableModuleName = ModuleName | OnlyPurgeableModuleName
 
 # TODO: Turn this into some kind of light data structure and not just a mapping
 # This is a mapping of module ids to human readable names
@@ -63,7 +70,6 @@ AVAILABLE_MODULES_MAP = {
     'yearn_vaults_v2': 'Yearn V2 Vaults',
     'uniswap': 'Uniswap',
     'loopring': 'Loopring',
-    'balancer': 'Balancer',
     'eth2': 'Eth2',
     'sushiswap': 'Sushiswap',
     'liquity': 'Liquity',
@@ -75,16 +81,23 @@ DEFAULT_OFF_MODULES = {'makerdao_dsr', 'yearn_vaults'}
 
 
 UNISWAP_PROTOCOL: Final = 'UNI-V2'
+UNISWAPV3_PROTOCOL: Final = 'UNI-V3'
 SUSHISWAP_PROTOCOL: Final = 'SLP'
 # this variable is used in the decoders and maps to the protocol field used in the database
 # for yearn vaults v1
 YEARN_VAULTS_V1_PROTOCOL = 'yearn_vaults_v1'
 YEARN_VAULTS_V2_PROTOCOL = 'yearn_vaults_v2'
+YEARN_VAULTS_V3_PROTOCOL = 'yearn_vaults_v3'
+YEARN_STAKING_PROTOCOL = 'yearn_staking'
 CURVE_POOL_PROTOCOL = 'curve_pool'
 VELODROME_POOL_PROTOCOL = 'velodrome_pool'
 AERODROME_POOL_PROTOCOL = 'aerodrome_pool'
 PICKLE_JAR_PROTOCOL = 'pickle_jar'
 SPAM_PROTOCOL = 'spam'
+GEARBOX_PROTOCOL = 'gearbox'
+HOP_PROTOCOL_LP = 'hop_lp'
+MORPHO_VAULT_PROTOCOL: Final = 'morpho_vaults'
+CURVE_LENDING_VAULTS_PROTOCOL = 'curve_lending_vaults'
 
 
 # The protocols for which we know how to calculate their prices
@@ -93,11 +106,15 @@ ProtocolsWithPriceLogic = (
     YEARN_VAULTS_V2_PROTOCOL,
     CURVE_POOL_PROTOCOL,
     VELODROME_POOL_PROTOCOL,
+    HOP_PROTOCOL_LP,
+    UNISWAPV3_PROTOCOL,
+    AERODROME_POOL_PROTOCOL,
 )
 
 LP_TOKEN_AS_POOL_PROTOCOLS = (  # In these protocols the LP token of a pool and the pool itself are the same contract  # noqa: E501
     UNISWAP_PROTOCOL,
     VELODROME_POOL_PROTOCOL,
+    AERODROME_POOL_PROTOCOL,
 )
 LP_TOKEN_AS_POOL_CONTRACT_ABIS = Literal['VELO_V2_LP', 'UNISWAP_V2_LP']  # These contract are both the pool and the LP token of the pool  # noqa: E501
 
@@ -129,28 +146,30 @@ class ExternalService(SerializableEnumNameMixin):
     BASE_ETHERSCAN = auto()
     GNOSIS_ETHERSCAN = auto()
     SCROLL_ETHERSCAN = auto()
+    BINANCE_SC_ETHERSCAN = auto()
     BLOCKSCOUT = auto()
     MONERIUM = auto()
     THEGRAPH = auto()
+    GNOSIS_PAY = auto()
+    OPTIMISM_BLOCKSCOUT = auto()
+    POLYGON_POS_BLOCKSCOUT = auto()
+    ARBITRUM_ONE_BLOCKSCOUT = auto()
+    BASE_BLOCKSCOUT = auto()
+    GNOSIS_BLOCKSCOUT = auto()
+    DEFILLAMA = auto()
+    COINGECKO = auto()
+    ALCHEMY = auto()
 
     def get_chain_for_etherscan(self) -> Optional['ChainID']:
         """If the service is an etherscan service return its chain"""
-        if self == ExternalService.ETHERSCAN:
-            return ChainID.ETHEREUM
-        elif self == ExternalService.OPTIMISM_ETHERSCAN:
-            return ChainID.OPTIMISM
-        elif self == ExternalService.POLYGON_POS_ETHERSCAN:
-            return ChainID.POLYGON_POS
-        elif self == ExternalService.ARBITRUM_ONE_ETHERSCAN:
-            return ChainID.ARBITRUM_ONE
-        elif self == ExternalService.BASE_ETHERSCAN:
-            return ChainID.BASE
-        elif self == ExternalService.GNOSIS_ETHERSCAN:
-            return ChainID.GNOSIS
-        elif self == ExternalService.SCROLL_ETHERSCAN:
-            return ChainID.SCROLL
+        return ETHERSCAN_TO_CHAINID.get(self)
 
-        return None
+    def get_chain_for_blockscout(self) -> Optional['ChainID']:
+        """If the service is a blockscout service return its chain"""
+        return BLOCKSCOUT_TO_CHAINID.get(self)
+
+    def premium_only(self) -> bool:
+        return self in {ExternalService.GNOSIS_PAY, ExternalService.MONERIUM}
 
 
 class ExternalServiceApiCredentials(NamedTuple):
@@ -176,9 +195,6 @@ class ExternalServiceApiCredentials(NamedTuple):
 
 T_TradePair = str
 TradePair = NewType('TradePair', T_TradePair)
-
-T_EvmAddres = str
-EvmAddress = NewType('EvmAddress', T_EvmAddres)
 
 ChecksumEvmAddress = ChecksumAddress
 
@@ -238,7 +254,7 @@ class ChainID(Enum):
     """
     ETHEREUM = 1
     OPTIMISM = 10
-    BINANCE = 56
+    BINANCE_SC = 56
     GNOSIS = 100
     POLYGON_POS = 137
     FANTOM = 250
@@ -288,7 +304,7 @@ class ChainID(Enum):
             label = 'zkSync Era'
         elif self == ChainID.POLYGON_ZKEVM:
             label = 'Polygon zkEVM'
-        elif self == ChainID.BINANCE:
+        elif self == ChainID.BINANCE_SC:
             label = 'Binance Smart Chain'
         elif self == ChainID.ARBITRUM_ONE:
             label = 'Arbitrum One'
@@ -335,7 +351,29 @@ SUPPORTED_CHAIN_IDS = Literal[
     ChainID.BASE,
     ChainID.GNOSIS,
     ChainID.SCROLL,
+    ChainID.BINANCE_SC,
 ]
+
+
+BLOCKSCOUT_TO_CHAINID = {
+    ExternalService.BLOCKSCOUT: ChainID.ETHEREUM,
+    ExternalService.OPTIMISM_BLOCKSCOUT: ChainID.OPTIMISM,
+    ExternalService.POLYGON_POS_BLOCKSCOUT: ChainID.POLYGON_POS,
+    ExternalService.ARBITRUM_ONE_BLOCKSCOUT: ChainID.ARBITRUM_ONE,
+    ExternalService.BASE_BLOCKSCOUT: ChainID.BASE,
+    ExternalService.GNOSIS_BLOCKSCOUT: ChainID.GNOSIS,
+}
+
+ETHERSCAN_TO_CHAINID = {
+    ExternalService.ETHERSCAN: ChainID.ETHEREUM,
+    ExternalService.OPTIMISM_ETHERSCAN: ChainID.OPTIMISM,
+    ExternalService.POLYGON_POS_ETHERSCAN: ChainID.POLYGON_POS,
+    ExternalService.ARBITRUM_ONE_ETHERSCAN: ChainID.ARBITRUM_ONE,
+    ExternalService.BASE_ETHERSCAN: ChainID.BASE,
+    ExternalService.GNOSIS_ETHERSCAN: ChainID.GNOSIS,
+    ExternalService.SCROLL_ETHERSCAN: ChainID.SCROLL,
+    ExternalService.BINANCE_SC_ETHERSCAN: ChainID.BINANCE_SC,
+}
 
 
 class EvmlikeChain(StrEnum):
@@ -385,6 +423,9 @@ class EvmTransaction:
     def identifier(self) -> str:
         return str(self.chain_id.value) + self.tx_hash.hex()
 
+    def __str__(self) -> str:
+        return f'{self.tx_hash.hex()} at {self.chain_id}'
+
 
 class EvmInternalTransaction(NamedTuple):
     """Represent an internal EVM transaction"""
@@ -416,6 +457,27 @@ class EvmInternalTransaction(NamedTuple):
         return str(self.chain_id.serialize()) + self.parent_tx_hash.hex() + str(self.trace_id)
 
 
+class ChainType(SerializableEnumNameMixin):
+    EVM = auto()
+    EVMLIKE = auto()
+    SUBSTRATE = auto()
+    BITCOIN = auto()
+    ETH2 = auto()
+
+    def type_to_blockchains(self) -> Sequence['SupportedBlockchain']:
+        """Return the set of valid blockchains for the chain type"""
+        if self in (ChainType.EVM, ChainType.EVMLIKE):
+            return SUPPORTED_EVM_CHAINS + SUPPORTED_EVMLIKE_CHAINS
+
+        if self == ChainType.BITCOIN:
+            return get_args(SUPPORTED_BITCOIN_CHAINS)
+
+        if self == ChainType.SUBSTRATE:
+            return get_args(SUPPORTED_SUBSTRATE_CHAINS)
+
+        raise InputError(f'Invalid chain type {self} when removing accounts')
+
+
 class SupportedBlockchain(SerializableEnumValueMixin):
     """
     These are the currently supported chains in any capacity in rotki
@@ -433,6 +495,7 @@ class SupportedBlockchain(SerializableEnumValueMixin):
     BASE = 'BASE'
     GNOSIS = 'GNOSIS'
     SCROLL = 'SCROLL'
+    BINANCE_SC = 'BINANCE_SC'
     ZKSYNC_LITE = 'ZKSYNC_LITE'
 
     def __str__(self) -> str:
@@ -475,21 +538,23 @@ class SupportedBlockchain(SerializableEnumValueMixin):
             return 'eip155:137/erc20:0x0000000000000000000000000000000000001010'
         if self == SupportedBlockchain.GNOSIS:
             return 'XDAI'
+        if self == SupportedBlockchain.BINANCE_SC:
+            return 'BNB'
 
         return self.value
 
-    def get_chain_type(self) -> Literal['evm', 'substrate', 'bitcoin', 'eth2', 'evmlike']:
+    def get_chain_type(self) -> ChainType:
         """Chain type to return to the API supported chains endpoint"""
         if self.is_evm():
-            return 'evm'
+            return ChainType.EVM
         if self.is_evmlike():
-            return 'evmlike'
+            return ChainType.EVMLIKE
         if self.is_substrate():
-            return 'substrate'
+            return ChainType.SUBSTRATE
         if self.is_bitcoin():
-            return 'bitcoin'
+            return ChainType.BITCOIN
         # else
-        return 'eth2'  # the outlier
+        return ChainType.ETH2  # the outlier
 
     def ens_coin_type(self) -> int:
         """Return the CoinType number according to EIP-2304, multichain address
@@ -540,6 +605,7 @@ SUPPORTED_BLOCKCHAIN_NAMES_MAPPING = {
     SupportedBlockchain.ARBITRUM_ONE: 'Arbitrum One',
     SupportedBlockchain.GNOSIS: 'Gnosis',
     SupportedBlockchain.ZKSYNC_LITE: 'ZKSync Lite',
+    SupportedBlockchain.BINANCE_SC: 'Binance Smart Chain',
 }
 
 SUPPORTED_BLOCKCHAIN_IMAGE_NAME_MAPPING = {
@@ -557,6 +623,7 @@ SUPPORTED_BLOCKCHAIN_IMAGE_NAME_MAPPING = {
     SupportedBlockchain.GNOSIS: 'gnosis.svg',
     SupportedBlockchain.SCROLL: 'scroll.svg',
     SupportedBlockchain.ZKSYNC_LITE: 'zksync_lite.svg',
+    SupportedBlockchain.BINANCE_SC: 'binance_sc.svg',
 }
 
 EVM_CHAINS_WITH_TRANSACTIONS_TYPE = Literal[
@@ -567,6 +634,7 @@ EVM_CHAINS_WITH_TRANSACTIONS_TYPE = Literal[
     SupportedBlockchain.BASE,
     SupportedBlockchain.GNOSIS,
     SupportedBlockchain.SCROLL,
+    SupportedBlockchain.BINANCE_SC,
 ]
 
 EVM_CHAINS_WITH_TRANSACTIONS: tuple[EVM_CHAINS_WITH_TRANSACTIONS_TYPE, ...] = typing.get_args(EVM_CHAINS_WITH_TRANSACTIONS_TYPE)  # noqa: E501
@@ -579,6 +647,7 @@ EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE = Literal[
     ChainID.BASE,
     ChainID.GNOSIS,
     ChainID.SCROLL,
+    ChainID.BINANCE_SC,
 ]
 
 EVM_CHAIN_IDS_WITH_TRANSACTIONS: tuple[EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE, ...] = typing.get_args(EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE)  # noqa: E501
@@ -590,6 +659,8 @@ CHAIN_IDS_WITH_BALANCE_PROTOCOLS = Literal[
     ChainID.BASE,
     ChainID.POLYGON_POS,
     ChainID.SCROLL,
+    ChainID.GNOSIS,
+    ChainID.BINANCE_SC,
 ]
 
 SUPPORTED_EVM_CHAINS_TYPE = Literal[
@@ -601,6 +672,7 @@ SUPPORTED_EVM_CHAINS_TYPE = Literal[
     SupportedBlockchain.BASE,
     SupportedBlockchain.GNOSIS,
     SupportedBlockchain.SCROLL,
+    SupportedBlockchain.BINANCE_SC,
 ]
 SUPPORTED_EVM_CHAINS: tuple[SUPPORTED_EVM_CHAINS_TYPE, ...] = typing.get_args(SUPPORTED_EVM_CHAINS_TYPE)  # noqa: E501
 
@@ -623,6 +695,7 @@ SUPPORTED_NON_BITCOIN_CHAINS = Literal[
     SupportedBlockchain.GNOSIS,
     SupportedBlockchain.SCROLL,
     SupportedBlockchain.ZKSYNC_LITE,
+    SupportedBlockchain.BINANCE_SC,
 ]
 
 SUPPORTED_BITCOIN_CHAINS = Literal[
@@ -644,6 +717,7 @@ SUPPORTED_BLOCKCHAIN_TO_CHAINID = {
     SupportedBlockchain.BASE: ChainID.BASE,
     SupportedBlockchain.GNOSIS: ChainID.GNOSIS,
     SupportedBlockchain.SCROLL: ChainID.SCROLL,
+    SupportedBlockchain.BINANCE_SC: ChainID.BINANCE_SC,
 }
 CHAINID_TO_SUPPORTED_BLOCKCHAIN = {
     value: key
@@ -663,6 +737,7 @@ CHAINS_WITH_CHAIN_MANAGER = Literal[
     SupportedBlockchain.GNOSIS,
     SupportedBlockchain.SCROLL,
     SupportedBlockchain.ZKSYNC_LITE,
+    SupportedBlockchain.BINANCE_SC,
 ]
 
 
@@ -747,6 +822,13 @@ class Location(DBCharEnumMixIn):
     BYBIT = 45
     SCROLL = 46  # on-chain Scroll events
     ZKSYNC_LITE = 47
+    HTX = 48
+    BITCOIN = 49
+    BITCOIN_CASH = 50
+    POLKADOT = 51
+    KUSAMA = 52
+    COINBASEPRIME = 53
+    BINANCE_SC = 54  # on-chain Binance Smart Chain events
 
     @staticmethod
     def from_chain_id(chain_id: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE) -> 'EVM_LOCATIONS_TYPE':
@@ -767,6 +849,9 @@ class Location(DBCharEnumMixIn):
 
         if chain_id == ChainID.SCROLL:
             return Location.SCROLL
+
+        if chain_id == ChainID.BINANCE_SC:
+            return Location.BINANCE_SC
 
         # else
         return Location.POLYGON_POS
@@ -789,6 +874,8 @@ class Location(DBCharEnumMixIn):
             return ChainID.GNOSIS.value
         if self == Location.SCROLL:
             return ChainID.SCROLL.value
+        if self == Location.BINANCE_SC:
+            return ChainID.BINANCE_SC.value
         assert self == Location.POLYGON_POS, 'should have only been polygon pos here'
         return ChainID.POLYGON_POS.value
 
@@ -810,13 +897,15 @@ class Location(DBCharEnumMixIn):
                 return Location.GNOSIS
             case SupportedBlockchain.SCROLL:
                 return Location.SCROLL
+            case SupportedBlockchain.BINANCE_SC:
+                return Location.BINANCE_SC
             case SupportedBlockchain.ZKSYNC_LITE:
                 return Location.ZKSYNC_LITE
             case _:  # should never happen
                 raise AssertionError(f'Got in Location.from_chain for {chain}')
 
 
-EVM_LOCATIONS_TYPE = Literal[Location.ETHEREUM, Location.OPTIMISM, Location.POLYGON_POS, Location.ARBITRUM_ONE, Location.BASE, Location.GNOSIS, Location.SCROLL]  # noqa: E501
+EVM_LOCATIONS_TYPE = Literal[Location.ETHEREUM, Location.OPTIMISM, Location.POLYGON_POS, Location.ARBITRUM_ONE, Location.BASE, Location.GNOSIS, Location.SCROLL, Location.BINANCE_SC]  # noqa: E501
 EVM_LOCATIONS: tuple[EVM_LOCATIONS_TYPE, ...] = typing.get_args(EVM_LOCATIONS_TYPE)
 EVMLIKE_LOCATIONS_TYPE = Literal[Location.ZKSYNC_LITE]
 EVMLIKE_LOCATIONS: tuple[EVMLIKE_LOCATIONS_TYPE, ...] = typing.get_args(EVMLIKE_LOCATIONS_TYPE)
@@ -826,12 +915,6 @@ EVM_EVMLIKE_LOCATIONS: tuple[EVM_EVMLIKE_LOCATIONS_TYPE, ...] = EVM_LOCATIONS + 
 # For now Location enum has only evmlike chains. This will change so keep separate variable
 BLOCKCHAIN_LOCATIONS_TYPE: TypeAlias = EVM_EVMLIKE_LOCATIONS_TYPE
 BLOCKCHAIN_LOCATIONS: Final = EVM_EVMLIKE_LOCATIONS
-
-
-class AssetMovementCategory(DBCharEnumMixIn):
-    """Supported Asset Movement Types so far only deposit and withdrawals"""
-    DEPOSIT = 1
-    WITHDRAWAL = 2
 
 
 class ExchangeAuthCredentials(NamedTuple):
@@ -903,6 +986,9 @@ class CostBasisMethod(SerializableEnumNameMixin):
     ACB = auto()
 
 
+ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE: Final = 'NONE'  # blockchain value used to mark in the DB that the address entry is valid for any blockchain  # noqa: E501
+
+
 class AddressbookEntry(NamedTuple):
     address: BlockchainAddress
     name: str
@@ -915,9 +1001,8 @@ class AddressbookEntry(NamedTuple):
             'blockchain': self.blockchain.serialize() if self.blockchain is not None else None,
         }
 
-    def serialize_for_db(self) -> tuple[str, str, str | None]:
-        blockchain = self.blockchain.value if self.blockchain is not None else None
-        return (self.address, self.name, blockchain)
+    def serialize_for_db(self) -> tuple[str, str, str]:
+        return (self.address, self.name, self.blockchain.value if self.blockchain is not None else ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE)  # noqa: E501
 
     @classmethod
     def deserialize(cls: type['AddressbookEntry'], data: dict[str, Any]) -> 'AddressbookEntry':
@@ -1061,14 +1146,16 @@ class EvmTokenKind(DBCharEnumMixIn):
 
 
 class CacheType(Enum):
-    """It contains all types both for the general cache table and the unique cache table"""
+    """It contains all types both for the general cache table and the unique cache table
+    Important: When adding a new cache for a protocol that the user should be able to refresh
+    please add it to `ProtocolsWithCache`.
+    """
     CURVE_LP_TOKENS = auto()
     CURVE_POOL_ADDRESS = auto()  # get pool addr by lp token
     CURVE_POOL_TOKENS = auto()  # get pool tokens by pool addr
     YEARN_VAULTS = auto()  # get yearn vaults information
     MAKERDAO_VAULT_ILK = auto()  # ilk(collateral type) to info (underlying_asset, join address)
     CURVE_GAUGE_ADDRESS = auto()  # get gauge address by pool address
-    CURVE_POOL_UNDERLYING_TOKENS = auto()  # get underlying tokens by pool address
     VELODROME_POOL_ADDRESS = auto()  # get pool address information
     VELODROME_GAUGE_ADDRESS = auto()  # get gauge address by pool address
     AERODROME_POOL_ADDRESS = auto()  # get pool address information
@@ -1081,6 +1168,27 @@ class CacheType(Enum):
     COINLIST = auto()  # coinlist / all coins cache for various oracles
     AIRDROPS_METADATA = auto()  # airdrops index fetched from rotki/data repo
     AIRDROPS_HASH = auto()  # hash of airdrops csv file
+    GEARBOX_POOL_ADDRESS = auto()
+    GEARBOX_POOL_NAME = auto()
+    GEARBOX_POOL_FARMING_TOKEN = auto()
+    GEARBOX_POOL_LP_TOKENS = auto()
+    HOP_POOL_ADDRESS = auto()
+    EXTRAFI_LENDING_RESERVES = auto()  # maps reserve id + blockchain to the underlying token
+    EXTRAFI_FARM_METADADATA = auto()
+    EXTRAFI_REWARD_CONTRACTS = auto()
+    EXTRAFI_NEXT_RESERVE_ID = auto()
+    EFP_SLOT_ADDRESS = auto()
+    MORPHO_VAULTS = auto()
+    MORPHO_REWARD_DISTRIBUTORS = auto()
+    BALANCER_V1_POOLS = auto()
+    BALANCER_V2_POOLS = auto()
+    CURVE_LENDING_VAULTS = auto()
+    CURVE_LENDING_VAULT_CONTROLLER = auto()
+    CURVE_LENDING_VAULT_AMM = auto()
+    CURVE_LENDING_VAULT_COLLATERAL_TOKEN = auto()
+    CURVE_LENDING_VAULT_BORROWED_TOKEN = auto()
+    AURA_POOLS = auto()  # stores count of pools in db + chain_id (stringified)
+    BALANCER_GAUGES = auto()  # stores gauges + chain_id + version
 
     def serialize(self) -> str:
         # Using custom serialize method instead of SerializableEnumMixin since mixin replaces
@@ -1090,6 +1198,22 @@ class CacheType(Enum):
             parts = self.name.split('_')
             return parts[0][:4] + parts[1][0]  # Shorten the name that is stored in the db to save space. For example: VELODROME_POOL_ADDRESS -> VELOP  # noqa: E501
         return self.name
+
+
+class ProtocolsWithCache(SerializableEnumNameMixin):
+    """"Enumeration of all the protocols that have cache keys that can be
+    refreshed by the user manually. It doesn't match the counterparties
+    because some protocols have different versions.
+    """
+    CURVE = auto()
+    VELODROME = auto()
+    AERODROME = auto()
+    YEARN = auto()
+    MAKER = auto()
+    AAVE = auto()
+    CONVEX = auto()
+    GEARBOX = auto()
+    SPARK = auto()
 
 
 UniqueCacheType = Literal[
@@ -1103,6 +1227,21 @@ UniqueCacheType = Literal[
     CacheType.COINLIST,
     CacheType.AIRDROPS_METADATA,
     CacheType.AIRDROPS_HASH,
+    CacheType.GEARBOX_POOL_ADDRESS,
+    CacheType.GEARBOX_POOL_NAME,
+    CacheType.GEARBOX_POOL_FARMING_TOKEN,
+    CacheType.HOP_POOL_ADDRESS,
+    CacheType.EXTRAFI_LENDING_RESERVES,
+    CacheType.EXTRAFI_FARM_METADADATA,
+    CacheType.EXTRAFI_NEXT_RESERVE_ID,
+    CacheType.EFP_SLOT_ADDRESS,
+    CacheType.MORPHO_VAULTS,
+    CacheType.CURVE_LENDING_VAULTS,
+    CacheType.CURVE_LENDING_VAULT_CONTROLLER,
+    CacheType.CURVE_LENDING_VAULT_AMM,
+    CacheType.CURVE_LENDING_VAULT_COLLATERAL_TOKEN,
+    CacheType.CURVE_LENDING_VAULT_BORROWED_TOKEN,
+    CacheType.AURA_POOLS,
 ]
 
 UNIQUE_CACHE_KEYS: tuple[UniqueCacheType, ...] = typing.get_args(UniqueCacheType)
@@ -1110,13 +1249,19 @@ UNIQUE_CACHE_KEYS: tuple[UniqueCacheType, ...] = typing.get_args(UniqueCacheType
 GeneralCacheType = Literal[
     CacheType.CURVE_LP_TOKENS,
     CacheType.CURVE_POOL_TOKENS,
-    CacheType.CURVE_POOL_UNDERLYING_TOKENS,
     CacheType.VELODROME_POOL_ADDRESS,
     CacheType.VELODROME_GAUGE_ADDRESS,
     CacheType.AERODROME_POOL_ADDRESS,
     CacheType.AERODROME_GAUGE_ADDRESS,
     CacheType.CONVEX_POOL_ADDRESS,
     CacheType.SPAM_ASSET_FALSE_POSITIVE,
+    CacheType.GEARBOX_POOL_ADDRESS,
+    CacheType.GEARBOX_POOL_LP_TOKENS,
+    CacheType.EXTRAFI_REWARD_CONTRACTS,
+    CacheType.BALANCER_V1_POOLS,
+    CacheType.BALANCER_V2_POOLS,
+    CacheType.BALANCER_GAUGES,
+    CacheType.MORPHO_REWARD_DISTRIBUTORS,
 ]
 
 
@@ -1150,4 +1295,3 @@ class HistoryEventQueryType(SerializableEnumNameMixin):
     """Locations to query for history events"""
     ETH_WITHDRAWALS = auto()
     BLOCK_PRODUCTIONS = auto()
-    EXCHANGES = auto()

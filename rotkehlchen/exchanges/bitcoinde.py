@@ -11,18 +11,12 @@ import requests
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import AssetWithOracles
-from rotkehlchen.assets.utils import symbol_to_asset_or_token
+from rotkehlchen.assets.converters import asset_from_bitcoinde
 from rotkehlchen.constants.assets import A_EUR
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import (
-    AssetMovement,
-    Location,
-    MarginPosition,
-    Price,
-    Trade,
-)
+from rotkehlchen.exchanges.data_structures import Location, MarginPosition, Price, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -37,7 +31,6 @@ from rotkehlchen.utils.misc import iso8601ts_to_timestamp
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.history.events.structures.base import HistoryEvent
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -45,44 +38,14 @@ log = RotkehlchenLogsAdapter(logger)
 # This corresponds to md5('') and is used in signature generation
 MD5_EMPTY_STR = 'd41d8cd98f00b204e9800998ecf8427e'
 
-# Pairs can be found in Basic API doc https://www.bitcoin.de/en/api/basic. There is no api to
-# query this pairs.
-BITCOINDE_TRADING_PAIRS = (
-    'btceur',
-    'bcheur',
-    'btgeur',
-    'etheur',
-    'bsveur',
-    'ltceur',
-    'usdteur',
-    'xrpeur',
-    'dogeeur',
-    'soleur',
-    'trxeur',
-    'iotabtc',  # not listed anymore
-    'dashbtc',  # not listed anymore
-    'gntbtc',  # not listed anymore
-    'ltcbtc',  # not listed anymore
-)
-BITCOINDE_TO_WORLD_SYMBOLS = {
-    'SOL': 'SOL-2',
-    'USDT': 'eip155:1/erc20:0xdAC17F958D2ee523a2206206994597C13D831ec7',
-}
-
-
-def bitcoinde_asset(symbol: str) -> AssetWithOracles:
-    upper_symbol = symbol.upper()
-    rotki_id = BITCOINDE_TO_WORLD_SYMBOLS.get(upper_symbol, upper_symbol)
-    return symbol_to_asset_or_token(rotki_id)
-
 
 def bitcoinde_pair_to_world(pair: str) -> tuple[AssetWithOracles, AssetWithOracles]:
     if len(pair) == 6:
-        tx_asset = bitcoinde_asset(pair[:3])
-        native_asset = bitcoinde_asset(pair[3:])
+        tx_asset = asset_from_bitcoinde(pair[:3])
+        native_asset = asset_from_bitcoinde(pair[3:])
     elif len(pair) in {7, 8}:
-        tx_asset = bitcoinde_asset(pair[:4])
-        native_asset = bitcoinde_asset(pair[4:])
+        tx_asset = asset_from_bitcoinde(pair[:4])
+        native_asset = asset_from_bitcoinde(pair[4:])
     else:
         raise DeserializationError(f'Could not parse pair: {pair}')
     return tx_asset, native_asset
@@ -149,10 +112,10 @@ class Bitcoinde(ExchangeInterface):
             api_key=api_key,
             secret=secret,
             database=database,
+            msg_aggregator=msg_aggregator,
         )
         self.uri = 'https://api.bitcoin.de'
         self.session.headers.update({'x-api-key': api_key})
-        self.msg_aggregator = msg_aggregator
 
     def edit_exchange_credentials(self, credentials: ExchangeAuthCredentials) -> bool:
         changed = super().edit_exchange_credentials(credentials)
@@ -271,12 +234,13 @@ class Bitcoinde(ExchangeInterface):
         log.debug(f'Bitcoin.de account response: {resp_info}')
         for currency, balance in resp_info['data']['balances'].items():
             try:
-                asset = bitcoinde_asset(currency)
+                asset = asset_from_bitcoinde(currency)
             except UnknownAsset as e:
-                self.msg_aggregator.add_error(
-                    f'Failed to read balance for asset {e.identifier} at Bitcoin.de. Please '
-                    f'report this error.',
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='balance query',
                 )
+                continue
             try:
                 usd_price = Inquirer.find_usd_price(asset=asset)
             except RemoteError as e:
@@ -342,9 +306,9 @@ class Bitcoinde(ExchangeInterface):
                 log.debug(f'Deserialized trade from Bitcoin.de: {converted_trade}')
                 trades.append(converted_trade)
             except UnknownAsset as e:
-                self.msg_aggregator.add_warning(
-                    f'Found bitcoin.de trade with unknown asset '
-                    f'{e.identifier}. Ignoring it.',
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='trade',
                 )
                 continue
             except (DeserializationError, KeyError) as e:
@@ -363,20 +327,6 @@ class Bitcoinde(ExchangeInterface):
                 continue
 
         return trades, (start_ts, end_ts)
-
-    def query_online_deposits_withdrawals(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list[AssetMovement]:
-        return []  # noop for bitcoinde
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
-        return []  # noop for bitcoinde
 
     def query_online_margin_history(
             self,

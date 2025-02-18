@@ -3,6 +3,7 @@ import operator
 import tempfile
 import typing
 from collections.abc import Callable
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
@@ -13,15 +14,16 @@ from marshmallow import INCLUDE, Schema, fields, post_load, validate, validates_
 from marshmallow.exceptions import ValidationError
 from werkzeug.datastructures import FileStorage
 
-from rotkehlchen.accounting.structures.balance import Balance, BalanceType
+from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.accounting.structures.types import ActionType
 from rotkehlchen.accounting.types import SchemaEventType
 from rotkehlchen.assets.asset import Asset, AssetWithNameAndType, AssetWithOracles, EvmToken
+from rotkehlchen.assets.ignored_assets_handling import IgnoredAssetsHandling
 from rotkehlchen.assets.types import AssetType
-from rotkehlchen.assets.utils import IgnoredAssetsHandling
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.chain.arbitrum_one.constants import ARBITRUM_ONE_ETHERSCAN_NODE_NAME
 from rotkehlchen.chain.base.constants import BASE_ETHERSCAN_NODE_NAME
+from rotkehlchen.chain.binance_sc.constants import BINANCE_SC_ETHERSCAN_NODE_NAME
 from rotkehlchen.chain.bitcoin.bch.utils import (
     is_valid_bitcoin_cash_address,
     validate_bch_address_input,
@@ -35,6 +37,7 @@ from rotkehlchen.chain.ethereum.modules.eth2.structures import PerformanceStatus
 from rotkehlchen.chain.ethereum.modules.nft.structures import NftLpHandling
 from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
 from rotkehlchen.chain.evm.accounting.structures import BaseEventSettings, TxAccountingTreatment
+from rotkehlchen.chain.evm.decoding.ens.utils import is_potential_ens_name
 from rotkehlchen.chain.evm.types import EvmAccount, EvmlikeAccount
 from rotkehlchen.chain.gnosis.constants import GNOSIS_ETHERSCAN_NODE_NAME
 from rotkehlchen.chain.optimism.constants import OPTIMISM_ETHERSCAN_NODE_NAME
@@ -58,7 +61,6 @@ from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.filtering import (
     AccountingRulesFilterQuery,
     AddressbookFilterQuery,
-    AssetMovementsFilterQuery,
     AssetsFilterQuery,
     CustomAssetsFilterQuery,
     Eth2DailyStatsFilterQuery,
@@ -80,6 +82,11 @@ from rotkehlchen.errors.misc import InputError, RemoteError, XPUBError
 from rotkehlchen.errors.serialization import DeserializationError, EncodingError
 from rotkehlchen.exchanges.constants import ALL_SUPPORTED_EXCHANGES, SUPPORTED_EXCHANGES
 from rotkehlchen.exchanges.kraken import KrakenAccountType
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    AssetMovementExtraData,
+    create_asset_movement_with_fee,
+)
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType, HistoryEvent
 from rotkehlchen.history.events.structures.eth2 import (
     EthBlockEvent,
@@ -92,6 +99,7 @@ from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.icons import ALLOWED_ICON_EXTENSIONS
 from rotkehlchen.inquirer import CurrentPriceOracle
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.oracles.structures import SETTABLE_CURRENT_PRICE_ORACLES
 from rotkehlchen.types import (
     AVAILABLE_MODULES_MAP,
     DEFAULT_ADDRESS_NAME_PRIORITY,
@@ -104,10 +112,10 @@ from rotkehlchen.types import (
     SUPPORTED_SUBSTRATE_CHAINS,
     AddressbookEntry,
     AddressbookType,
-    AssetMovementCategory,
     BlockchainAddress,
     BTCAddress,
     ChainID,
+    ChainType,
     ChecksumEvmAddress,
     CostBasisMethod,
     EvmlikeChain,
@@ -118,8 +126,11 @@ from rotkehlchen.types import (
     Location,
     LocationAssetMappingDeleteEntry,
     LocationAssetMappingUpdateEntry,
+    ModuleName,
+    OnlyPurgeableModuleName,
     OptionalBlockchainAddress,
     OptionalChainAddress,
+    ProtocolsWithCache,
     SupportedBlockchain,
     Timestamp,
     TradeType,
@@ -173,6 +184,10 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
+class AssetValueThresholdSchema(Schema):
+    usd_value_threshold = AmountField(load_default=None)
+
+
 class AsyncQueryArgumentSchema(Schema):
     """A schema for getters that only have one argument enabling async query"""
     async_query = fields.Boolean(load_default=False)
@@ -185,26 +200,6 @@ class AsyncIgnoreCacheQueryArgumentSchema(AsyncQueryArgumentSchema):
 class TimestampRangeSchema(Schema):
     from_timestamp = TimestampField(load_default=Timestamp(0))
     to_timestamp = TimestampField(load_default=ts_now)
-
-
-class AsyncHistoricalQuerySchema(AsyncQueryArgumentSchema, TimestampRangeSchema):
-    """A schema for getters that have 2 arguments.
-    One to enable async querying and another to force reset DB data by querying everything again"""
-    reset_db_data = fields.Boolean(load_default=False)
-
-
-class BalanceSchema(Schema):
-    amount = AmountField(required=True)
-    usd_value = AmountField(required=True)
-
-    @post_load
-    def make_balance_entry(
-            self,
-            data: dict[str, Any],
-            **_kwargs: Any,
-    ) -> Balance:
-        """Create a Balance struct. This should not raise since it's checked by Marshmallow"""
-        return Balance(amount=data['amount'], usd_value=data['usd_value'])
 
 
 class AsyncTaskSchema(Schema):
@@ -382,14 +377,29 @@ class EventsOnlineQuerySchema(AsyncQueryArgumentSchema):
     query_type = SerializableEnumField(enum_class=HistoryEventQueryType, required=True)
 
 
-class EvmTransactionDecodingSchema(AsyncQueryArgumentSchema):
+class EvmTransactionSchema(Schema):
     evm_chain = EvmChainNameField(required=True)
     tx_hash = EVMTransactionHashField(required=True)
 
 
-class EvmlikeTransactionDecodingSchema(AsyncQueryArgumentSchema):
+class EvmTransactionDecodingSchema(AsyncQueryArgumentSchema):
+    transactions = fields.List(
+        fields.Nested(EvmTransactionSchema),
+        validate=lambda data: len(data) != 0,
+    )
+    delete_custom = fields.Boolean(load_default=False)
+
+
+class EvmLikeTransactionSchema(Schema):
     chain = StrEnumField(enum_class=EvmlikeChain, required=True)
     tx_hash = EVMTransactionHashField(required=True)
+
+
+class EvmlikeTransactionDecodingSchema(AsyncQueryArgumentSchema):
+    transactions = fields.List(
+        fields.Nested(EvmLikeTransactionSchema),
+        validate=lambda data: len(data) != 0,
+    )
 
 
 class EvmPendingTransactionDecodingSchema(AsyncIgnoreCacheQueryArgumentSchema):
@@ -664,7 +674,7 @@ class HistoryEventSchema(
     DBPaginationSchema,
     DBOrderBySchema,
 ):
-    """Schema for quering history events"""
+    """Schema for querying history events"""
     exclude_ignored_assets = fields.Boolean(load_default=True)
     group_by_event_ids = fields.Boolean(load_default=False)
     event_identifiers = DelimitedOrNormalList(fields.String(), load_default=None)
@@ -676,6 +686,14 @@ class HistoryEventSchema(
         load_default=None,
     )
     customized_events_only = fields.Boolean(load_default=False)
+    identifiers = DelimitedOrNormalList(fields.Integer(
+        validate=webargs.validate.Range(
+                min=0,
+                error='Identifier must be an integer >= 0',
+            ),
+        ),
+        load_default=None,
+    )
 
     # EvmEvent only
     tx_hashes = DelimitedOrNormalList(EVMTransactionHashField(), load_default=None)
@@ -763,6 +781,7 @@ class HistoryEventSchema(
             'event_subtypes': data['event_subtypes'],
             'location': data['location'],
             'customized_events_only': data['customized_events_only'],
+            'identifiers': data['identifiers'],
         }
 
         filter_query: HistoryEventFilterQuery | (EvmEventFilterQuery | EthStakingEventFilterQuery)
@@ -802,10 +821,15 @@ class CreateHistoryEventSchema(Schema):
     """Schema used when adding a new event in the EVM transactions view"""
     include_identifier: bool = False
     entry_type = SerializableEnumField(enum_class=HistoryBaseEntryType, required=True)
+    history_event_context: ContextVar = ContextVar('history_event_context')
+
+    def __init__(self, dbhandler: 'DBHandler') -> None:
+        super().__init__()
+        self.database = dbhandler
 
     class BaseSchema(Schema):
         timestamp = TimestampMSField(required=True)
-        balance = fields.Nested(BalanceSchema, required=True)
+        amount = AmountField(required=True)
         identifier = fields.Integer(required=True)
 
     class BaseEventSchema(BaseSchema):
@@ -829,7 +853,7 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
-            return {'event': HistoryEvent(**data)}
+            return {'events': [HistoryEvent(**data)]}
 
     class CreateEvmEventSchema(BaseEventSchema):
         """Schema used when adding a new event in the EVM transactions view"""
@@ -847,7 +871,7 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
-            return {'event': EvmEvent(**data)}
+            return {'events': [EvmEvent(**data)]}
 
     class CreateEthBlockEventEventSchema(BaseSchema):
         is_mev_reward = fields.Boolean(required=True)
@@ -874,7 +898,11 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
-            return {'event': EthBlockEvent(**data)}
+            database = CreateHistoryEventSchema.history_event_context.get()['schema'].database
+            with database.conn.read_ctx() as cursor:
+                tracked_accounts = database.get_blockchain_accounts(cursor)
+            data['fee_recipient_tracked'] = data['fee_recipient'] in tracked_accounts.get(SupportedBlockchain.ETHEREUM)  # noqa: E501
+            return {'events': [EthBlockEvent(**data)]}
 
     class CreateEthDepositEventEventSchema(BaseSchema):
         tx_hash = EVMTransactionHashField(required=True)
@@ -896,7 +924,7 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
-            return {'event': EthDepositEvent(**data)}
+            return {'events': [EthDepositEvent(**data)]}
 
     class CreateEthWithdrawalEventEventSchema(BaseSchema):
         is_exit = fields.Boolean(required=True)
@@ -916,7 +944,75 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
-            return {'event': EthWithdrawalEvent(**data)}
+            return {'events': [EthWithdrawalEvent(**data)]}
+
+    class CreateAssetMovementEventSchema(BaseSchema):
+        event_type = SerializableEnumField(
+            enum_class=HistoryEventType,
+            allow_only=[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
+            required=True,
+        )
+        fee = FeeField(load_default=None, validate=validate.Range(min=ZERO, min_inclusive=False))
+        location = LocationField(required=True)
+        location_label = fields.String(load_default=None)
+        blockchain = fields.String(load_default=None)
+        unique_id = fields.String(required=False, load_default=None)
+        address = fields.String(required=False, load_default=None)  # It can be an address for any chain not only the supported ones so we validate it as string.  # noqa: E501
+        transaction_id = fields.String(required=False, load_default=None)  # It can be a transaction from any chain. We don't do any special validation on it.  # noqa: E501
+        event_identifier = fields.String(required=False, load_default=None)
+        asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)
+        fee_asset = AssetField(load_default=None, required=False, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
+
+        @post_load
+        def make_history_base_entry(
+                self,
+                data: dict[str, Any],
+                **_kwargs: Any,
+        ) -> dict[str, Any]:
+            if ((fee := data['fee']) is None) ^ (data['fee_asset'] is None):
+                raise ValidationError(
+                    message='fee and fee_asset must be provided together',
+                    field_name='fee',
+                )
+
+            extra_data: AssetMovementExtraData = {}
+            if (address := data['address']) is not None:
+                extra_data['address'] = address
+
+            if (tx_id := data['transaction_id']) is not None:
+                extra_data['transaction_id'] = tx_id
+
+            if (blockchain := data['blockchain']) is not None:
+                extra_data['blockchain'] = blockchain
+
+            events = create_asset_movement_with_fee(
+                fee=fee,
+                asset=data['asset'],
+                location=data['location'],
+                unique_id=data['unique_id'],
+                timestamp=data['timestamp'],
+                fee_asset=data['fee_asset'],
+                event_type=data['event_type'],
+                identifier=data.get('identifier'),
+                amount=data['amount'],
+                extra_data=extra_data,
+                fee_identifier=CreateHistoryEventSchema.history_event_context.get()['schema'].get_fee_event_identifier(data),
+                location_label=data['location_label'],
+            ) if fee is not None else [AssetMovement(
+                is_fee=False,
+                asset=data['asset'],
+                amount=data['amount'],
+                location=data['location'],
+                unique_id=data['unique_id'],
+                timestamp=data['timestamp'],
+                identifier=data.get('identifier'),
+                event_type=data['event_type'],
+                extra_data=extra_data,
+                event_identifier=data['event_identifier'],
+                location_label=data['location_label'],
+            )]
+
+            return {'events': events}
 
     ENTRY_TO_SCHEMA: Final[dict[HistoryBaseEntryType, type[Schema]]] = {
         HistoryBaseEntryType.HISTORY_EVENT: CreateBaseHistoryEventSchema,
@@ -924,7 +1020,12 @@ class CreateHistoryEventSchema(Schema):
         HistoryBaseEntryType.ETH_DEPOSIT_EVENT: CreateEthDepositEventEventSchema,
         HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT: CreateEthWithdrawalEventEventSchema,
         HistoryBaseEntryType.EVM_EVENT: CreateEvmEventSchema,
+        HistoryBaseEntryType.ASSET_MOVEMENT_EVENT: CreateAssetMovementEventSchema,
     }
+
+    def get_fee_event_identifier(self, data: dict[str, Any]) -> int | None:
+        """Retrieve fee event's identifier for asset movement, returns None for create."""
+        return None
 
     @post_load
     def make_history_base_entry(
@@ -934,6 +1035,7 @@ class CreateHistoryEventSchema(Schema):
     ) -> dict[str, Any]:
         entry_type = data.pop('entry_type')  # already used to decide schema
         exclude = () if self.include_identifier else ('identifier',)
+        self.history_event_context.set({'schema': self})
         return self.ENTRY_TO_SCHEMA[entry_type](exclude=exclude).load(data)
 
     class Meta:  # need it to validate extra fields in make_history_base_entry
@@ -944,85 +1046,21 @@ class EditHistoryEventSchema(CreateHistoryEventSchema):
     """Schema used when editing an existing event in the EVM transactions view"""
     include_identifier = True
 
+    def get_fee_event_identifier(self, data: dict[str, Any]) -> int | None:
+        """Retrieve fee event's identifier for asset movement, returns None for create."""
+        with self.database.conn.read_ctx() as cursor:
+            result = cursor.execute("""
+                SELECT identifier
+                FROM history_events
+                WHERE event_identifier = (
+                    SELECT event_identifier
+                    FROM history_events
+                    WHERE identifier = ?
+                )
+                AND subtype = 'fee'
+            """, (data['identifier'],)).fetchone()
 
-class AssetMovementsQuerySchema(
-        AsyncQueryArgumentSchema,
-        TimestampRangeSchema,
-        OnlyCacheQuerySchema,
-        DBPaginationSchema,
-        DBOrderBySchema,
-):
-    asset = AssetField(expected_type=Asset, load_default=None)
-    action = SerializableEnumField(enum_class=AssetMovementCategory, load_default=None)
-    location = LocationField(load_default=None)
-    exclude_ignored_assets = fields.Boolean(load_default=True)
-
-    def __init__(
-            self,
-            treat_eth2_as_eth: bool,
-    ) -> None:
-        super().__init__()
-        self.treat_eth2_as_eth = treat_eth2_as_eth
-
-    @validates_schema
-    def validate_asset_movements_query_schema(
-            self,
-            data: dict[str, Any],
-            **_kwargs: Any,
-    ) -> None:
-        valid_ordering_attr = {
-            None,
-            'timestamp',
-            'location',
-            'category',
-            'amount',
-            'fee',
-        }
-        if (
-            data['order_by_attributes'] is not None and
-            not set(data['order_by_attributes']).issubset(valid_ordering_attr)
-        ):
-            error_msg = (
-                f'order_by_attributes for asset movements can not be '
-                f'{",".join(set(data["order_by_attributes"]) - valid_ordering_attr)}'
-            )
-            raise ValidationError(
-                message=error_msg,
-                field_name='order_by_attributes',
-            )
-
-    @post_load
-    def make_asset_movements_query(
-            self,
-            data: dict[str, Any],
-            **_kwargs: Any,
-    ) -> dict[str, Any]:
-        asset_list: tuple[Asset, ...] | None = None
-        if data['asset'] is not None:
-            asset_list = (data['asset'],)
-        if self.treat_eth2_as_eth is True and data['asset'] == A_ETH:
-            asset_list = (A_ETH, A_ETH2)
-
-        filter_query = AssetMovementsFilterQuery.make(
-            order_by_rules=create_order_by_rules_list(
-                data=data,
-                default_order_by_fields=['timestamp'],
-                default_ascending=[False],
-            ),
-            limit=data['limit'],
-            offset=data['offset'],
-            from_ts=data['from_timestamp'],
-            to_ts=data['to_timestamp'],
-            assets=asset_list,
-            action=[data['action']] if data['action'] is not None else None,
-            location=data['location'],
-            exclude_ignored_assets=data['exclude_ignored_assets'],
-        )
-        return {
-            'async_query': data['async_query'],
-            'only_cache': data['only_cache'],
-            'filter_query': filter_query,
-        }
+            return result[0] if result else None
 
 
 class TradeSchema(Schema):
@@ -1060,10 +1098,6 @@ class TradeSchema(Schema):
 
         if data['rate'] == ZERO:
             raise ValidationError('A zero rate is not allowed', field_name='rate')
-
-
-class IntegerIdentifierListSchema(Schema):
-    identifiers = DelimitedOrNormalList(fields.Integer(required=True), required=True)
 
 
 class IntegerIdentifierSchema(Schema):
@@ -1169,17 +1203,18 @@ class NameDeleteSchema(Schema):
 def _validate_current_price_oracles(
         current_price_oracles: list[CurrentPriceOracle],
 ) -> None:
-    """Prevents repeated oracle names and empty list"""
+    """Prevents repeated oracle names, empty list and illegal values"""
     if (
         len(current_price_oracles) == 0 or
-        len(current_price_oracles) != len(set(current_price_oracles))
-    ):
-        oracle_names = [str(oracle) for oracle in current_price_oracles]
-        supported_oracle_names = [str(oracle) for oracle in CurrentPriceOracle]
+        len(current_price_oracles) != len(given_set := set(current_price_oracles))):
         raise ValidationError(
-            f'Invalid current price oracles in: {", ".join(oracle_names)}. '
-            f'Supported oracles are: {", ".join(supported_oracle_names)}. '
-            f'Check there are no repeated ones.',
+            'Current price oracles list should not be empty and should have no repeated entries',
+        )
+
+    if (invalid_oracles := given_set - SETTABLE_CURRENT_PRICE_ORACLES) != set():
+        raise ValidationError(
+            f'Invalid current price oracles given: {", ".join([str(x) for x in invalid_oracles])}. ',  # noqa: E501
+
         )
 
 
@@ -1248,7 +1283,6 @@ class ModifiableSettingsSchema(Schema):
     date_display_format = fields.String(load_default=None)
     active_modules = fields.List(fields.String(), load_default=None)
     frontend_settings = fields.String(load_default=None)
-    account_for_assets_movements = fields.Bool(load_default=None)
     btc_derivation_gap_limit = fields.Integer(
         strict=True,
         validate=webargs.validate.Range(
@@ -1336,6 +1370,9 @@ class ModifiableSettingsSchema(Schema):
     auto_delete_calendar_entries = fields.Boolean(load_default=None)
     auto_create_calendar_reminders = fields.Boolean(load_default=None)
     ask_user_upon_size_discrepancy = fields.Boolean(load_default=None)
+    auto_detect_tokens = fields.Boolean(load_default=None)
+    csv_export_delimiter = fields.String(load_default=None)
+    use_unified_etherscan_api = fields.Boolean(load_default=None)
 
     @validates_schema
     def validate_settings_schema(
@@ -1372,7 +1409,6 @@ class ModifiableSettingsSchema(Schema):
             submit_usage_analytics=data['submit_usage_analytics'],
             active_modules=data['active_modules'],
             frontend_settings=data['frontend_settings'],
-            account_for_assets_movements=data['account_for_assets_movements'],
             btc_derivation_gap_limit=data['btc_derivation_gap_limit'],
             calculate_past_cost_basis=data['calculate_past_cost_basis'],
             display_date_in_localtime=data['display_date_in_localtime'],
@@ -1397,6 +1433,9 @@ class ModifiableSettingsSchema(Schema):
             auto_delete_calendar_entries=data['auto_delete_calendar_entries'],
             auto_create_calendar_reminders=data['auto_create_calendar_reminders'],
             ask_user_upon_size_discrepancy=data['ask_user_upon_size_discrepancy'],
+            auto_detect_tokens=data['auto_detect_tokens'],
+            csv_export_delimiter=data['csv_export_delimiter'],
+            use_unified_etherscan_api=data['use_unified_etherscan_api'],
         )
 
 
@@ -1464,6 +1503,10 @@ class AllBalancesQuerySchema(AsyncQueryArgumentSchema):
     save_data = fields.Boolean(load_default=False)
     ignore_errors = fields.Boolean(load_default=False)
     ignore_cache = fields.Boolean(load_default=False)
+
+
+class ManualBalanceQuerySchema(AsyncQueryArgumentSchema, AssetValueThresholdSchema):
+    """Schema for querying manual balances with optional USD threshold filtering"""
 
 
 class ExternalServiceSchema(Schema):
@@ -1545,17 +1588,22 @@ class ExchangesDataResourceSchema(Schema):
     location = LocationField(limit_to=ALL_SUPPORTED_EXCHANGES, load_default=None)
 
 
+class ExchangeEventsQuerySchema(AsyncQueryArgumentSchema):
+    name = fields.String(required=False)
+    location = LocationField(limit_to=SUPPORTED_EXCHANGES, required=True)
+
+
 class ExchangesResourceRemoveSchema(Schema):
     name = fields.String(required=True)
     location = LocationField(limit_to=SUPPORTED_EXCHANGES, required=True)
 
 
-class ExchangeBalanceQuerySchema(AsyncQueryArgumentSchema):
+class ExchangeBalanceQuerySchema(AsyncQueryArgumentSchema, AssetValueThresholdSchema):
     location = LocationField(limit_to=SUPPORTED_EXCHANGES, load_default=None)
     ignore_cache = fields.Boolean(load_default=False)
 
 
-class BlockchainBalanceQuerySchema(AsyncQueryArgumentSchema):
+class BlockchainBalanceQuerySchema(AsyncQueryArgumentSchema, AssetValueThresholdSchema):
     blockchain = BlockchainField(load_default=None)
     ignore_cache = fields.Boolean(load_default=False)
 
@@ -1714,16 +1762,6 @@ class BlockchainAccountDataSchema(TagsSettingSchema):
     address = fields.String(required=True)
     label = fields.String(load_default=None)
 
-    @validates_schema
-    def validate_blockchain_account_schema(
-            self,
-            data: dict[str, Any],
-            **_kwargs: Any,
-    ) -> None:
-        label = data.get('label')
-        if label == '':
-            raise ValidationError("Blockchain account's label cannot be empty string. Use null instead.")  # noqa: E501
-
 
 class BaseXpubSchema(AsyncQueryArgumentSchema):
     xpub = XpubField(required=True)
@@ -1790,7 +1828,7 @@ def _validate_blockchain_account_schemas(
     if chain.is_evm():
         for account_data in data['accounts']:
             address_string = address_getter(account_data)
-            if not address_string.endswith('.eth'):
+            if not is_potential_ens_name(address_string):
                 # Make sure that given value is an ethereum address
                 try:
                     address = to_checksum_address(address_string)
@@ -1816,7 +1854,7 @@ def _validate_blockchain_account_schemas(
             address = address_getter(account_data)
             # ENS domain will be checked in the transformation step
             if not (
-                address.endswith('.eth') or
+                is_potential_ens_name(address) or
                 is_valid_btc_address(address) or
                 is_valid_bitcoin_cash_address(address)
             ):
@@ -1843,7 +1881,7 @@ def _validate_blockchain_account_schemas(
         for account_data in data['accounts']:
             address = address_getter(account_data)
             # ENS domain will be checked in the transformation step
-            if not address.endswith('.eth') and not is_valid_substrate_address(chain, address):
+            if not is_potential_ens_name(address) and not is_valid_substrate_address(chain, address):  # noqa: E501
                 raise ValidationError(
                     f'Given value {address} is not a valid {chain} address',
                     field_name='address',
@@ -1865,7 +1903,7 @@ def _transform_btc_or_bch_address(
 
     NB: ENS domains for BTC store the scriptpubkey. Check EIP-2304.
     """
-    if not given_address.endswith('.eth'):
+    if not is_potential_ens_name(given_address):
         return BTCAddress(given_address)
 
     try:
@@ -1949,7 +1987,7 @@ def _transform_substrate_address(
     ENS domain substrate public key encoding:
     https://github.com/ensdomains/address-encoder/blob/master/src/index.ts
     """
-    if not given_address.endswith('.eth'):
+    if not is_potential_ens_name(given_address):
         return SubstrateAddress(given_address)
 
     try:
@@ -1994,9 +2032,23 @@ def _transform_evm_addresses(data: dict[str, Any], ethereum_inquirer: 'EthereumI
         )
 
 
-class EvmAccountsPutSchema(AsyncQueryArgumentSchema):
+class ChainTypeSchema(AsyncQueryArgumentSchema):
+    chain_type = SerializableEnumField(
+        enum_class=ChainType,
+        required=True,
+        exclude_types=(ChainType.EVMLIKE,),
+    )
+
+
+class BlockchainAccountListSchema(Schema):
     accounts = fields.List(fields.Nested(BlockchainAccountDataSchema), required=True)
 
+
+class ChainTypeAccountSchema(ChainTypeSchema, BlockchainAccountListSchema):
+    ...
+
+
+class EvmAccountsPutSchema(BlockchainAccountListSchema, AsyncQueryArgumentSchema):
     def __init__(self, ethereum_inquirer: EthereumInquirer):
         super().__init__()
         self.ethereum_inquirer = ethereum_inquirer
@@ -2067,9 +2119,16 @@ class BlockchainAccountsPutSchema(BlockchainAccountsPatchSchema):
     ...
 
 
-class BlockchainAccountsDeleteSchema(AsyncQueryArgumentSchema):
-    blockchain = BlockchainField(required=True, exclude_types=(SupportedBlockchain.ETHEREUM_BEACONCHAIN,))  # noqa: E501
+class StringAccountSchema(Schema):
     accounts = fields.List(fields.String(), required=True)
+
+
+class BlockchainTypeAccountsDeleteSchema(ChainTypeSchema, StringAccountSchema):
+    """Used to manage accounts in different chains filtering by chain type"""
+
+
+class BlockchainAccountsDeleteSchema(StringAccountSchema, AsyncQueryArgumentSchema):
+    blockchain = BlockchainField(required=True, exclude_types=(SupportedBlockchain.ETHEREUM_BEACONCHAIN,))  # noqa: E501
 
     def __init__(self, ethereum_inquirer: EthereumInquirer):
         super().__init__()
@@ -2181,14 +2240,24 @@ class AssetsPostSchema(DBPaginationSchema, DBOrderBySchema):
 
 
 class AssetsSearchLevenshteinSchema(Schema):
-    value = fields.String(required=True)
+    value = fields.String(load_default=None)
     evm_chain = EvmChainNameField(load_default=None)
+    address = EvmAddressField(load_default=None)
     limit = fields.Integer(required=True)
     search_nfts = fields.Boolean(load_default=False)
 
     def __init__(self, db: 'DBHandler') -> None:
         super().__init__()
         self.db = db
+
+    @validates_schema
+    def validate_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        if data['value'] is None and data['address'] is None:
+            raise ValidationError('Either value or address need to be provided')
 
     @post_load
     def make_levenshtein_search_query(
@@ -2198,8 +2267,9 @@ class AssetsSearchLevenshteinSchema(Schema):
     ) -> dict[str, Any]:
         filter_query = LevenshteinFilterQuery.make(
             and_op=True,
-            substring_search=data['value'].strip().casefold(),
+            substring_search=data['value'].strip().casefold() if data['value'] else None,
             chain_id=data['evm_chain'],
+            address=data['address'],
             ignored_assets_handling=IgnoredAssetsHandling.EXCLUDE,  # do not check ignored assets at search  # noqa: E501
         )
         return {
@@ -2238,7 +2308,7 @@ class AssetsSearchByColumnSchema(DBOrderBySchema, DBPaginationSchema):
             return_exact_matches=data['return_exact_matches'],
             chain_id=data['evm_chain'],
             identifier_column_name='assets.identifier',
-            ignored_assets_handling=IgnoredAssetsHandling.EXCLUDE,  # do not check ignored asssets at search  # noqa: E501
+            ignored_assets_handling=IgnoredAssetsHandling.EXCLUDE,  # do not check ignored assets at search  # noqa: E501
         )
         return {'filter_query': filter_query}
 
@@ -2393,7 +2463,10 @@ class EthStakingCommonFilterSchema(Schema):
         What's more it's important to note that status Pending would only count from
         the moment they are seen by the beacon chain as that's when a validator index exists.
         """
-        validator_indices, associated_indices, status_indices = set(), set(), set()
+        with self.database.conn.read_ctx() as cursor:
+            all_validators = {x[0] for x in cursor.execute('SELECT validator_index FROM eth2_validators')}  # noqa: E501
+
+        validator_indices, associated_indices, status_indices = all_validators, all_validators, all_validators  # noqa: E501
         no_filter = True
         if given_indices:
             validator_indices = set(given_indices)
@@ -2417,7 +2490,7 @@ class EthStakingCommonFilterSchema(Schema):
 
             no_filter = False
 
-        return None if no_filter else validator_indices | associated_indices | status_indices
+        return None if no_filter else validator_indices & associated_indices & status_indices
 
 
 class ExchangeRatesSchema(AsyncQueryArgumentSchema):
@@ -2490,12 +2563,16 @@ class CurrentAssetsPriceSchema(AsyncQueryArgumentSchema):
 
 class HistoricalAssetsPriceSchema(AsyncQueryArgumentSchema):
     assets_timestamp = fields.List(
-        fields.Tuple(  # type: ignore # Tuple is not annotated
+        fields.Tuple(
             (AssetField(expected_type=Asset, required=True), TimestampField(required=True)),
             required=True,
         ),
         required=True,
         validate=webargs.validate.Length(min=1),
+    )
+    only_cache_period = fields.Integer(
+        load_default=None,
+        validate=webargs.validate.Range(min=1, error='Cache period must be a positive integer'),
     )
     target_asset = AssetField(expected_type=Asset, required=True)
 
@@ -2519,7 +2596,7 @@ class AssetResetRequestSchema(AsyncQueryArgumentSchema):
 
 class NamedEthereumModuleDataSchema(Schema):
     module_name = fields.String(
-        validate=webargs.validate.OneOf(choices=list(AVAILABLE_MODULES_MAP.keys())),
+        validate=webargs.validate.OneOf(choices=list(typing.get_args(ModuleName) + typing.get_args(OnlyPurgeableModuleName))),  # noqa: E501
     )
 
 
@@ -2552,6 +2629,18 @@ class ManualPriceSchema(Schema):
     to_asset = AssetField(expected_type=Asset, required=True)
     price = PriceField(required=True)
 
+    @validates_schema
+    def validate_manual_price_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        if data['from_asset'] == data['to_asset']:
+            raise ValidationError(
+                message='The from and to assets must be different',
+                field_name='from_asset',
+            )
+
 
 class TimedManualPriceSchema(ManualPriceSchema):
     timestamp = TimestampField(required=True)
@@ -2570,10 +2659,6 @@ class ManualPriceDeleteSchema(Schema):
     from_asset = AssetField(expected_type=Asset, required=True)
     to_asset = AssetField(expected_type=Asset, required=True)
     timestamp = TimestampField(required=True)
-
-
-class AvalancheTransactionQuerySchema(TimestampRangeSchema, AsyncQueryArgumentSchema):
-    address = EvmAddressField(required=True)
 
 
 class SingleFileSchema(Schema):
@@ -2814,7 +2899,7 @@ class AddressWithOptionalBlockchainSchema(Schema):
     ) -> OptionalChainAddress:
         if (
             data['blockchain'] is not None and
-            cast(SupportedBlockchain, data['blockchain']).get_chain_type() == 'evm'
+            cast('SupportedBlockchain', data['blockchain']).get_chain_type() == ChainType.EVM
         ):
             try:
                 address = to_checksum_address(data['address'])
@@ -2845,7 +2930,7 @@ class AddressWithOptionalBlockchainSchema(Schema):
         if data['blockchain'] is None:
             return
 
-        blockchain = cast(SupportedBlockchain, data['blockchain'])
+        blockchain = cast('SupportedBlockchain', data['blockchain'])
         if ((
             blockchain == SupportedBlockchain.BITCOIN and
             is_valid_btc_address(data['address']) is False
@@ -2853,7 +2938,7 @@ class AddressWithOptionalBlockchainSchema(Schema):
             blockchain == SupportedBlockchain.BITCOIN_CASH and
             is_valid_bitcoin_cash_address(data['address']) is False
         ) or (
-            blockchain.get_chain_type() == 'substrate' and
+            blockchain.get_chain_type() == ChainType.SUBSTRATE and
             is_valid_substrate_address(chain=blockchain, value=data['address']) is False  # type: ignore  # expects polkadot or kusama
         )):
             raise ValidationError(
@@ -3029,6 +3114,10 @@ class RpcNodeSchema(Schema):
     blockchain = BlockchainField(required=True, exclude_types=(SupportedBlockchain.ETHEREUM_BEACONCHAIN,))  # noqa: E501
 
 
+class ConnectToRPCNodes(RpcNodeSchema):
+    identifier = fields.Integer(load_default=None)
+
+
 class RpcAddNodeSchema(Schema):
     blockchain = BlockchainField(required=True, exclude_types=(SupportedBlockchain.ETHEREUM_BEACONCHAIN,))  # noqa: E501
     name = fields.String(
@@ -3079,6 +3168,7 @@ class RpcNodeEditSchema(RpcAddNodeSchema):
                 BASE_ETHERSCAN_NODE_NAME,
                 GNOSIS_ETHERSCAN_NODE_NAME,
                 SCROLL_ETHERSCAN_NODE_NAME,
+                BINANCE_SC_ETHERSCAN_NODE_NAME,
             ):
                 raise ValidationError(
                     message="Can't change the etherscan node name",
@@ -3310,7 +3400,7 @@ class BinanceSavingsSchema(BaseStakingQuerySchema):
 
 
 class EnsAvatarsSchema(Schema):
-    ens_name = fields.String(required=True, validate=lambda x: x.endswith('.eth'))
+    ens_name = fields.String(required=True, validate=is_potential_ens_name)
 
 
 class ClearCacheSchema(Schema):
@@ -3337,7 +3427,7 @@ class ClearIconsCacheSchema(Schema):
 
 class ClearAvatarsCacheSchema(Schema):
     entries = fields.List(
-        fields.String(required=True, validate=lambda x: x.endswith('.eth')),
+        fields.String(required=True, validate=is_potential_ens_name),
         load_default=None,
     )
 
@@ -3374,8 +3464,8 @@ class SkippedExternalEventsExportSchema(Schema):
     directory_path = DirectoryField(load_default=None)
 
 
-class ExportHistoryEventSchema(HistoryEventSchema):
-    """Schema for quering history events"""
+class ExportHistoryEventSchema(HistoryEventSchema, AsyncQueryArgumentSchema):
+    """Schema for querying history events"""
     directory_path = DirectoryField(required=True)
 
     def make_extra_filtering_arguments(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -3385,7 +3475,14 @@ class ExportHistoryEventSchema(HistoryEventSchema):
         extra_fields = {}
         if (directory_path := data.get('directory_path')) is not None:
             extra_fields['directory_path'] = directory_path
+        if (async_query := data.get('async_query')) is not None:
+            extra_fields['async_query'] = async_query
         return extra_fields
+
+
+class ExportHistoryDownloadSchema(Schema):
+    """Schema for downloading history events CSVs."""
+    file_path = fields.String(required=True)
 
 
 class AccountingRuleIdSchema(Schema):
@@ -3554,12 +3651,12 @@ class AccountingRuleConflictsPagination(DBPaginationSchema):
         return {'filter_query': filter_query}
 
 
-class FalsePositveSpamTokenSchema(Schema):
+class SingleTokenSchema(Schema):
     token = AssetField(expected_type=EvmToken, required=True)
 
 
-class SpamTokenSchema(Schema):
-    token = AssetField(expected_type=EvmToken, required=True)
+class SpamTokenListSchema(Schema):
+    tokens = fields.List(AssetField(expected_type=EvmToken), required=True)
 
 
 def _validate_address_with_blockchain(
@@ -3574,7 +3671,7 @@ def _validate_address_with_blockchain(
         blockchain == SupportedBlockchain.BITCOIN_CASH and
         not is_valid_bitcoin_cash_address(address)
     ) or (
-        blockchain.get_chain_type() == 'substrate' and
+        blockchain.get_chain_type() == ChainType.SUBSTRATE and
         not is_valid_substrate_address(chain=blockchain, value=address)  # type: ignore  # expects polkadot or kusama
     ) or (
         blockchain.is_evm_or_evmlike() and
@@ -3681,6 +3778,7 @@ class QueryCalendarSchema(
         load_default=None,
     )
     identifiers = fields.List(fields.Integer, load_default=None)
+    to_timestamp = TimestampField(load_default=None)
 
     def __init__(self, chain_aggregator: 'ChainsAggregator') -> None:
         super().__init__()
@@ -3753,3 +3851,52 @@ class UpdateCalendarReminderSchema(NewCalendarReminderSchema, IntegerIdentifierS
     @post_load
     def make_calendar_entry(self, data: dict[str, Any], **_kwargs: dict[str, Any]) -> dict[str, Any]:  # noqa: E501
         return {'reminder': self._process_reminder(data)}
+
+
+class HistoricalPerAssetBalanceSchema(SnapshotTimestampQuerySchema, AsyncQueryArgumentSchema):
+    asset = AssetField(expected_type=Asset, load_default=None)
+
+
+class HistoricalPricesPerAssetSchema(AsyncQueryArgumentSchema, TimestampRangeSchema):
+    interval = fields.Integer(
+        strict=True,
+        required=True,
+        validate=webargs.validate.Range(min=0, error='interval has to be a positive integer'),
+    )
+    asset = AssetField(expected_type=Asset, required=True)
+
+    @validates_schema
+    def validate_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        if data['to_timestamp'] <= data['from_timestamp']:
+            raise ValidationError(
+                message='from_timestamp must be smaller than to_timestamp',
+                field_name='from_timestamp',
+            )
+
+    @post_load
+    def transform_data(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> dict[str, Any]:
+        """Align timestamps to interval boundaries.
+
+        - Rounds down `from_timestamp` to nearest multiple of interval
+        - Rounds up `to_timestamp` to nearest multiple of interval
+        """
+        interval = data['interval']
+        data['from_timestamp'] = (data['from_timestamp'] // interval) * interval
+        data['to_timestamp'] = ((data['to_timestamp'] + interval - 1) // interval) * interval
+
+        return data
+
+
+class RefreshProtocolDataSchema(AsyncQueryArgumentSchema):
+    cache_protocol = SerializableEnumField(
+        enum_class=ProtocolsWithCache,
+        required=True,
+    )

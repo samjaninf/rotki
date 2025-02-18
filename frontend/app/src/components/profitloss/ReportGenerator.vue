@@ -1,5 +1,9 @@
 <script setup lang="ts">
+import { checkIfDevelopment } from '@shared/utils';
 import { Routes } from '@/router/routes';
+import { convertToTimestamp } from '@/utils/date';
+import RangeSelector from '@/components/helper/date/RangeSelector.vue';
+import CardTitle from '@/components/typography/CardTitle.vue';
 import type { ProfitLossReportPeriod } from '@/types/reports';
 
 const emit = defineEmits<{
@@ -10,26 +14,24 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const range = ref({ start: '', end: '' });
+const range = ref({ end: '', start: '' });
 const valid = ref<boolean>(false);
 
-const startTimestamp = computed<number>(() =>
-  convertToTimestamp(get(range).start),
-);
+const startTimestamp = computed<number>(() => convertToTimestamp(get(range).start));
 
 const endTimestamp = computed<number>(() => convertToTimestamp(get(range).end));
 
 function generate() {
   emit('generate', {
-    start: get(startTimestamp),
     end: get(endTimestamp),
+    start: get(startTimestamp),
   });
 }
 
 function exportReportData() {
   emit('export-data', {
-    start: get(startTimestamp),
     end: get(endTimestamp),
+    start: get(startTimestamp),
   });
 }
 
@@ -38,6 +40,7 @@ function importReportData() {
 }
 
 const isDevelopment = checkIfDevelopment();
+const isDemoMode = import.meta.env.VITE_DEMO_MODE !== undefined;
 const accountSettingsRoute = Routes.SETTINGS_ACCOUNTING;
 </script>
 
@@ -59,7 +62,7 @@ const accountSettingsRoute = Routes.SETTINGS_ACCOUNTING;
                 icon
                 color="primary"
               >
-                <RuiIcon name="settings-3-line" />
+                <RuiIcon name="lu-settings" />
               </RuiButton>
             </RouterLink>
           </template>
@@ -82,7 +85,7 @@ const accountSettingsRoute = Routes.SETTINGS_ACCOUNTING;
             @click="generate()"
           >
             <template #prepend>
-              <RuiIcon name="file-list-3-line" />
+              <RuiIcon name="lu-scroll-text" />
             </template>
             {{ t('common.actions.generate') }}
           </RuiButton>
@@ -92,22 +95,22 @@ const accountSettingsRoute = Routes.SETTINGS_ACCOUNTING;
             close-on-content-click
             :popper="{ placement: 'bottom-end' }"
           >
-            <template #activator="{ on }">
+            <template #activator="{ attrs }">
               <RuiTooltip
                 :open-delay="400"
                 :popper="{ placement: 'top' }"
-                :disabled="isDevelopment"
+                :disabled="isDevelopment && !isDemoMode"
                 class="h-full"
               >
                 <template #activator>
                   <RuiButton
                     size="lg"
-                    v-on="on"
+                    v-bind="attrs"
                   >
                     <template #prepend>
-                      <RuiIcon name="bug-line" />
+                      <RuiIcon name="lu-bug" />
                     </template>
-                    <span v-if="isDevelopment">
+                    <span v-if="isDevelopment && !isDemoMode">
                       {{ t('profit_loss_reports.debug.title') }}
                     </span>
                   </RuiButton>
@@ -122,7 +125,7 @@ const accountSettingsRoute = Routes.SETTINGS_ACCOUNTING;
                 @click="exportReportData()"
               >
                 <template #prepend>
-                  <RuiIcon name="file-download-line" />
+                  <RuiIcon name="lu-file-down" />
                 </template>
                 {{ t('profit_loss_reports.debug.export_data') }}
               </RuiButton>
@@ -131,7 +134,7 @@ const accountSettingsRoute = Routes.SETTINGS_ACCOUNTING;
                 @click="importReportData()"
               >
                 <template #prepend>
-                  <RuiIcon name="file-upload-line" />
+                  <RuiIcon name="lu-file-up" />
                 </template>
                 {{ t('profit_loss_reports.debug.import_data') }}
               </RuiButton>

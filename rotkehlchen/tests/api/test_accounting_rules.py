@@ -3,12 +3,11 @@ import random
 from http import HTTPStatus
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.accounting.types import EventAccountingRuleStatus
 from rotkehlchen.api.server import APIServer
 from rotkehlchen.chain.ethereum.modules.compound.constants import CPT_COMPOUND
@@ -32,18 +31,20 @@ from rotkehlchen.tests.utils.history_base_entry import store_and_retrieve_events
 from rotkehlchen.types import Location, TimestampMS
 
 
-def _update_rules(rotki: Rotkehlchen, latest_accounting_rules: Path) -> None:
+def _update_rules(rotki: Rotkehlchen, latest_accounting_rules: list[tuple[int, Path]]) -> None:
     """Pull remote accounting rules and save them"""
     data_updater = RotkiDataUpdater(msg_aggregator=rotki.msg_aggregator, user_db=rotki.data.db)
-    data_updater.update_accounting_rules(
-        data=json.loads(latest_accounting_rules.read_text(encoding='utf-8'))['accounting_rules'],
-        version=999999,
-    )
+    for version, jsonfile in latest_accounting_rules:
+        data_updater.update_accounting_rules(
+            data=json.loads(jsonfile.read_text(encoding='utf-8'))['accounting_rules'],
+            version=version,
+            force_updates=False,  # TODO: This should adjust / go away. Related to https://github.com/orgs/rotki/projects/11?pane=issue&itemId=96831912  # noqa: E501
+        )
 
 
 def _setup_conflict_tests(
         rotkehlchen_api_server: APIServer,
-        latest_accounting_rules: Path,
+        latest_accounting_rules: list[tuple[int, Path]],
 ) -> None:
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     rule_1 = {
@@ -75,8 +76,8 @@ def _setup_conflict_tests(
         )
         assert_simple_ok_response(response)
 
-    # pull remote updates
-    _update_rules(rotki=rotki, latest_accounting_rules=latest_accounting_rules)
+    # pull only the first remote update (so that new rules don't mess with our tests)
+    _update_rules(rotki=rotki, latest_accounting_rules=latest_accounting_rules[:1])
 
     # check the conflicts
     with rotki.data.db.conn.read_ctx() as cursor:
@@ -85,7 +86,7 @@ def _setup_conflict_tests(
 
 
 @pytest.mark.parametrize('initialize_accounting_rules', [True])
-def test_query_rules(rotkehlchen_api_server):
+def test_query_rules(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that querying accounting rules works fine"""
     response = requests.post(
         api_url_for(  # test matching counterparty None
@@ -105,9 +106,9 @@ def test_query_rules(rotkehlchen_api_server):
 
 @pytest.mark.parametrize('db_settings', [{'include_crypto2crypto': False}])
 @pytest.mark.parametrize('initialize_accounting_rules', [False])
-def test_manage_rules(rotkehlchen_api_server, db_settings):
+def test_manage_rules(rotkehlchen_api_server: 'APIServer', db_settings: dict[str, bool]) -> None:
     """Test basic operations in the endpoint for managing accounting rules"""
-    rule_1 = {
+    rule_1: dict[str, Any] = {
         'taxable': {'value': True, 'linked_setting': 'include_crypto2crypto'},
         'count_entire_amount_spend': {
             'value': False,
@@ -118,7 +119,7 @@ def test_manage_rules(rotkehlchen_api_server, db_settings):
         'event_subtype': HistoryEventSubType.SPEND.serialize(),
         'counterparty': 'uniswap',
     }
-    rule_2 = {
+    rule_2: dict[str, Any] = {
         'taxable': {'value': True},
         'count_entire_amount_spend': {'value': False},
         'count_cost_basis_pnl': {'value': True},
@@ -259,7 +260,7 @@ def test_manage_rules(rotkehlchen_api_server, db_settings):
     assert result['entries_total'] == 1
 
 
-def test_rules_info(rotkehlchen_api_server):
+def test_rules_info(rotkehlchen_api_server: 'APIServer') -> None:
     response = requests.get(
         api_url_for(
             rotkehlchen_api_server,
@@ -274,8 +275,8 @@ def test_rules_info(rotkehlchen_api_server):
 @pytest.mark.parametrize('legacy_messages_via_websockets', [True])
 def test_solving_conflicts(
         rotkehlchen_api_server: APIServer,
-        latest_accounting_rules: Path,
-):
+        latest_accounting_rules: list[tuple[int, Path]],
+) -> None:
     """Test solving conflicts using a different method for each rule"""
     _setup_conflict_tests(rotkehlchen_api_server, latest_accounting_rules)
     conflict_resolution = [
@@ -305,9 +306,9 @@ def test_solving_conflicts(
 @pytest.mark.parametrize('solve_all_using', ['remote', 'local'])
 def test_solving_conflicts_all(
         rotkehlchen_api_server: APIServer,
-        latest_accounting_rules: Path,
+        latest_accounting_rules: list[tuple[int, Path]],
         solve_all_using: Literal['remote', 'local'],
-):
+) -> None:
     """Test that solving all the conflicts using either local or remote works"""
     _setup_conflict_tests(rotkehlchen_api_server, latest_accounting_rules)
     response = requests.patch(
@@ -339,8 +340,8 @@ def test_solving_conflicts_all(
 @pytest.mark.parametrize('initialize_accounting_rules', [False])
 def test_listing_conflicts(
         rotkehlchen_api_server: APIServer,
-        latest_accounting_rules: Path,
-):
+        latest_accounting_rules: list[tuple[int, Path]],
+) -> None:
     """Test that serialization for conflicts works as expected"""
     _setup_conflict_tests(rotkehlchen_api_server, latest_accounting_rules)
     response = requests.post(
@@ -400,7 +401,7 @@ def test_listing_conflicts(
 
 
 @pytest.mark.parametrize('initialize_accounting_rules', [False])
-def test_cache_invalidation(rotkehlchen_api_server: APIServer):
+def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
     """
     Test that the cache for events affected by an accounting rule gets correctly invalidated
     when operations happen modifying the rule that affects them.
@@ -416,7 +417,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer):
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
         asset=A_CUSDC,
-        balance=Balance(amount=ONE),
+        amount=ONE,
         event_type=HistoryEventType.DEPOSIT,
         event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
         counterparty=CPT_COMPOUND,
@@ -428,7 +429,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer):
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
         asset=A_USDC,
-        balance=Balance(amount=ONE),
+        amount=ONE,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
         counterparty=CPT_COMPOUND,
@@ -530,7 +531,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer):
 
 
 @pytest.mark.parametrize('initialize_accounting_rules', [True])
-def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer'):
+def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that exporting and importing accounting rules works fine."""
     async_query = random.choice([True, False])
     with rotkehlchen_api_server.rest_api.rotkehlchen.data.db.conn.read_ctx() as cursor:
@@ -568,8 +569,9 @@ def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer'):
         with open(rules_file_path, encoding='utf-8') as file:
             rules_data = json.load(file)
 
+        changed_rules, all_rules_num = 2, 119  # changed rules is rules that were modified. This pushes identifier up  # noqa: E501
         assert rules_data == response_result
-        assert len(rules_data['accounting_rules']) == 82
+        assert len(rules_data['accounting_rules']) == all_rules_num
         assert rules_data['accounting_rules']['1'] == {
             'event_type': 'deposit',
             'event_subtype': 'deposit asset',
@@ -618,10 +620,12 @@ def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer'):
         # edit the rules and setting properties
         with rotkehlchen_api_server.rest_api.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
             write_cursor.execute(
-                'UPDATE accounting_rules SET identifier = 83 WHERE identifier = 82;',
+                'UPDATE accounting_rules SET identifier=? WHERE identifier=?',
+                (all_rules_num + changed_rules + 1, all_rules_num + changed_rules),
             )
             write_cursor.execute(
-                'UPDATE linked_rules_properties SET setting_name = "include_gas_costs" WHERE identifier = 2;',  # noqa: E501
+                'UPDATE linked_rules_properties SET setting_name=? WHERE identifier=?',
+                ('include_gas_costs', '2'),
             )
 
         response = requests.put(

@@ -1,3 +1,4 @@
+
 import functools
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -41,7 +42,7 @@ class ResourceReadingParser(FlaskParser):
         if isinstance(argmap, Mapping):
             if not isinstance(argmap, dict):
                 argmap = dict(argmap)
-            argmap = Schema.from_dict(argmap)()
+            argmap = Schema.from_dict(argmap)()  # type: ignore [arg-type]
 
         def decorator(func: Callable) -> Callable:
             req_ = request_obj
@@ -141,9 +142,7 @@ class ResourceReadingParser(FlaskParser):
         The type ignore is due to the underlying original class having `Request` type there.
         """
         assert callable(argmap), 'Should only use this parser with a callable'
-        schema = argmap(resource_object)  # type: ignore
-
-        return schema
+        return argmap(resource_object)  # type: ignore
 
 
 class IgnoreKwargAfterPostLoadParser(FlaskParser):

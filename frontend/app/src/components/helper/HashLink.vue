@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { Blockchain } from '@rotki/common';
 import { truncateAddress } from '@/utils/truncate';
-import {
-  type ExplorerUrls,
-  explorerUrls,
-  isChains,
-} from '@/types/asset/asset-urls';
+import { type ExplorerUrls, explorerUrls, isChains } from '@/types/asset/asset-urls';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useLinks } from '@/composables/links';
+import { useAddressBookForm } from '@/composables/address-book/form';
+import { useSupportedChains } from '@/composables/info/chains';
+import { useScramble } from '@/composables/scramble';
+import TagDisplay from '@/components/tags/TagDisplay.vue';
+import EnsAvatar from '@/components/display/EnsAvatar.vue';
+
+defineOptions({
+  inheritAttrs: false,
+});
 
 const props = withDefaults(
   defineProps<{
@@ -14,43 +23,46 @@ const props = withDefaults(
     fullAddress?: boolean;
     linkOnly?: boolean;
     noLink?: boolean;
+    copyOnly?: boolean;
     baseUrl?: string;
     chain?: string;
     evmChain?: string;
     buttons?: boolean;
     size?: number | string;
     truncateLength?: number;
-    type?: keyof ExplorerUrls;
+    type?: keyof ExplorerUrls | 'label';
     disableScramble?: boolean;
     hideAliasName?: boolean;
     location?: string;
   }>(),
   {
-    showIcon: true,
-    text: '',
-    fullAddress: false,
-    linkOnly: false,
-    noLink: false,
     baseUrl: undefined,
-    chain: Blockchain.ETH,
-    evmChain: undefined,
     buttons: false,
+    chain: Blockchain.ETH,
+    copyOnly: false,
+    disableScramble: false,
+    evmChain: undefined,
+    fullAddress: false,
+    hideAliasName: false,
+    linkOnly: false,
+    location: undefined,
+    noLink: false,
+    showIcon: true,
     size: 12,
+    text: '',
     truncateLength: 4,
     type: 'address',
-    disableScramble: false,
-    hideAliasName: false,
-    location: undefined,
   },
 );
 const { t } = useI18n();
 const { copy } = useClipboard();
 
-const { text, baseUrl, chain, evmChain, type, disableScramble, hideAliasName, location } = toRefs(props);
-const { scrambleData, shouldShowAmount, scrambleHex, scrambleIdentifier } = useScramble();
+const { baseUrl, chain, disableScramble, evmChain, hideAliasName, location, text, type } = toRefs(props);
+const { scrambleAddress, scrambleData, scrambleIdentifier, shouldShowAmount } = useScramble();
 
 const { explorers } = storeToRefs(useFrontendSettingsStore());
 const { getChain, getChainInfoByName } = useSupportedChains();
+const { accountTags } = useBlockchainStore();
 
 const { addressNameSelector } = useAddressesNamesStore();
 const addressName = computed(() => {
@@ -76,7 +88,16 @@ const aliasName = computed<string | null>(() => {
   if (!name)
     return null;
 
-  return truncateAddress(name, 10);
+  return name;
+});
+
+const truncatedAliasName = computed<string | null>(() => {
+  const alias = get(aliasName);
+
+  if (!alias)
+    return alias;
+
+  return truncateAddress(alias, 10);
 });
 
 const displayText = computed<string>(() => {
@@ -89,7 +110,7 @@ const displayText = computed<string>(() => {
   if (linkType === 'block' || consistOfNumbers(linkText))
     return scrambleIdentifier(linkText);
 
-  return scrambleHex(linkText);
+  return scrambleAddress(linkText);
 });
 
 const base = computed<string>(() => {
@@ -98,9 +119,10 @@ const base = computed<string>(() => {
 
   const selectedChain = get(blockchain);
   let base: string | undefined;
-  if (isChains(selectedChain)) {
+
+  const linkType = get(type);
+  if (isChains(selectedChain) && linkType !== 'label') {
     const defaultExplorer: ExplorerUrls = explorerUrls[selectedChain];
-    const linkType = get(type);
 
     const explorerSetting = get(explorers)[selectedChain];
 
@@ -116,15 +138,55 @@ const base = computed<string>(() => {
 
 const url = computed<string>(() => get(base) + get(text));
 
-const displayUrl = computed<string>(
-  () => get(base) + truncateAddress(get(text), 10),
-);
+const displayUrl = computed<string>(() => get(base) + truncateAddress(get(text), 10));
 
 const { href, onLinkClick } = useLinks(url);
+
+const { showGlobalDialog } = useAddressBookForm();
+
+const tooltip = ref();
+
+function openAddressBookForm() {
+  get(tooltip)?.onClose?.(true);
+  showGlobalDialog({
+    address: get(text),
+    blockchain: get(blockchain),
+  });
+}
+
+const showAddressBookButton = computed(() => get(type) === 'address' && get(blockchain) !== Blockchain.ETH2);
+
+const tags = computed(() => {
+  const address = get(text);
+  return get(accountTags(address));
+});
+
+const [DefineButton, ReuseButton] = createReusableTemplate();
 </script>
 
 <template>
-  <div class="flex flex-row shrink items-center gap-1">
+  <DefineButton>
+    <RuiButton
+      v-if="showAddressBookButton"
+      size="sm"
+      variant="text"
+      class="-my-0.5"
+      icon
+      @click="openAddressBookForm()"
+    >
+      <template #prepend>
+        <RuiIcon
+          name="lu-pencil"
+          size="16"
+          class="!text-rui-grey-400"
+        />
+      </template>
+    </RuiButton>
+  </DefineButton>
+  <div
+    class="flex flex-row shrink items-center gap-1 text-xs [&_*]:font-mono [&_*]:leading-6"
+    v-bind="$attrs"
+  >
     <template v-if="showIcon && !linkOnly && type === 'address'">
       <EnsAvatar
         :address="displayText"
@@ -143,18 +205,42 @@ const { href, onLinkClick } = useLinks(url);
 
       <RuiTooltip
         v-else
+        ref="tooltip"
         :popper="{ placement: 'top' }"
         :open-delay="400"
+        tooltip-class="[&_*]:font-mono"
+        persist-on-tooltip-hover
       >
         <template #activator>
-          <span :class="{ blur: !shouldShowAmount }">
-            <template v-if="aliasName">{{ aliasName }}</template>
+          <div :class="{ blur: !shouldShowAmount }">
+            <template v-if="truncatedAliasName">
+              {{ truncatedAliasName }}
+            </template>
             <template v-else>
               {{ truncateAddress(displayText, truncateLength) }}
             </template>
-          </span>
+          </div>
         </template>
-        {{ displayText }}
+        <template v-if="tags.length > 0">
+          <TagDisplay
+            :tags="tags"
+            class="!mt-1 mb-2"
+            small
+          />
+        </template>
+        <div class="flex items-center gap-2">
+          {{ displayText }}
+
+          <ReuseButton v-if="!aliasName" />
+        </div>
+        <div
+          v-if="aliasName"
+          class="font-bold flex items-center mt-1 !gap-2"
+        >
+          {{ aliasName }}
+
+          <ReuseButton />
+        </div>
       </RuiTooltip>
     </template>
 
@@ -174,17 +260,17 @@ const { href, onLinkClick } = useLinks(url);
             @click="copy(text)"
           >
             <RuiIcon
-              name="file-copy-line"
+              name="lu-copy"
               :size="size"
             />
           </RuiButton>
         </template>
 
-        {{ t('common.actions.copy') }}
+        {{ t('common.actions.copy_to_clipboard') }}
       </RuiTooltip>
 
       <RuiTooltip
-        v-if="linkOnly || !noLink || buttons"
+        v-if="(linkOnly || !noLink || buttons) && !copyOnly"
         :popper="{ placement: 'top' }"
         :open-delay="600"
       >
@@ -202,7 +288,7 @@ const { href, onLinkClick } = useLinks(url);
             @click="onLinkClick()"
           >
             <RuiIcon
-              name="external-link-line"
+              name="lu-external-link"
               :size="size"
             />
           </RuiButton>

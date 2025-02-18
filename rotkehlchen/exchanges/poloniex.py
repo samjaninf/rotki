@@ -4,8 +4,9 @@ import hmac
 import json
 import logging
 import operator
+from collections.abc import Sequence
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 from urllib.parse import urlencode
 
 import gevent
@@ -13,16 +14,23 @@ import requests
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.converters import asset_from_poloniex
-from rotkehlchen.constants import ZERO
+from rotkehlchen.constants import DAY_IN_SECONDS, ZERO
 from rotkehlchen.constants.assets import A_LEND
+from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade, TradeType
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade, TradeType
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address, get_key_if_has_val
 from rotkehlchen.history.deserialization import deserialize_price
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    create_asset_movement_with_fee,
+)
+from rotkehlchen.history.events.structures.base import HistoryBaseEntry
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -36,7 +44,6 @@ from rotkehlchen.serialization.deserialize import (
 from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
-    AssetMovementCategory,
     ExchangeAuthCredentials,
     Fee,
     Location,
@@ -44,20 +51,16 @@ from rotkehlchen.types import (
     TimestampMS,
 )
 from rotkehlchen.user_messages import MessagesAggregator
-from rotkehlchen.utils.misc import ts_now_in_ms
+from rotkehlchen.utils.misc import ts_now_in_ms, ts_sec_to_ms
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
 from rotkehlchen.utils.mixins.lockable import protect_with_lock
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.history.events.structures.base import HistoryEvent
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
-
-
-PUBLIC_API_ENDPOINTS = ('/currencies',)
 
 
 def trade_from_poloniex(poloniex_trade: dict[str, Any]) -> Trade:
@@ -114,6 +117,9 @@ def trade_from_poloniex(poloniex_trade: dict[str, Any]) -> Trade:
 
 
 class Poloniex(ExchangeInterface):
+    PUBLIC_API_ENDPOINTS: Final = ('/currencies',)
+    TRADES_LIMIT: Final = 100
+    TRADES_MAX_INTERVAL: Final = DAY_IN_SECONDS * 180 * 1000
 
     def __init__(
             self,
@@ -129,11 +135,11 @@ class Poloniex(ExchangeInterface):
             api_key=api_key,
             secret=secret,
             database=database,
+            msg_aggregator=msg_aggregator,
         )
 
         self.uri = 'https://api.poloniex.com'
         self.session.headers.update({'key': self.api_key})
-        self.msg_aggregator = msg_aggregator
 
     def first_connection(self) -> None:
         if self.first_connection_made:
@@ -204,13 +210,13 @@ class Poloniex(ExchangeInterface):
         """A single api query for poloniex
 
         Returns the response if all went well or None if a recoverable poloniex
-        error occured such as a 504.
+        error occurred such as a 504.
 
         Can raise:
          - RemoteError if there is a problem with the response
          - ConnectionError if there is a problem connecting to poloniex.
         """
-        if path in PUBLIC_API_ENDPOINTS:
+        if path in self.PUBLIC_API_ENDPOINTS:
             log.debug(f'Querying poloniex for {path}')
             response = self.session.get(self.uri + path, timeout=CachedSettings().get_timeout_tuple())  # noqa: E501
         else:
@@ -253,7 +259,7 @@ class Poloniex(ExchangeInterface):
             post_data=req,
         )
 
-        tries = CachedSettings().get_query_retry_limit()
+        tries, response = CachedSettings().get_query_retry_limit(), None
         while tries >= 0:
             try:
                 response = self._single_query(command, req)
@@ -294,8 +300,7 @@ class Poloniex(ExchangeInterface):
         return result
 
     def return_fee_info(self) -> dict:
-        response = self.api_query_dict('/feeinfo')
-        return response
+        return self.api_query_dict('/feeinfo')
 
     def return_trade_history(
             self,
@@ -303,21 +308,23 @@ class Poloniex(ExchangeInterface):
             end: Timestamp,
     ) -> list[dict[str, Any]]:
         """Returns poloniex trade history"""
-        limit = 100
         data: list[dict[str, Any]] = []
         start_ms = start * 1000
         end_ms = end * 1000
-        while True:
+        current_start_ms = start_ms
+        while current_start_ms < end_ms:
             new_data = self.api_query_list('/trades', {
-                'startTime': start_ms,
-                'endTime': end_ms,
-                'limit': limit,
+                'startTime': current_start_ms,
+                'endTime': (current_end_ms := min(current_start_ms + self.TRADES_MAX_INTERVAL, end_ms)),  # noqa: E501
+                'limit': self.TRADES_LIMIT,
             })
             results_length = len(new_data)
-            if data == [] and results_length < limit:
-                return new_data  # simple case - only one query needed
+            if results_length < self.TRADES_LIMIT:
+                data = new_data
+                current_start_ms = current_end_ms
+                continue  # simple case - only one query needed for this 180 day chunk
 
-            latest_ts_ms = start_ms
+            latest_ts_ms = current_start_ms
             # add results to data and prepare for next query
             existing_ids = {x['id'] for x in data}
             for trade in new_data:
@@ -341,11 +348,12 @@ class Poloniex(ExchangeInterface):
                     )
                     continue
 
-            if results_length < limit:
-                break  # last query has less than limit. We are done.
+            if results_length < self.TRADES_LIMIT:
+                current_start_ms = current_end_ms
+                continue  # last query has less than limit. We are done with this 180 day chunk.
 
             # otherwise we query again from the last ts seen in the last result
-            start_ms = latest_ts_ms
+            current_start_ms = latest_ts_ms
             continue
 
         return data
@@ -397,9 +405,9 @@ class Poloniex(ExchangeInterface):
                         )
                         continue
                     except UnknownAsset as e:
-                        self.msg_aggregator.add_warning(
-                            f'Found unknown poloniex asset {e.identifier}. '
-                            f'Ignoring its balance query.',
+                        self.send_unknown_asset_message(
+                            asset_identifier=e.identifier,
+                            details='balance query',
                         )
                         continue
                     except DeserializationError:
@@ -472,9 +480,9 @@ class Poloniex(ExchangeInterface):
                 )
                 continue
             except UnknownAsset as e:
-                self.msg_aggregator.add_warning(
-                    f'Found poloniex trade with unknown asset'
-                    f' {e.identifier}. Ignoring it.',
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='trade',
                 )
                 continue
             except (UnprocessableTradePair, DeserializationError) as e:
@@ -493,15 +501,15 @@ class Poloniex(ExchangeInterface):
 
     def _deserialize_asset_movement(
             self,
-            movement_type: AssetMovementCategory,
+            movement_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
             movement_data: dict[str, Any],
-    ) -> AssetMovement | None:
+    ) -> list[AssetMovement]:
         """Processes a single deposit/withdrawal from polo and deserializes it
 
         Can log error/warning and return None if something went wrong at deserialization
         """
         try:
-            if movement_type == AssetMovementCategory.DEPOSIT:
+            if movement_type == HistoryEventType.DEPOSIT:
                 fee = Fee(ZERO)
                 uid_key = 'depositNumber'
                 transaction_id = get_key_if_has_val(movement_data, 'txid')
@@ -517,17 +525,20 @@ class Poloniex(ExchangeInterface):
                         transaction_id = None
 
             asset = asset_from_poloniex(movement_data['currency'])
-            return AssetMovement(  # many deserializations can raise here
-                location=Location.POLONIEX,
-                category=movement_type,
-                address=deserialize_asset_movement_address(movement_data, 'address', asset),
-                transaction_id=transaction_id,
-                timestamp=deserialize_timestamp(movement_data['timestamp']),
+            return create_asset_movement_with_fee(
+                location=self.location,
+                location_label=self.name,
+                event_type=movement_type,
+                timestamp=ts_sec_to_ms(deserialize_timestamp(movement_data['timestamp'])),
                 asset=asset,
                 amount=deserialize_asset_amount_force_positive(movement_data['amount']),
                 fee_asset=asset,
                 fee=fee,
-                link=str(movement_data[uid_key]),
+                unique_id=f'{movement_type.serialize()}_{movement_data[uid_key]!s}',  # movement_data[uid_key] is only unique within the same event type  # noqa: E501
+                extra_data=maybe_set_transaction_extra_data(
+                    address=deserialize_asset_movement_address(movement_data, 'address', asset),
+                    transaction_id=transaction_id,
+                ),
             )
         except UnsupportedAsset as e:
             self.msg_aggregator.add_warning(
@@ -535,9 +546,9 @@ class Poloniex(ExchangeInterface):
                 f'{e.identifier}. Ignoring it.',
             )
         except UnknownAsset as e:
-            self.msg_aggregator.add_warning(
-                f'Found {movement_type!s} of unknown poloniex asset '
-                f'{e.identifier}. Ignoring it.',
+            self.send_unknown_asset_message(
+                asset_identifier=e.identifier,
+                details='asset movement',
             )
         except (DeserializationError, KeyError) as e:
             msg = str(e)
@@ -552,13 +563,13 @@ class Poloniex(ExchangeInterface):
                 f'{movement_type!s}: {movement_data}. Error was: {msg}',
             )
 
-        return None
+        return []
 
-    def query_online_deposits_withdrawals(
+    def query_online_history_events(
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> list[AssetMovement]:
+    ) -> Sequence[HistoryBaseEntry]:
         result = self.api_query_dict(
             '/wallets/activity',
             {'start': start_ts, 'end': end_ts},
@@ -570,20 +581,16 @@ class Poloniex(ExchangeInterface):
 
         movements = []
         for withdrawal in result['withdrawals']:
-            asset_movement = self._deserialize_asset_movement(
-                movement_type=AssetMovementCategory.WITHDRAWAL,
+            movements.extend(self._deserialize_asset_movement(
+                movement_type=HistoryEventType.WITHDRAWAL,
                 movement_data=withdrawal,
-            )
-            if asset_movement:
-                movements.append(asset_movement)
+            ))
 
         for deposit in result['deposits']:
-            asset_movement = self._deserialize_asset_movement(
-                movement_type=AssetMovementCategory.DEPOSIT,
+            movements.extend(self._deserialize_asset_movement(
+                movement_type=HistoryEventType.DEPOSIT,
                 movement_data=deposit,
-            )
-            if asset_movement:
-                movements.append(asset_movement)
+            ))
 
         return movements
 
@@ -592,11 +599,4 @@ class Poloniex(ExchangeInterface):
             start_ts: Timestamp,  # pylint: disable=unused-argument
             end_ts: Timestamp,
     ) -> list[MarginPosition]:
-        return []  # noop for poloniex
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
         return []  # noop for poloniex

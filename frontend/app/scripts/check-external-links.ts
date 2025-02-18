@@ -1,15 +1,21 @@
 import process from 'node:process';
-import { externalLinks } from '../src/data/external-links';
+import z from 'zod';
+import { externalLinks } from '../shared/external-links';
+
+const Release = z.object({
+  tag_name: z.string(),
+});
 
 async function processDynamicUrl(url: string): Promise<string> {
   if (url.includes('v$version')) {
-    const response = await fetch(
-      'https://api.github.com/repos/rotki/rotki/releases/latest',
-    );
-    const { tag_name } = await response.json();
+    const response = await fetch('https://api.github.com/repos/rotki/rotki/releases/latest');
+    const { tag_name } = Release.parse(await response.json());
 
     // Format dynamic URL and replace with valid value.
     return url.replace('v$version', tag_name);
+  }
+  else if (url.includes('$symbol')) {
+    return url.replace('$symbol', 'usdc');
   }
 
   return url;
@@ -23,9 +29,7 @@ async function checkLink(rawUrl: string): Promise<void> {
       console.log(`External link ${url} returned a 200 status code.`);
     }
     else {
-      console.error(
-        `External link ${url} returned a non-200 status code: ${response.status}`,
-      );
+      console.error(`External link ${url} returned a non-200 status code: ${response.status}`);
       process.exit(1); // Exit with an error status code
     }
   }

@@ -1,11 +1,10 @@
 import random
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import _patch, patch
 
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.api.server import APIServer
 from rotkehlchen.chain.ethereum.modules.liquity.constants import CPT_LIQUITY
 from rotkehlchen.chain.evm.types import string_to_evm_address
@@ -15,6 +14,7 @@ from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_proper_response_with_result,
@@ -26,7 +26,6 @@ from rotkehlchen.types import Location, TimestampMS
 
 if TYPE_CHECKING:
     from rotkehlchen.externalapis.etherscan import Etherscan
-
 
 LQTY_ADDR = string_to_evm_address('0x063c26fF1592688B73d8e2A18BA4C23654e2792E')
 LQTY_STAKING = string_to_evm_address('0x00000029fF545c86524Ade7cAF132527707948C4')
@@ -40,7 +39,7 @@ LIQUITY_POOL_DEPOSITOR = string_to_evm_address('0xFBcAFB005695afa660836BaC42567c
 @pytest.mark.parametrize('ethereum_accounts', [[LQTY_ADDR]])
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
-def test_trove_position(rotkehlchen_api_server, inquirer):  # pylint: disable=unused-argument
+def test_trove_position(rotkehlchen_api_server: APIServer, inquirer: Inquirer) -> None:  # pylint: disable=unused-argument
     """Test that we can get the status of the user's troves"""
     async_query = random.choice([False, True])
     response = requests.get(api_url_for(
@@ -53,13 +52,31 @@ def test_trove_position(rotkehlchen_api_server, inquirer):  # pylint: disable=un
         async_query=async_query,
     )
 
-    assert LQTY_ADDR in result
-    trove_data = result[LQTY_ADDR]
-    assert 'collateral' in trove_data
-    assert 'debt' in trove_data
-    assert 'collateralization_ratio' in trove_data
-    assert 'liquidation_price' in trove_data
-    assert trove_data['active'] is True
+    assert LQTY_ADDR in result['balances']
+    assert 'balances' in result
+    assert 'total_collateral_ratio' in result
+    assert result['total_collateral_ratio'] == '0.2797543579772264'
+
+    balances = result['balances']
+
+    assert balances == {
+        '0x063c26fF1592688B73d8e2A18BA4C23654e2792E': {
+            'collateral': {
+                'amount': '0',
+                'usd_value': '0.0',
+                'asset': 'ETH',
+            },
+            'debt': {
+                'amount': '0',
+                'usd_value': '0.0',
+                'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
+            },
+            'collateralization_ratio': None,
+            'liquidation_price': None,
+            'active': True,
+            'trove_id': 148,
+        },
+    }
 
 
 @pytest.mark.parametrize('should_mock_web3', [True])
@@ -81,7 +98,7 @@ def test_trove_position(rotkehlchen_api_server, inquirer):  # pylint: disable=un
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
-def test_trove_staking(rotkehlchen_api_server, inquirer):  # pylint: disable=unused-argument
+def test_trove_staking(rotkehlchen_api_server: APIServer, inquirer: Inquirer) -> None:  # pylint: disable=unused-argument
     """Test that we can get the status of the staked lqty"""
     async_query = random.choice([False, True])
     response = requests.get(api_url_for(
@@ -123,7 +140,7 @@ def test_trove_staking(rotkehlchen_api_server, inquirer):  # pylint: disable=unu
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
-def test_account_without_info(rotkehlchen_api_server, inquirer):  # pylint: disable=unused-argument
+def test_account_without_info(rotkehlchen_api_server: APIServer, inquirer: Inquirer) -> None:  # pylint: disable=unused-argument
     """Test that we can get the status of the trove and the staked lqty"""
     async_query = random.choice([False, True])
     response = requests.get(api_url_for(
@@ -136,7 +153,14 @@ def test_account_without_info(rotkehlchen_api_server, inquirer):  # pylint: disa
         async_query=async_query,
     )
 
-    assert ADDR_WITHOUT_TROVE not in result
+    assert 'balances' in result
+    assert 'total_collateral_ratio' in result
+    assert result['total_collateral_ratio'] == '0.2797543579772264'
+
+    balances = result['balances']
+    assert isinstance(balances, dict)
+
+    assert ADDR_WITHOUT_TROVE not in balances
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -144,7 +168,7 @@ def test_account_without_info(rotkehlchen_api_server, inquirer):  # pylint: disa
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
-def test_account_with_proxy(rotkehlchen_api_server, inquirer):  # pylint: disable=unused-argument
+def test_account_with_proxy(rotkehlchen_api_server: APIServer, inquirer: Inquirer) -> None:  # pylint: disable=unused-argument
     """Test that we can get the status of a trove created using DSProxy"""
     async_query = random.choice([False, True])
     response = requests.get(api_url_for(
@@ -157,9 +181,51 @@ def test_account_with_proxy(rotkehlchen_api_server, inquirer):  # pylint: disabl
         async_query=async_query,
     )
 
-    assert LQTY_PROXY in result
-    assert ADDR_WITHOUT_TROVE not in result
-    assert LQTY_ADDR in result
+    assert 'balances' in result
+    assert 'total_collateral_ratio' in result
+    assert result['total_collateral_ratio'] == '0.2797543579772264'
+
+    balances = result['balances']
+    assert isinstance(balances, dict)
+
+    assert LQTY_PROXY in balances
+    assert ADDR_WITHOUT_TROVE not in balances
+    assert LQTY_ADDR in balances
+
+    assert balances == {
+        '0x063c26fF1592688B73d8e2A18BA4C23654e2792E': {
+            'collateral': {
+                'amount': '0',
+                'usd_value': '0.0',
+                'asset': 'ETH',
+            },
+            'debt': {
+                'amount': '0',
+                'usd_value': '0.0',
+                'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
+            },
+            'collateralization_ratio': None,
+            'liquidation_price': None,
+            'active': True,
+            'trove_id': 148,
+        },
+        '0x9476832d4687c14b2c1a04E2ee4693162a7340B6': {
+            'collateral': {
+                'amount': '0',
+                'usd_value': '0.0',
+                'asset': 'ETH',
+            },
+            'debt': {
+                'amount': '0',
+                'usd_value': '0.0',
+                'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
+            },
+            'collateralization_ratio': None,
+            'liquidation_price': None,
+            'active': True,
+            'trove_id': 267,
+        },
+    }
     # test that the list of addresses was not mutated
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     assert len(rotki.chains_aggregator.accounts.eth) == 3
@@ -169,18 +235,18 @@ def test_account_with_proxy(rotkehlchen_api_server, inquirer):  # pylint: disabl
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
-def test_stability_pool(rotkehlchen_api_server):
+def test_stability_pool(rotkehlchen_api_server: APIServer) -> None:
     """Test that we can get the status of the deposits in the stability pool"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     eth_multicall = rotki.chains_aggregator.ethereum.node_inquirer.contracts.contract(string_to_evm_address('0x5BA1e12693Dc8F9c48aAD8770482f4739bEeD696'))  # noqa: E501
 
-    def mock_etherscan_transaction_response(etherscan: 'Etherscan'):
-        def mocked_request_dict(url, *_args, **_kwargs):
+    def mock_etherscan_transaction_response(etherscan: 'Etherscan') -> _patch:
+        def mocked_request_dict(url: str, params: dict[str, str], *_args, **_kwargs) -> MockResponse:  # noqa: E501
             # if '0xeefBa1e63905eF1D7ACbA5a8513c70307C1cE441' in url:
-            if f'to={eth_multicall.address}' in url:
-                if 'data=0x252dba42' in url:  # aggregate
+            if params.get('to') == eth_multicall.address:
+                if (data := params.get('data', '')).startswith('0x252dba42'):  # aggregate
                     payload = '{"jsonrpc":"2.0","id":1,"result":"0x0000000000000000000000000000000000000000000000000000000000f1d3ed00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"}'  # noqa: E501
-                elif 'data=0xbce38bd7' in url:  # tryAggregate
+                elif data.startswith('0xbce38bd7'):  # tryAggregate
                     payload = '{"jsonrpc":"2.0","id":1,"result":"0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000002c000000000000000000000000000000000000000000000000000000000000003400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000025741350d10dcdd3f00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000182ca8387c1e947389a80000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000872593255709e930eb1b7000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000002d94f2ad87a21c00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000008737d8d1f366513ff80000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000073bcd36975544d15f2be"}'  # noqa: E501
             else:
                 raise AssertionError('Got in unexpected section during test')
@@ -228,7 +294,7 @@ def test_stability_pool(rotkehlchen_api_server):
         '0xbB8311c7bAD518f0D8f907Cad26c5CcC85a06dC4',
     ],
 ])
-def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: list[str]):
+def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: list[str]) -> None:
     """
     Test that the stats generated by the liquity endpoint are correct using mocked events
     and that the stats combining all the data are consistent with the
@@ -245,7 +311,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_LUSD,
-            balance=Balance(FVal('1974')),
+            amount=FVal('1974'),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[0],
         ), EvmEvent(  # deposit 2 for address 0
@@ -256,7 +322,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_LUSD,
-            balance=Balance(FVal('2000')),
+            amount=FVal('2000'),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[0],
         ), EvmEvent(  # deposit 1 for address 1
@@ -267,7 +333,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_LUSD,
-            balance=Balance(FVal('1000')),
+            amount=FVal('1000'),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(  # address 0 stability pool gains
@@ -278,7 +344,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             asset=A_LQTY,
-            balance=Balance(FVal(44)),
+            amount=FVal(44),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[0],
         ), EvmEvent(  # address 1 stability pool gains
@@ -289,7 +355,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             asset=A_LQTY,
-            balance=Balance(FVal(4240.34942308358)),
+            amount=FVal(4240.34942308358),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(  # stake lqty and get reward
@@ -300,7 +366,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_LQTY,
-            balance=Balance(FVal(10)),
+            amount=FVal(10),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(
@@ -311,7 +377,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             asset=A_LUSD,
-            balance=Balance(FVal(65556)),
+            amount=FVal(65556),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(  # lqty reward for address 0
@@ -322,7 +388,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             asset=A_LQTY,
-            balance=Balance(FVal(400)),
+            amount=FVal(400),
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[0],
         ),
@@ -361,7 +427,10 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
-def test_proxy_info_is_shown(rotkehlchen_api_server, ethereum_accounts):
+def test_proxy_info_is_shown(
+        rotkehlchen_api_server: APIServer,
+        ethereum_accounts: list[str],
+    ) -> None:
     """Check that information about proxies is added to the responses for liquity endpoints"""
     user_address = ethereum_accounts[0]
     response = requests.get(api_url_for(

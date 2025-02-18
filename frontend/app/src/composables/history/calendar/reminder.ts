@@ -8,18 +8,22 @@ import {
   type CalendarReminderRequestPayload,
   type CalenderReminderPayload,
 } from '@/types/history/calendar/reminder';
-import type {
-  AddCalendarEventResponse,
-} from '@/types/history/calendar';
-import type { ActionResult } from '@rotki/common/lib/data';
+import type { AddCalendarEventResponse } from '@/types/history/calendar';
+import type { ActionResult } from '@rotki/common';
 
-export function useCalendarReminderApi() {
-  const fetchCalendarReminders = async (
-    filter: CalendarReminderRequestPayload,
-  ): Promise<CalendarReminderEntry[]> => {
-    const response = await api.instance.post<
-        ActionResult<CalendarReminderEntries>
-    >('/calendar/reminders', snakeCaseTransformer(filter));
+interface UseCalendarReminderApi {
+  fetchCalendarReminders: (filter: CalendarReminderRequestPayload) => Promise<CalendarReminderEntry[]>;
+  addCalendarReminder: (reminders: CalenderReminderPayload[]) => Promise<CalendarReminderAddResponse>;
+  editCalendarReminder: (payload: CalendarReminderEntry) => Promise<AddCalendarEventResponse>;
+  deleteCalendarReminder: (identifier: number) => Promise<boolean>;
+}
+
+export function useCalendarReminderApi(): UseCalendarReminderApi {
+  const fetchCalendarReminders = async (filter: CalendarReminderRequestPayload): Promise<CalendarReminderEntry[]> => {
+    const response = await api.instance.post<ActionResult<CalendarReminderEntries>>(
+      '/calendar/reminders',
+      snakeCaseTransformer(filter),
+    );
 
     return CalendarReminderEntries.parse(handleResponse(response)).entries;
   };
@@ -45,20 +49,17 @@ export function useCalendarReminderApi() {
   };
 
   const deleteCalendarReminder = async (identifier: number): Promise<boolean> => {
-    const response = await api.instance.delete<ActionResult<boolean>>(
-      '/calendar/reminders',
-      {
-        data: snakeCaseTransformer({ identifier }),
-      },
-    );
+    const response = await api.instance.delete<ActionResult<boolean>>('/calendar/reminders', {
+      data: snakeCaseTransformer({ identifier }),
+    });
 
     return handleResponse(response);
   };
 
   return {
-    fetchCalendarReminders,
     addCalendarReminder,
-    editCalendarReminder,
     deleteCalendarReminder,
+    editCalendarReminder,
+    fetchCalendarReminders,
   };
 }

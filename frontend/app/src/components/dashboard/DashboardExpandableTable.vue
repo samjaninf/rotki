@@ -1,22 +1,22 @@
 <script setup lang="ts">
+import CardTitle from '@/components/typography/CardTitle.vue';
+
 const expanded = ref<boolean>(true);
 
 const panel = computed<number>(() => (get(expanded) ? 0 : -1));
 </script>
 
 <template>
-  <RuiCard :class="{ '[&>div:last-child]:!py-0': !expanded }">
+  <RuiCard :content-class="!expanded ? '!py-0' : ''">
     <template #custom-header>
-      <div class="flex justify-between items-center flex-wrap p-4 gap-2">
+      <div class="flex justify-between items-center flex-wrap p-4 gap-x-4 gap-y-2">
         <CardTitle>
           <RuiButton
             variant="text"
             icon
             @click="expanded = !expanded"
           >
-            <RuiIcon
-              :name="expanded ? 'checkbox-indeterminate-line' : 'add-box-line'"
-            />
+            <RuiIcon :name="expanded ? 'lu-square-minus' : 'lu-square-plus'" />
           </RuiButton>
           <slot name="title" />
         </CardTitle>
@@ -33,7 +33,7 @@ const panel = computed<number>(() => (get(expanded) ? 0 : -1));
         </div>
       </div>
     </template>
-    <RuiAccordions :value="panel">
+    <RuiAccordions :model-value="panel">
       <RuiAccordion eager>
         <template #default>
           <slot />

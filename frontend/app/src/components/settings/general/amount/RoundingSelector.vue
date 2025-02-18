@@ -1,24 +1,36 @@
 <script setup lang="ts">
 import { BigNumber } from '@rotki/common';
+import ListItem from '@/components/common/ListItem.vue';
+import type { RoundingMode } from '@/types/settings/frontend-settings';
 
-const rootAttrs = useAttrs();
+defineOptions({
+  inheritAttrs: false,
+});
+
+const modelValue = defineModel<RoundingMode>({ required: true });
+
+defineProps<{
+  label: string;
+  hint: string;
+}>();
+
 const { t } = useI18n();
 
-const selections = [
+const selections: { value: RoundingMode; text: string; description: string }[] = [
   {
+    description: t('rounding_settings.round.up_description'),
+    text: t('rounding_settings.round.up'),
     value: BigNumber.ROUND_UP,
-    text: t('rounding_settings.round.up').toString(),
-    description: t('rounding_settings.round.up_description').toString(),
   },
   {
+    description: t('rounding_settings.round.down_description'),
+    text: t('rounding_settings.round.down'),
     value: BigNumber.ROUND_DOWN,
-    text: t('rounding_settings.round.down').toString(),
-    description: t('rounding_settings.round.down_description').toString(),
   },
   {
+    description: t('rounding_settings.round.half_even_description'),
+    text: t('rounding_settings.round.half_even'),
     value: BigNumber.ROUND_HALF_EVEN,
-    text: t('rounding_settings.round.half_even').toString(),
-    description: t('rounding_settings.round.half_even_description').toString(),
   },
 ];
 </script>
@@ -26,16 +38,15 @@ const selections = [
 <template>
   <div class="flex gap-4 flex-start">
     <RuiMenuSelect
-      v-bind="rootAttrs"
+      v-bind="$attrs"
+      v-model="modelValue"
       :options="selections"
       key-attr="value"
       text-attr="text"
+      :hint="hint"
+      :label="label"
       :item-height="58"
       variant="outlined"
-      v-on="
-        // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-        $listeners
-      "
     >
       <template #item="{ item }">
         <ListItem
@@ -50,7 +61,7 @@ const selections = [
         <RuiIcon
           v-if="active"
           class="transition"
-          name="check-line"
+          name="lu-check"
           size="24"
         />
       </template>

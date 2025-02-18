@@ -1,5 +1,10 @@
-import type { AssetBalance } from '@rotki/common';
-import type { AssetInfo } from '@rotki/common/lib/data';
+import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
+import type { AssetInfoWithId, AssetsWithId } from '@/types/asset';
+import type { AssetBalance, AssetInfo, Nullable } from '@rotki/common';
+import type { AssetNameReturn, AssetSymbolReturn } from '@/composables/assets/retrieval';
+import type { DateFormat } from '@/types/date-format';
+import type { AssetSearchParams } from '@/composables/api/assets/info';
+import type { ComputedRef, Ref } from 'vue';
 
 function levenshtein(a: string, b: string): number {
   let tmp;
@@ -21,18 +26,14 @@ function levenshtein(a: string, b: string): number {
   const alen = a.length;
   const blen = b.length;
   const row = new Array(alen);
-  for (i = 0; i <= alen; i++)
-    row[i] = i;
+  for (i = 0; i <= alen; i++) row[i] = i;
 
   for (i = 1; i <= blen; i++) {
     res = i;
     for (j = 1; j <= alen; j++) {
       tmp = row[j - 1];
       row[j - 1] = res;
-      res
-        = b[i - 1] === a[j - 1]
-          ? tmp
-          : Math.min(tmp + 1, Math.min(res + 1, row[j] + 1));
+      res = b[i - 1] === a[j - 1] ? tmp : Math.min(tmp + 1, Math.min(res + 1, row[j] + 1));
     }
   }
   return res;
@@ -71,27 +72,24 @@ export function compareTextByKeyword(a: string, b: string, keyword: string): num
   const keywordBHaystackIndex = keywordB.indexOf(search);
   const keywordBNeedleIndex = search.indexOf(keywordB);
 
-  const length = search.length;
+  const aLength = keywordA.length;
+  const bLength = keywordB.length;
 
   if (keywordAHaystackIndex === 0 || keywordANeedleIndex === 0)
-    rankA -= length + 1;
+    rankA -= aLength + 1;
   else if (keywordAHaystackIndex > 0 || keywordANeedleIndex > 0)
-    rankA -= length;
+    rankA -= aLength;
 
   if (keywordBHaystackIndex === 0 || keywordBNeedleIndex === 0)
-    rankB -= length + 1;
+    rankB -= bLength + 1;
   else if (keywordBHaystackIndex > 0 || keywordBNeedleIndex > 0)
-    rankB -= length;
+    rankB -= bLength;
 
   return rankA - rankB;
 }
 
-export function getSortItems(getInfo: (identifier: string) => AssetInfo | null) {
-  return (
-    items: AssetBalance[],
-    sortBy: (keyof AssetBalance)[],
-    sortDesc: boolean[],
-  ): AssetBalance[] => {
+export function getSortItems<T extends AssetBalance>(getInfo: (identifier: string) => AssetInfo | null) {
+  return (items: T[], sortBy: (keyof AssetBalance)[], sortDesc: boolean[]): T[] => {
     const sortByElement = sortBy[0];
     const sortByDesc = sortDesc[0];
     return items.sort((a, b) => {
@@ -101,38 +99,83 @@ export function getSortItems(getInfo: (identifier: string) => AssetInfo | null) 
         assert(aAsset && bAsset);
         const bSymbol = bAsset.symbol || '';
         const aSymbol = aAsset.symbol || '';
-        return sortByDesc
-          ? bSymbol.toLowerCase().localeCompare(aSymbol)
-          : aSymbol.toLowerCase().localeCompare(bSymbol);
+        return sortByDesc ? bSymbol.toLowerCase().localeCompare(aSymbol) : aSymbol.toLowerCase().localeCompare(bSymbol);
       }
 
       const aElement = a[sortByElement];
       const bElement = b[sortByElement];
-      return (
-        sortByDesc ? bElement.minus(aElement) : aElement.minus(bElement)
-      ).toNumber();
+      return (sortByDesc ? bElement.minus(aElement) : aElement.minus(bElement)).toNumber();
     });
   };
 }
 
-export function isEvmIdentifier(identifier?: string): boolean {
-  if (!identifier)
-    return false;
+export function assetFilterByKeyword(
+  item: Nullable<AssetBalance>,
+  search: string,
+  assetName: AssetNameReturn,
+  assetSymbol: AssetSymbolReturn,
+): boolean {
+  const keyword = getTextToken(search);
+  if (!keyword || !item)
+    return true;
 
-  return identifier.startsWith('eip155');
+  const name = getTextToken(get(assetName(item.asset)));
+  const symbol = getTextToken(get(assetSymbol(item.asset)));
+  return symbol.includes(keyword) || name.includes(keyword);
 }
 
-export function getAddressFromEvmIdentifier(identifier?: string): string {
-  if (!identifier)
-    return '';
+export function assetSuggestions(assetSearch: (params: AssetSearchParams) => Promise<AssetsWithId>, evmChain?: string): (value: string) => Promise<AssetsWithId> {
+  let pending: AbortController | null = null;
 
-  return identifier.split(':')[2] ?? '';
+  return useDebounceFn(async (value: string) => {
+    if (pending) {
+      pending.abort();
+      pending = null;
+    }
+
+    pending = new AbortController();
+
+    let keyword = value;
+    let address;
+
+    if (isValidEthAddress(value)) {
+      keyword = '';
+      address = value;
+    }
+
+    const result = await assetSearch({
+      address,
+      evmChain,
+      limit: 10,
+      signal: pending.signal,
+      value: keyword,
+    });
+    pending = null;
+    return result;
+  }, 200);
 }
 
-export function createEvmIdentifierFromAddress(address: string, chain = '1'): string {
-  return `eip155:${chain}/erc20:${address}`;
+export function assetDeserializer(assetInfo: (identifier: string) => ComputedRef<AssetInfo | null>): (identifier: string) => AssetInfoWithId | null {
+  return (identifier: string): AssetInfoWithId | null => {
+    const asset = get(assetInfo(identifier));
+    if (!asset)
+      return null;
+
+    return {
+      ...asset,
+      identifier,
+    };
+  };
 }
 
-export function getValidSelectorFromEvmAddress(address: string): string {
-  return address.replace(/[^\da-z]/gi, '');
+export function dateValidator(dateInputFormat: Ref<DateFormat>): (value: string) => boolean {
+  return (value: string) => value.length > 0 && !isNaN(convertToTimestamp(value, get(dateInputFormat)));
+}
+
+export function dateSerializer(dateInputFormat: Ref<DateFormat>): (date: string) => string {
+  return (date: string) => convertToTimestamp(date, get(dateInputFormat)).toString();
+}
+
+export function dateDeserializer(dateInputFormat: Ref<DateFormat>): (timestamp: string) => string {
+  return (timestamp: string) => convertFromTimestamp(parseInt(timestamp), get(dateInputFormat));
 }

@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import type { Nullable } from '@/types';
-import type { Collection } from '@/types/collection';
-import type {
-  Filters,
-  Matcher,
-} from '@/composables/filters/custom-assets';
-import type {
-  CustomAsset,
-  CustomAssetRequestPayload,
-} from '@/types/asset';
+import { useConfirmStore } from '@/store/confirm';
+import { useMessageStore } from '@/store/message';
+import { type Filters, type Matcher, useCustomAssetFilter } from '@/composables/filters/custom-assets';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useCommonTableProps } from '@/composables/use-common-table-props';
+import { useAssetManagementApi } from '@/composables/api/assets/management';
+import CustomAssetFormDialog from '@/components/asset-manager/custom/CustomAssetFormDialog.vue';
+import CustomAssetTable from '@/components/asset-manager/custom/CustomAssetTable.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import type { CustomAsset, CustomAssetRequestPayload } from '@/types/asset';
+import type { Nullable } from '@rotki/common';
 
 const props = withDefaults(
   defineProps<{
@@ -27,12 +28,11 @@ const types = ref<string[]>([]);
 const router = useRouter();
 const route = useRoute();
 
-const { deleteCustomAsset, queryAllCustomAssets, getCustomAssetTypes } = useAssetManagementApi();
 const { setMessage } = useMessageStore();
-
 const { show } = useConfirmStore();
-
-const { setOpenDialog, setPostSubmitFunc } = useCustomAssetForm();
+const { deleteCustomAsset, getCustomAssetTypes, queryAllCustomAssets } = useAssetManagementApi();
+const { editableItem, expanded } = useCommonTableProps<CustomAsset>();
+const openCustomAssetDialog = ref<boolean>(false);
 
 async function deleteAsset(assetId: string) {
   try {
@@ -51,44 +51,35 @@ async function deleteAsset(assetId: string) {
 }
 
 const {
-  state,
-  filters,
-  expanded,
-  matchers,
   fetchData,
-  setFilter,
+  filters,
   isLoading: loading,
-  editableItem,
+  matchers,
   pagination,
   sort,
+  state,
 } = usePaginationFilters<
   CustomAsset,
   CustomAssetRequestPayload,
-  CustomAsset,
-  Collection<CustomAsset>,
   Filters,
   Matcher
->(null, mainPage, () => useCustomAssetFilter(types), queryAllCustomAssets, {
-  defaultSortBy: {
-    key: 'name',
-    ascending: [false],
-  },
+>(queryAllCustomAssets, {
+  defaultSortBy: [{
+    column: 'name',
+    direction: 'desc',
+  }],
+  filterSchema: () => useCustomAssetFilter(types),
+  history: get(mainPage) ? 'router' : false,
 });
-
-const dialogTitle = computed<string>(() =>
-  get(editableItem)
-    ? t('asset_management.edit_title')
-    : t('asset_management.add_title'),
-);
 
 function add() {
   set(editableItem, null);
-  setOpenDialog(true);
+  set(openCustomAssetDialog, true);
 }
 
 function edit(editAsset: CustomAsset) {
   set(editableItem, editAsset);
-  setOpenDialog(true);
+  set(openCustomAssetDialog, true);
 }
 
 function editAsset(assetId: Nullable<string>) {
@@ -107,15 +98,13 @@ async function refresh() {
   await Promise.all([fetchData(), refreshTypes()]);
 }
 
-setPostSubmitFunc(refresh);
-
 function showDeleteConfirmation(item: CustomAsset) {
   show(
     {
-      title: t('asset_management.confirm_delete.title'),
       message: t('asset_management.confirm_delete.message', {
         asset: item?.name ?? '',
       }),
+      title: t('asset_management.confirm_delete.title'),
     },
     async () => await deleteAsset(item.identifier),
   );
@@ -138,12 +127,7 @@ watch(identifier, (assetId) => {
 </script>
 
 <template>
-  <TablePageLayout
-    :title="[
-      t('navigation_menu.manage_assets'),
-      t('navigation_menu.manage_assets_sub.custom_assets'),
-    ]"
-  >
+  <TablePageLayout :title="[t('navigation_menu.manage_assets'), t('navigation_menu.manage_assets_sub.custom_assets')]">
     <template #buttons>
       <RuiButton
         color="primary"
@@ -152,7 +136,7 @@ watch(identifier, (assetId) => {
         @click="refresh()"
       >
         <template #prepend>
-          <RuiIcon name="refresh-line" />
+          <RuiIcon name="lu-refresh-ccw" />
         </template>
         {{ t('common.refresh') }}
       </RuiButton>
@@ -163,28 +147,28 @@ watch(identifier, (assetId) => {
         @click="add()"
       >
         <template #prepend>
-          <RuiIcon name="add-line" />
+          <RuiIcon name="lu-plus" />
         </template>
         {{ t('managed_asset_content.add_asset') }}
       </RuiButton>
     </template>
     <CustomAssetTable
+      v-model:filters="filters"
+      v-model:expanded="expanded"
+      v-model:pagination="pagination"
+      v-model:sort="sort"
       :assets="state.data"
       :loading="loading"
       :server-item-length="state.found"
-      :filters="filters"
       :matchers="matchers"
-      :expanded.sync="expanded"
-      :pagination.sync="pagination"
-      :sort.sync="sort"
       @edit="edit($event)"
       @delete-asset="showDeleteConfirmation($event)"
-      @update:filters="setFilter($event)"
     />
     <CustomAssetFormDialog
-      :title="dialogTitle"
+      v-model:open="openCustomAssetDialog"
       :types="types"
       :editable-item="editableItem"
+      @refresh="refresh()"
     />
   </TablePageLayout>
 </template>

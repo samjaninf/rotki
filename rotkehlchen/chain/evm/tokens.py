@@ -1,17 +1,23 @@
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
 from collections import defaultdict
-from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, TypeVar
 
-from rotkehlchen.assets.asset import EvmToken
-from rotkehlchen.chain.ethereum.utils import token_normalized_value
+from rotkehlchen.assets.asset import Asset, EvmToken, Nft
+from rotkehlchen.chain.ethereum.utils import (
+    token_normalized_value,
+    token_normalized_value_decimals,
+)
+from rotkehlchen.chain.evm.decoding.uniswap.v3.constants import UNISWAP_V3_NFT_MANAGER_ADDRESSES
 from rotkehlchen.chain.evm.types import WeightedNode, asset_id_is_evm_token
+from rotkehlchen.chain.structures import EvmTokenDetectionData
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChecksumEvmAddress, Price, Timestamp
+from rotkehlchen.types import ChainID, ChecksumEvmAddress, Price, SupportedBlockchain, Timestamp
 from rotkehlchen.utils.misc import combine_dicts, get_chunks
 
 if TYPE_CHECKING:
@@ -33,47 +39,52 @@ DetectedTokensType = dict[
     tuple[list[EvmToken] | None, Timestamp | None],
 ]
 
-# 08/08/2020
-# Etherscan has by far the fastest responding server if you use a (free) API key
+# 27/11/2024
+# Etherscan has by far the fastest responding server if you use an API key
 # The chunk length for Etherscan is limited though to 120 addresses due to the URI length.
-# For all other nodes (mycrypto, avado cloud, blockscout) we have run some benchmarks
-# with them being queried randomly with different chunk lenghts. They are all for an account with:
-# - 29 ethereum addresses
-# - rotki knows of 1010 different ethereum tokens as of this writing
-# Type        |  Chunk Length | Elapsed Seconds | Avg. secs per call
-# Open Nodes  |     300       |      105        |      2.379
-# Open Nodes  |     400       |      112        |      2.735
-# Open Nodes  |     450       |       90        |      2.287
-# Open Nodes  |     520       |       89        |      2.275
-# Open Nodes  |     575       |       75        |      1.982
-# Open Nodes  |     585       |       77        |      2.034
-# Open Nodes  |     590       |       74        |      1.931
-# Open Nodes  |     590       |       79        |      2.086
-# Open Nodes  |     600       |       80        |      2.068
-# Open Nodes  |     600       |       86        |      2.275
+# For all other nodes (ankr, cloudflare, flashbots) we have run some benchmarks
+# with them being queried randomly with different chunk lengths.
+# - They are for a single account
+# - rotki knows of 5264 different ethereum tokens as of this writing
+# - The code used is available in https://github.com/rotki/rotki/pull/8951
+# chunk size, time, node, seed, comments
 #
-# Etherscan   |     120       |       112       |      2.218
-# Etherscan   |     120       |       99        |      1.957
-# Etherscan   |     120       |       102       |      2.026
+# 375, 5.452023983001709,  flashbots
+# 375, 5.356801986694336,  flashbots , 42
+# 375, 8.883646965026855,  cloudflare
+# 375, 10.064039945602417, cloudflare
+# 375, 6.45735502243042,   cloudflare
+# 375, 5.277329921722412,  cloudflare, 80
+# 375, 4.732897043228149,  ankr      , 90
+# 500, 4.8045032024383545, ankr + flashbots, 90,  ankr and cloudlare had a single call out of gas
+# 480, 5.05453896522522, ankr, 90, ankr had a single call out of gas. Cloudflare okey
+# 460, 3.771683931350708, ankr + cloudflare, 90, only 1 request to ankr failed
+# 460, 4.571718215942383, ankr + cloudflare, 90, only 1 request to ankr failed
+# 460, 6.436861991882324, flashbots, 42
+# 460, 3.726022243499756, flahbots + ankr, 80
+# 460, 7.433700084686279, cloudflare + ankr, 460
 #
-# With this we have settled on a 590 chunk length. When we surpass 1180 ethereum
-# tokens the benchmark will probably have to run again.
+# With this we have settled on a 460 chunk length since it was the highest round number that
+# didn't hit any issue executing the query in the open nodes.
 
 
-OTHER_MAX_TOKEN_CHUNK_LENGTH = 590
+OTHER_MAX_TOKEN_CHUNK_LENGTH = 460
 
 # maximum 32-bytes arguments in one call to a contract (either tokensBalance or multicall)
 ETHERSCAN_MAX_ARGUMENTS_TO_CONTRACT = 110
+ARBISCAN_MAX_ARGUMENTS_TO_CONTRACT = 25
 
 # this is a number of arguments that a pure tokensBalance contract occupies when is added
 # to multicall. In total, it occupies (7 + number of tokens passed) arguments.
 PURE_TOKENS_BALANCE_ARGUMENTS = 7
 
+T = TypeVar('T')
+
 
 def generate_multicall_chunks(
         chunk_length: int,
-        addresses_to_tokens: dict[ChecksumEvmAddress, list[EvmToken]],
-) -> list[list[tuple[ChecksumEvmAddress, list[EvmToken]]]]:
+        addresses_to_tokens: Mapping[ChecksumEvmAddress, Sequence[T]],
+) -> list[list[tuple[ChecksumEvmAddress, Sequence[T]]]]:
     """Generate appropriate num of chunks for multicall address->tokens, address->tokens query"""
     multicall_chunks = []
     free_space = chunk_length
@@ -98,7 +109,12 @@ def generate_multicall_chunks(
     return multicall_chunks
 
 
-def get_chunk_size_call_order(evm_inquirer: 'EvmNodeInquirer') -> tuple[int, list[WeightedNode]]:
+def get_chunk_size_call_order(
+        evm_inquirer: 'EvmNodeInquirer',
+        web3_node_chunk_size: int = OTHER_MAX_TOKEN_CHUNK_LENGTH,
+        etherscan_chunk_size: int = ETHERSCAN_MAX_ARGUMENTS_TO_CONTRACT,
+        arbiscan_chunksize: int = ARBISCAN_MAX_ARGUMENTS_TO_CONTRACT,
+) -> tuple[int, list[WeightedNode]]:
     """
     Return the max number of tokens that can be queried in a single call depending on whether we
     have a web3 node connected or we are going to use etherscan.
@@ -106,16 +122,16 @@ def get_chunk_size_call_order(evm_inquirer: 'EvmNodeInquirer') -> tuple[int, lis
     skip etherscan because chunk size is too big for etherscan.
     """
     if evm_inquirer.connected_to_any_web3():
-        chunk_size = OTHER_MAX_TOKEN_CHUNK_LENGTH
+        chunk_size = web3_node_chunk_size
         call_order = evm_inquirer.default_call_order(skip_etherscan=True)
     else:
-        chunk_size = ETHERSCAN_MAX_ARGUMENTS_TO_CONTRACT
+        chunk_size = etherscan_chunk_size if evm_inquirer.chain_id != ChainID.ARBITRUM_ONE else arbiscan_chunksize  # noqa: E501
         call_order = [evm_inquirer.etherscan_node]
 
     return chunk_size, call_order
 
 
-class EvmTokens(ABC):
+class EvmTokens(ABC):  # noqa: B024
     def __init__(
             self,
             database: 'DBHandler',
@@ -127,10 +143,12 @@ class EvmTokens(ABC):
     def get_token_balances(
             self,
             address: ChecksumEvmAddress,
-            tokens: list[EvmToken],
+            tokens: list[EvmTokenDetectionData],
             call_order: Sequence[WeightedNode] | None,
-    ) -> dict[EvmToken, FVal]:
-        """Queries the balances of multiple tokens for an address
+    ) -> dict[Asset, FVal]:
+        """Query multiple token balances for a wallet address.
+        Returns Asset objects instead of EvmTokens for performance optimization since
+        we avoid loading from the database extra information not used here.
 
         May raise:
         - RemoteError if an external service such as Etherscan is queried and
@@ -143,25 +161,35 @@ class EvmTokens(ABC):
             address=address,
             tokens_num=len(tokens),
         )
-        result = self.evm_inquirer.contract_scan.call(
-            node_inquirer=self.evm_inquirer,
-            method_name='tokensBalance',
-            arguments=[address, [x.evm_address for x in tokens]],
-            call_order=call_order,
-        )
-        balances: dict[EvmToken, FVal] = defaultdict(FVal)
+        balances: dict[Asset, FVal] = defaultdict(FVal)
+        try:
+            result = self.evm_inquirer.contract_scan.call(
+                node_inquirer=self.evm_inquirer,
+                method_name='tokens_balance',
+                arguments=[address, [x.address for x in tokens]],
+                call_order=call_order,
+            )
+        except RemoteError as e:
+            log.error(
+                f'{self.evm_inquirer.chain_name} tokensBalance call failed for address {address}.'
+                f' Token addresses: {[x.address for x in tokens]}. Error: {e}',
+            )
+            return balances
 
         try:
             for token_balance, token in zip(result, tokens, strict=True):
                 if token_balance == 0:
                     continue
 
-                normalized_balance = token_normalized_value(token_balance, token)
+                normalized_balance = token_normalized_value_decimals(
+                    token_amount=token_balance,
+                    token_decimals=token.decimals,
+                )
                 log.debug(
-                    f'Found {self.evm_inquirer.chain_name} {token.symbol}({token.evm_address}) '
+                    f'Found {self.evm_inquirer.chain_name} {token.identifier} '
                     f'token balance for {address} and balance {normalized_balance}',
                 )
-                balances[token] += normalized_balance
+                balances[Asset(token.identifier)] += normalized_balance
         except ValueError:
             log.error(
                 f'{self.evm_inquirer.chain_name} tokensBalance returned different length '
@@ -173,7 +201,7 @@ class EvmTokens(ABC):
 
     def _get_multicall_token_balances(
             self,
-            chunk: list[tuple[ChecksumEvmAddress, list[EvmToken]]],
+            chunk: list[tuple[ChecksumEvmAddress, Sequence[EvmToken]]],
             call_order: Sequence['WeightedNode'] | None = None,
     ) -> dict[ChecksumEvmAddress, dict[EvmToken, FVal]]:
         """Gets token balances from a chunk of address -> token address
@@ -188,7 +216,7 @@ class EvmTokens(ABC):
                 (
                     self.evm_inquirer.contract_scan.address,
                     self.evm_inquirer.contract_scan.encode(
-                        method_name='tokensBalance',
+                        method_name='tokens_balance',
                         arguments=[address, tokens_addrs],
                     ),
                 ),
@@ -201,7 +229,7 @@ class EvmTokens(ABC):
         for (address, tokens), result in zip(chunk, results, strict=True):
             decoded_result = self.evm_inquirer.contract_scan.decode(
                 result=result,
-                method_name='tokensBalance',
+                method_name='tokens_balance',
                 arguments=[address, [token.evm_address for token in tokens]],
             )[0]
             for token, token_balance in zip(tokens, decoded_result, strict=True):
@@ -219,11 +247,14 @@ class EvmTokens(ABC):
     def _query_chunks(
             self,
             address: ChecksumEvmAddress,
-            tokens: list[EvmToken],
+            tokens: list[EvmTokenDetectionData],
             chunk_size: int,
             call_order: list[WeightedNode],
-    ) -> dict[EvmToken, FVal]:
-        total_token_balances: dict[EvmToken, FVal] = defaultdict(FVal)
+    ) -> dict[Asset, FVal]:
+        """Processes token balance queries in batches of chunk_size to avoid hitting gas limits.
+        Uses Asset objects directly instead of EvmToken to minimize database queries.
+        """
+        total_token_balances: dict[Asset, FVal] = defaultdict(FVal)
         chunks = get_chunks(tokens, n=chunk_size)
         for chunk in chunks:
             new_token_balances = self.get_token_balances(
@@ -248,12 +279,13 @@ class EvmTokens(ABC):
                     cursor=cursor,
                     address=address,
                     blockchain=self.evm_inquirer.blockchain,
+                    token_exceptions=self._per_chain_token_exceptions(),
                 )
 
         return addresses_info
 
     def _query_new_tokens(self, addresses: Sequence[ChecksumEvmAddress]) -> None:
-        all_tokens = GlobalDBHandler.get_evm_tokens(
+        all_tokens = GlobalDBHandler.get_token_detection_data(
             chain_id=self.evm_inquirer.chain_id,
             exceptions=self._get_token_exceptions(),
         )
@@ -287,7 +319,7 @@ class EvmTokens(ABC):
     def _detect_tokens(
             self,
             addresses: Sequence[ChecksumEvmAddress],
-            tokens_to_check: list[EvmToken],
+            tokens_to_check: list[EvmTokenDetectionData],
     ) -> None:
         """
         Detect tokens for the given addresses.
@@ -339,11 +371,23 @@ class EvmTokens(ABC):
                     cursor=cursor,
                     address=address,
                     blockchain=self.evm_inquirer.blockchain,
+                    token_exceptions=self._per_chain_token_exceptions(),
                 )
                 if saved_list is None:
                     continue  # Do not query if we know the address has no tokens
-                all_tokens.update(saved_list)
-                addresses_to_tokens[address] = saved_list
+
+                # get NFT tokens for address and ignore them from the query to avoid duplicates
+                cursor.execute(
+                    'SELECT identifier, blockchain FROM nfts WHERE owner_address=?',
+                    (address,),
+                )
+                excluded_addresses = {
+                    Nft(row[0]).evm_address for row in cursor
+                    if SupportedBlockchain.deserialize(row[1]) == self.evm_inquirer.blockchain
+                }
+                token_list = [x for x in saved_list if x.evm_address not in excluded_addresses]
+                all_tokens.update(token_list)
+                addresses_to_tokens[address] = token_list
 
         multicall_chunks = generate_multicall_chunks(
             addresses_to_tokens=addresses_to_tokens,
@@ -357,9 +401,7 @@ class EvmTokens(ABC):
             for address, balances in new_balances.items():
                 addresses_to_balances[address].update(balances)
 
-        token_usd_price: dict[EvmToken, Price] = {}
-        for token in all_tokens:
-            token_usd_price[token] = Inquirer.find_usd_price(asset=token)
+        token_usd_price: dict[EvmToken, Price] = {token: Inquirer.find_usd_price(asset=token) for token in all_tokens}  # noqa: E501
 
         return dict(addresses_to_balances), token_usd_price
 
@@ -374,10 +416,17 @@ class EvmTokens(ABC):
             if (evm_details := asset_id_is_evm_token(asset_id)) is not None and evm_details[0] == self.evm_inquirer.chain_id:  # noqa: E501
                 exceptions.add(evm_details[1])
 
+        # Exclude the Uniswap V3 NFT Manager address.
+        # Without this exclusion, the balance logic reports a balance equal to the
+        # number of Uniswap V3 positions held by the user for *each* position NFT.
+        # Actual position balances are handled by the UniswapV3Balances class.
+        if self.evm_inquirer.chain_id in UNISWAP_V3_NFT_MANAGER_ADDRESSES:
+            exceptions.add(UNISWAP_V3_NFT_MANAGER_ADDRESSES[self.evm_inquirer.chain_id])
+
         return exceptions | self._per_chain_token_exceptions()
 
     # -- methods to be implemented by child classes
-    @abstractmethod
+
     def _per_chain_token_exceptions(self) -> set[ChecksumEvmAddress]:
         """
         Returns a list of token addresses that will not be taken into account
@@ -385,6 +434,7 @@ class EvmTokens(ABC):
 
         Each chain needs to implement any chain-specific exceptions here.
         """
+        return set()
 
 
 class EvmTokensWithDSProxy(EvmTokens, ABC):
@@ -431,6 +481,7 @@ class EvmTokensWithDSProxy(EvmTokens, ABC):
                         cursor=cursor,
                         address=proxy_address,
                         blockchain=self.evm_inquirer.blockchain,
+                        token_exceptions=self._per_chain_token_exceptions(),
                     )
 
                     if proxy_detected_tokens is not None:

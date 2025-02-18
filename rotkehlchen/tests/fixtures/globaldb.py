@@ -1,3 +1,4 @@
+import shutil
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
@@ -8,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.assets.asset import EvmToken
-from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR
 from rotkehlchen.constants.misc import GLOBALDB_NAME, GLOBALDIR_NAME
 from rotkehlchen.fval import FVal
@@ -17,6 +17,7 @@ from rotkehlchen.globaldb.upgrades.manager import UPGRADES_LIST
 from rotkehlchen.globaldb.utils import GLOBAL_DB_VERSION
 from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.tests.utils.database import mock_db_schema_sanity_check
+from rotkehlchen.tests.utils.decoders import patch_decoder_reload_data
 from rotkehlchen.tests.utils.globaldb import patch_for_globaldb_upgrade_to
 from rotkehlchen.types import Price, Timestamp
 
@@ -74,19 +75,28 @@ def fixture_remove_global_assets() -> list[str]:
     return []
 
 
+@pytest.fixture(name='load_global_caches')
+def fixture_load_global_caches() -> list[str]:
+    """A list of counterparties of the decoders for which the global cache should be loaded."""
+    return []
+
+
 def create_globaldb(
         data_directory,
         sql_vm_instructions_cb,
+        messages_aggregator,
+        perform_assets_updates=False,
 ) -> GlobalDBHandler:
     # Since this is a singleton and we want it initialized everytime the fixture
     # is called make sure its instance is always starting from scratch
     GlobalDBHandler._GlobalDBHandler__instance = None  # type: ignore
 
-    handler = GlobalDBHandler(
+    return GlobalDBHandler(
         data_dir=data_directory,
         sql_vm_instructions_cb=sql_vm_instructions_cb,
+        msg_aggregator=messages_aggregator,
+        perform_assets_updates=perform_assets_updates,
     )
-    return handler
 
 
 def _initialize_fixture_globaldb(
@@ -100,10 +110,11 @@ def _initialize_fixture_globaldb(
         run_globaldb_migrations,
         empty_global_addressbook,
         remove_global_assets,
-) -> GlobalDBHandler:
+        load_global_caches,
+        messages_aggregator,
+) -> tuple[GlobalDBHandler, Path]:
     # clean the previous resolver memory cache, as it
     # may have cached results from a discarded database
-    AssetResolver().clean_memory_cache()
     root_dir = Path(__file__).resolve().parent.parent.parent
     if custom_globaldb is None:  # no specific version -- normal test
         source_db_path = root_dir / 'data' / GLOBALDB_NAME
@@ -119,7 +130,7 @@ def _initialize_fixture_globaldb(
         )
         if run_globaldb_migrations is False:
             stack.enter_context(
-                patch('rotkehlchen.globaldb.handler.maybe_apply_globaldb_migrations', side_effect=lambda *args: None),  # noqa: E501
+                patch('rotkehlchen.globaldb.upgrades.manager.maybe_apply_globaldb_migrations', side_effect=lambda *args: None),  # noqa: E501
             )
         if reload_user_assets is False:
             stack.enter_context(
@@ -132,7 +143,12 @@ def _initialize_fixture_globaldb(
             stack.enter_context(mock_db_schema_sanity_check())
             patch_for_globaldb_upgrade_to(stack, target_globaldb_version)
 
-        globaldb = create_globaldb(new_data_dir, sql_vm_instructions_cb)
+        stack.enter_context(patch_decoder_reload_data(load_global_caches))
+        globaldb = create_globaldb(
+            data_directory=new_data_dir,
+            sql_vm_instructions_cb=0,
+            messages_aggregator=messages_aggregator,
+        )
 
     if empty_global_addressbook is True:
         with globaldb.conn.write_ctx() as cursor:
@@ -145,7 +161,7 @@ def _initialize_fixture_globaldb(
                 [(asset,) for asset in remove_global_assets],
             )
 
-    return globaldb
+    return globaldb, new_data_dir
 
 
 @pytest.fixture(name='globaldb')
@@ -160,8 +176,10 @@ def fixture_globaldb(
         run_globaldb_migrations,
         empty_global_addressbook,
         remove_global_assets,
+        load_global_caches,
+        messages_aggregator,
 ):
-    globaldb = _initialize_fixture_globaldb(
+    globaldb, new_data_dir = _initialize_fixture_globaldb(
         custom_globaldb=custom_globaldb,
         tmpdir_factory=tmpdir_factory,
         sql_vm_instructions_cb=sql_vm_instructions_cb,
@@ -172,10 +190,13 @@ def fixture_globaldb(
         run_globaldb_migrations=run_globaldb_migrations,
         empty_global_addressbook=empty_global_addressbook,
         remove_global_assets=remove_global_assets,
+        load_global_caches=load_global_caches,
+        messages_aggregator=messages_aggregator,
     )
     yield globaldb
 
     globaldb.cleanup()
+    shutil.rmtree(new_data_dir)
 
 
 @pytest.fixture(name='custom_globaldb')
@@ -184,7 +205,7 @@ def fixture_custom_globaldb() -> int | None:
 
 
 @pytest.fixture(name='historical_price_test_data')
-def fixture_historical_price_test_data(globaldb):  # noqa: PT004  # adding _ won't export it
+def fixture_historical_price_test_data(globaldb):
     data = [HistoricalPrice(
         from_asset=A_BTC,
         to_asset=A_EUR,

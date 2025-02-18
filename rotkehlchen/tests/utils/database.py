@@ -3,7 +3,7 @@ import random
 from dataclasses import asdict
 from pathlib import Path
 from shutil import copyfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import _patch, patch
 
 from pysqlcipher3 import dbapi2 as sqlcipher
@@ -25,6 +25,9 @@ from rotkehlchen.types import (
     SupportedBlockchain,
 )
 
+if TYPE_CHECKING:
+    from rotkehlchen.db.drivers.gevent import DBCursor
+
 
 def maybe_include_etherscan_key(db: DBHandler, include_etherscan_key: bool) -> None:
     if not include_etherscan_key:
@@ -35,34 +38,55 @@ def maybe_include_etherscan_key(db: DBHandler, include_etherscan_key: bool) -> N
     else:
         eth_api_key = '8JT7WQBB2VQP5C3416Y8X3S8GBA3CVZKP4'
 
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.ETHERSCAN,
-        api_key=ApiKey(eth_api_key),
-    )])
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.OPTIMISM_ETHERSCAN,
-        api_key=ApiKey('IK3GCCMPQXTRIEGBAXQ9DUFWIUR524K3MW'),
-    )])
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.POLYGON_POS_ETHERSCAN,
-        api_key=ApiKey('1M4TM28QKJHED9QPDWXFCBEX5CK5ID3ESG'),  # Added by Alexey on 2023-05-22
-    )])
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.ARBITRUM_ONE_ETHERSCAN,
-        api_key=ApiKey('VQUFYKKJR4RK8HFHYIJ9I93FIUVP44TN99'),  # Added by dimyG on 2023-07-21
-    )])
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.BASE_ETHERSCAN,
-        api_key=ApiKey('7UXQPEFX2RIQPN42VPTG72XD4E1HJS8IS6'),  # Added by 0xGusMcCrae on 2023-09-16
-    )])
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.GNOSIS_ETHERSCAN,
-        api_key=ApiKey('J3XEY27VIT7377G34PVPHKWG74NG9PXNSM'),  # Added by dimyG on 2023-10-05
-    )])
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.SCROLL_ETHERSCAN,
-        api_key=ApiKey('W7QNAANTDB92HZ8ZSYEH8AU33HDZIE3MD4'),  # Added by zinkkrysty on 2024-03-13
-    )])
+    with db.user_write() as write_cursor:
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.ETHERSCAN,
+                api_key=ApiKey(eth_api_key),
+            )])
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.OPTIMISM_ETHERSCAN,
+                api_key=ApiKey('IK3GCCMPQXTRIEGBAXQ9DUFWIUR524K3MW'),
+            )])
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,  # Added by Alexey on 2023-05-22
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.POLYGON_POS_ETHERSCAN,
+                api_key=ApiKey('1M4TM28QKJHED9QPDWXFCBEX5CK5ID3ESG'),
+            )])
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,  # Added by dimyG on 2023-07-21
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.ARBITRUM_ONE_ETHERSCAN,
+                api_key=ApiKey('VQUFYKKJR4RK8HFHYIJ9I93FIUVP44TN99'),
+            )])
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,  # Added by 0xGusMcCrae on 2023-09-16
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.BASE_ETHERSCAN,
+                api_key=ApiKey('7UXQPEFX2RIQPN42VPTG72XD4E1HJS8IS6'),
+            )])
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,  # Added by dimyG on 2023-10-05
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.GNOSIS_ETHERSCAN,
+                api_key=ApiKey('J3XEY27VIT7377G34PVPHKWG74NG9PXNSM'),
+            )])
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,  # Added by zinkkrysty on 2024-03-13
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.SCROLL_ETHERSCAN,
+                api_key=ApiKey('W7QNAANTDB92HZ8ZSYEH8AU33HDZIE3MD4'),
+            )])
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,  # Added by nicholasyoder on 2025-01-03
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.BINANCE_SC_ETHERSCAN,
+                api_key=ApiKey('RPPD2UX7CAR89FPITMP3QDEX1I9Z7PCV4S'),
+            )])
 
 
 def maybe_include_cryptocompare_key(db: DBHandler, include_cryptocompare_key: bool) -> None:
@@ -75,10 +99,13 @@ def maybe_include_cryptocompare_key(db: DBHandler, include_cryptocompare_key: bo
         '6781b638eca6c3ca51a87efcdf0b9032397379a0810c5f8198a25493161c318d',
     ]
     # Add the tests only etherscan API key
-    db.add_external_service_credentials([ExternalServiceApiCredentials(
-        service=ExternalService.CRYPTOCOMPARE,
-        api_key=ApiKey(random.choice(keys)),
-    )])
+    with db.user_write() as write_cursor:
+        db.add_external_service_credentials(
+            write_cursor=write_cursor,
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.CRYPTOCOMPARE,
+                api_key=ApiKey(random.choice(keys)),
+            )])
 
 
 def add_blockchain_accounts_to_db(db: DBHandler, blockchain_accounts: BlockchainAccounts) -> None:
@@ -111,16 +138,15 @@ def add_settings_to_test_db(
         'submit_usage_analytics': False,
         'main_currency': DEFAULT_TESTS_MAIN_CURRENCY,
     }
-    # Set the given db_settings. The pre-set values have priority unless overriden here
+    # Set the given db_settings. The pre-set values have priority unless overridden here
     if db_settings is not None:
         settings.update(db_settings)
 
-    with db.user_write() as cursor:
-        db.set_settings(cursor, ModifiableDBSettings(**settings))  # type: ignore
-
-    if ignored_assets:
-        for asset in ignored_assets:
-            db.add_to_ignored_assets(asset)
+    with db.user_write() as write_cursor:
+        db.set_settings(write_cursor=write_cursor, settings=ModifiableDBSettings(**settings))  # type: ignore
+        if ignored_assets:
+            for asset in ignored_assets:
+                db.add_to_ignored_assets(write_cursor=write_cursor, asset=asset)
 
     if data_migration_version is not None:
         db.conn.cursor().execute(
@@ -214,3 +240,8 @@ def clean_ignored_assets(database: DBHandler):
     from the global DB sync or elsewhere so they start clean"""
     with database.user_write() as write_cursor:
         write_cursor.execute('DELETE FROM multisettings WHERE name=?', ('ignored_asset',))
+
+
+def column_exists(cursor: 'DBCursor', table_name: str, column_name: str) -> bool:
+    columns = [row[1] for row in cursor.execute(f'PRAGMA table_info({table_name})')]
+    return column_name in columns

@@ -2,12 +2,12 @@
 const router = useRouter();
 
 const route = useRoute();
-const canNavigateBack: ComputedRef<boolean> = computed(() => {
+const canNavigateBack = computed<boolean>(() => {
   const canNavigateBack = get(route).meta?.canNavigateBack ?? false;
   return canNavigateBack && window.history.length > 1;
 });
 
-const page: ComputedRef<number | null> = computed(() => {
+const page = computed<number | null>(() => {
   const page = get(route).query?.page;
   if (page && typeof page === 'string') {
     const pageInt = parseInt(page);
@@ -48,7 +48,7 @@ const { t } = useI18n();
         class="back-button__button"
         @click="goBack()"
       >
-        <RuiIcon name="arrow-left-line" />
+        <RuiIcon name="lu-arrow-left" />
       </RuiButton>
     </template>
     <span>{{ t('back_button.tooltip') }}</span>

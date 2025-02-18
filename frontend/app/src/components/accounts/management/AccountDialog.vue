@@ -1,30 +1,36 @@
 <script setup lang="ts">
-import type AccountForm from '@/components/accounts/management/AccountForm.vue';
-import type { AccountManageState } from '@/composables/accounts/blockchain/use-account-manage';
+import { isEqual } from 'es-toolkit';
+import { useAccountLoading } from '@/composables/accounts/loading';
+import { type AccountManageState, useAccountManage } from '@/composables/accounts/blockchain/use-account-manage';
+import BigDialog from '@/components/dialogs/BigDialog.vue';
+import AccountForm from '@/components/accounts/management/AccountForm.vue';
 
-const props = defineProps<{
-  value: AccountManageState | undefined;
+const model = defineModel<AccountManageState | undefined>({ required: true });
+
+defineProps<{
+  chainIds: string[];
 }>();
 
 const emit = defineEmits<{
-  (e: 'input', value: AccountManageState | undefined): void;
+  (e: 'complete'): void;
 }>();
 
 const { t } = useI18n();
 
 const form = ref<InstanceType<typeof AccountForm>>();
+const stateUpdated = ref(false);
 
-const model = useSimpleVModel(props, emit);
+const title = computed<string>(() =>
+  get(model)?.mode === 'edit'
+    ? t('blockchain_balances.form_dialog.edit_title')
+    : t('blockchain_balances.form_dialog.add_title'),
+);
 
-const title = computed<string>(() => props.value?.mode === 'edit'
-  ? t('blockchain_balances.form_dialog.edit_title')
-  : t('blockchain_balances.form_dialog.add_title'));
+const subtitle = computed<string>(() =>
+  get(model)?.mode === 'edit' ? t('blockchain_balances.form_dialog.edit_subtitle') : '',
+);
 
-const subtitle = computed<string>(() => props.value?.mode === 'edit'
-  ? t('blockchain_balances.form_dialog.edit_subtitle')
-  : '');
-
-const { save, pending, errorMessages } = useAccountManage();
+const { errorMessages, pending, save } = useAccountManage();
 const { loading } = useAccountLoading();
 
 function dismiss() {
@@ -34,22 +40,34 @@ function dismiss() {
 async function confirm() {
   assert(isDefined(form));
   const accountForm = get(form);
+  set(errorMessages, {});
   const valid = await accountForm.validate();
   if (!valid)
     return;
 
-  const importState = await accountForm.importAccounts();
-
-  if (importState === null)
-    return;
-
-  const state = importState || get(model);
+  const state = get(model);
   assert(state);
 
+  set(stateUpdated, false);
   const success = await save(state);
-  if (success)
+  if (success) {
+    emit('complete');
     dismiss();
+  }
+  else {
+    set(stateUpdated, true);
+  }
 }
+watch(model, (model, oldModel) => {
+  if (!model || !oldModel) {
+    set(stateUpdated, false);
+    return;
+  }
+
+  if (model.chain === oldModel.chain && !isEqual(model.data, oldModel.data)) {
+    set(stateUpdated, true);
+  }
+}, { deep: true });
 </script>
 
 <template>
@@ -60,6 +78,7 @@ async function confirm() {
     :primary-action="t('common.actions.save')"
     :secondary-action="t('common.actions.cancel')"
     :loading="loading || pending"
+    :prompt-on-close="stateUpdated"
     @confirm="confirm()"
     @cancel="dismiss()"
   >
@@ -67,7 +86,8 @@ async function confirm() {
       v-if="model"
       ref="form"
       v-model="model"
-      :error-messages.sync="errorMessages"
+      v-model:error-messages="errorMessages"
+      :chain-ids="chainIds"
       :loading="loading"
     />
   </BigDialog>

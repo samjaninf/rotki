@@ -13,9 +13,9 @@ const BlockchainTotals = z.object({
 export type BlockchainTotals = z.infer<typeof BlockchainTotals>;
 
 const XpubBalance = z.object({
-  xpub: z.string(),
-  derivationPath: z.string().nullable(),
   addresses: z.record(Balance),
+  derivationPath: z.string().nullable(),
+  xpub: z.string(),
 });
 
 const BtcBalances = z.object({
@@ -29,6 +29,8 @@ const EthBalance = z.object({
   assets: Balances,
   liabilities: Balances,
 });
+
+export type EthBalance = z.infer<typeof EthBalance>;
 
 const BlockchainAssetBalances = z.record(EthBalance);
 

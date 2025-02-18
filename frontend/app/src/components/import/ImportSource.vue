@@ -5,34 +5,37 @@ import { displayDateFormatter } from '@/data/date-formatter';
 import { DateFormat } from '@/types/date-format';
 import { TaskType } from '@/types/task-type';
 import { toMessages } from '@/utils/validation';
+import { isTaskCancelled } from '@/utils';
+import { useTaskStore } from '@/store/tasks';
+import { refIsTruthy } from '@/composables/ref';
+import { useImportDataApi } from '@/composables/api/import';
+import { useInterop } from '@/composables/electron-interop';
+import DateFormatHelp from '@/components/settings/controls/DateFormatHelp.vue';
+import FileUpload from '@/components/import/FileUpload.vue';
 import type { TaskMeta } from '@/types/task';
 import type { ImportSourceType } from '@/types/upload-types';
 
-const props = withDefaults(
-  defineProps<{ source: ImportSourceType; icon?: string }>(),
-  { icon: '' },
-);
+const props = withDefaults(defineProps<{ source: ImportSourceType; icon?: string }>(), { icon: '' });
 
 const { source } = toRefs(props);
-const dateInputFormat = ref<string | null>(null);
+const dateInputFormat = ref<string>();
 const uploaded = ref(false);
 const errorMessage = ref('');
 const formatHelp = ref<boolean>(false);
-const file = ref<File | null>(null);
+const file = ref<File>();
 
 const { t } = useI18n();
-const { appSession } = useInterop();
+const { getPath } = useInterop();
 
 const rules = {
   dateInputFormat: {
     required: helpers.withMessage(
-      t('general_settings.date_display.validation.empty').toString(),
+      t('general_settings.date_display.validation.empty'),
       requiredIf(refIsTruthy(dateInputFormat)),
     ),
     validDate: helpers.withMessage(
-      t('general_settings.date_display.validation.invalid').toString(),
-      (v: string | null): boolean =>
-        v === null || displayDateFormatter.containsValidDirectives(v),
+      t('general_settings.date_display.validation.invalid'),
+      (v: string | undefined): boolean => v === undefined || displayDateFormatter.containsValidDirectives(v),
     ),
   },
 };
@@ -62,23 +65,14 @@ const { importDataFrom, importFile } = useImportDataApi();
 async function uploadPackaged(file: string) {
   try {
     const sourceVal = get(source);
-    const { taskId } = await importDataFrom(
-      sourceVal,
-      file,
-      get(dateInputFormat) || null,
-    );
+    const { taskId } = await importDataFrom(sourceVal, file, get(dateInputFormat) || null);
 
     const taskMeta = {
-      title: t('file_upload.task.title', { source: sourceVal }).toString(),
       source: sourceVal,
+      title: t('file_upload.task.title', { source: sourceVal }),
     };
 
-    const { result } = await awaitTask<boolean, TaskMeta>(
-      taskId,
-      taskType,
-      taskMeta,
-      true,
-    );
+    const { result } = await awaitTask<boolean, TaskMeta>(taskId, taskType, taskMeta, true);
 
     if (result)
       set(uploaded, true);
@@ -92,8 +86,9 @@ async function uploadPackaged(file: string) {
 async function uploadFile() {
   const fileVal = get(file);
   if (fileVal) {
-    if (appSession) {
-      await uploadPackaged(fileVal.path);
+    const path = getPath(fileVal);
+    if (path) {
+      await uploadPackaged(path);
     }
     else {
       const formData = new FormData();
@@ -107,14 +102,10 @@ async function uploadFile() {
       try {
         const { taskId } = await importFile(formData);
         const taskMeta = {
-          title: t('file_upload.task.title', { source: get(source) }),
           source: get(source),
+          title: t('file_upload.task.title', { source: get(source) }),
         };
-        const { result } = await awaitTask<boolean, TaskMeta>(
-          taskId,
-          taskType,
-          taskMeta,
-        );
+        const { result } = await awaitTask<boolean, TaskMeta>(taskId, taskType, taskMeta);
 
         if (result)
           set(uploaded, true);
@@ -128,15 +119,12 @@ async function uploadFile() {
 }
 
 function changeShouldCustomDateFormat() {
-  if (get(dateInputFormat) === null)
+  if (!isDefined(dateInputFormat))
     set(dateInputFormat, DateFormat.DateMonthYearHourMinuteSecond);
-  else
-    set(dateInputFormat, null);
+  else set(dateInputFormat, undefined);
 }
 
 const isRotkiCustomImport = computed(() => get(source).startsWith('rotki_'));
-
-const slots = useSlots();
 </script>
 
 <template>
@@ -147,23 +135,23 @@ const slots = useSlots();
     <form>
       <FileUpload
         v-model="file"
+        v-model:error-message="errorMessage"
         :loading="loading"
         :uploaded="uploaded"
         :source="source"
-        :error-message="errorMessage"
         @update:uploaded="uploaded = $event"
       />
       <RuiSwitch
         v-if="!isRotkiCustomImport"
         color="primary"
         class="mt-4"
-        :value="dateInputFormat !== null"
-        @input="changeShouldCustomDateFormat()"
+        :model-value="dateInputFormat !== undefined"
+        @update:model-value="changeShouldCustomDateFormat()"
       >
         {{ t('file_upload.date_input_format.switch_label') }}
       </RuiSwitch>
       <RuiTextField
-        v-if="dateInputFormat !== null"
+        v-if="dateInputFormat !== undefined"
         v-model="dateInputFormat"
         class="mt-2"
         variant="outlined"
@@ -183,14 +171,14 @@ const slots = useSlots();
             class="!p-2"
             @click="formatHelp = true"
           >
-            <RuiIcon name="information-line" />
+            <RuiIcon name="lu-info" />
           </RuiButton>
         </template>
       </RuiTextField>
 
-      <div class="mt-4">
+      <div class="mt-4 text-sm leading-7 text-rui-text-secondary">
         <slot />
-        <div v-if="slots.hint">
+        <div v-if="$slots.hint">
           <slot name="hint" />
         </div>
       </div>
@@ -199,9 +187,16 @@ const slots = useSlots();
           color="primary"
           class="w-full"
           data-cy="button-import"
+          size="lg"
           :disabled="v$.$invalid || !file || loading"
           @click="uploadFile()"
         >
+          <template #prepend>
+            <RuiIcon
+              name="lu-file-up"
+              size="18"
+            />
+          </template>
           {{ t('common.actions.import') }}
         </RuiButton>
       </div>

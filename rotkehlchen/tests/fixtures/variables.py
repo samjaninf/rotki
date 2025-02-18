@@ -12,18 +12,17 @@ def fixture_port_generator(request):
     return get_free_port('127.0.0.1', request.config.option.initial_port)
 
 
-@pytest.fixture()
+@pytest.fixture
 def db_password():
     return '123'
 
 
-@pytest.fixture()
+@pytest.fixture
 def rest_api_port(port_generator):
-    port = next(port_generator)
-    return port
+    return next(port_generator)
 
 
-@pytest.fixture()
+@pytest.fixture
 def added_exchanges() -> Sequence[Location]:
     """A fixture determining which exchanges to add to a test rotkehlchen api server"""
     return (
@@ -32,14 +31,13 @@ def added_exchanges() -> Sequence[Location]:
         Location.BINANCE,
         Location.BITMEX,
         Location.COINBASE,
-        Location.COINBASEPRO,
         Location.GEMINI,
         Location.BITSTAMP,
         Location.BITFINEX,
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def network_mocking(request):
     """Uses the --no-network-mocking argument. By default when not passed, the network
     is mocked in all tests that are aware of it (by using this fixture).

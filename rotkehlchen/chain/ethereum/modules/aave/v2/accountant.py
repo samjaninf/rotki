@@ -31,7 +31,7 @@ class Aavev2Accountant(ModuleAccountantInterface):
             event: 'EvmEvent',
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
-        self.assets_borrowed[(string_to_evm_address(event.location_label), event.asset)] += event.balance.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
+        self.assets_borrowed[string_to_evm_address(event.location_label), event.asset] += event.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
         return 1
 
     def _process_payback(
@@ -41,15 +41,16 @@ class Aavev2Accountant(ModuleAccountantInterface):
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
         """
-        Process payback events. If the payed back amount is higher that the borrowed amount,
+        Process payback events. If the paid back amount is higher that the borrowed amount,
         a loss event is added to the accounting pot.
         """
         key = (string_to_evm_address(event.location_label), event.asset)  # type: ignore[arg-type]  # location_label can't be None here
-        self.assets_borrowed[key] -= event.balance.amount
+        self.assets_borrowed[key] -= event.amount
         if self.assets_borrowed[key] < ZERO:
             loss = -1 * self.assets_borrowed[key]
             resolved_asset = event.asset.resolve_to_asset_with_symbol()
             pot.add_out_event(
+                originating_event_id=event.identifier,
                 event_type=AccountingEventType.TRANSACTION_EVENT,
                 notes=f'Lost {loss} {resolved_asset.symbol} as debt during payback to Aave v2 loan for {event.location_label}',  # noqa: E501
                 location=event.location,
@@ -68,7 +69,7 @@ class Aavev2Accountant(ModuleAccountantInterface):
             event: 'EvmEvent',
             other_events: Iterator['EvmEvent'],  # pylint: disable=unused-argument
     ) -> int:
-        self.assets_supplied[(string_to_evm_address(event.location_label), event.asset)] += event.balance.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
+        self.assets_supplied[string_to_evm_address(event.location_label), event.asset] += event.amount  # type: ignore[arg-type]  # location_label can't be None here  # noqa: E501
         return 1
 
     def _process_withdraw(
@@ -82,7 +83,7 @@ class Aavev2Accountant(ModuleAccountantInterface):
         a gain event is added to the accounting pot.
         """
         key = (string_to_evm_address(event.location_label), event.asset)  # type: ignore[arg-type]  # location_label can't be None here
-        self.assets_supplied[key] -= event.balance.amount
+        self.assets_supplied[key] -= event.amount
         if self.assets_supplied[key] < ZERO:
             gain = -1 * self.assets_supplied[key]
             resolved_asset = event.asset.resolve_to_asset_with_symbol()
@@ -102,8 +103,8 @@ class Aavev2Accountant(ModuleAccountantInterface):
     def event_callbacks(self) -> dict[int, tuple[int, EventsAccountantCallback]]:
         """Being defined at function call time is fine since this function is called only once"""
         return {
-            get_event_type_identifier(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET, CPT_AAVE_V2): (1, self._process_deposit),  # noqa: E501
-            get_event_type_identifier(HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET, CPT_AAVE_V2): (1, self._process_withdraw),  # noqa: E501
+            get_event_type_identifier(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_FOR_WRAPPED, CPT_AAVE_V2): (1, self._process_deposit),  # noqa: E501
+            get_event_type_identifier(HistoryEventType.WITHDRAWAL, HistoryEventSubType.REDEEM_WRAPPED, CPT_AAVE_V2): (1, self._process_withdraw),  # noqa: E501
             get_event_type_identifier(HistoryEventType.RECEIVE, HistoryEventSubType.GENERATE_DEBT, CPT_AAVE_V2): (1, self._process_borrow),  # noqa: E501
             get_event_type_identifier(HistoryEventType.SPEND, HistoryEventSubType.PAYBACK_DEBT, CPT_AAVE_V2): (1, self._process_payback),  # noqa: E501
         }

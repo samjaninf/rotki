@@ -34,7 +34,7 @@ QUERY_STABILITY_POOL_EVENTS = """
 WHERE event_identifier IN (
     SELECT A.event_identifier FROM history_events AS A JOIN history_events AS B ON
     A.event_identifier = B.event_identifier JOIN evm_events_info AS C ON A.identifier=C.identifier
-    WHERE C.counterparty = "liquity" AND B.asset=? AND B.subtype=?
+    WHERE C.counterparty = 'liquity' AND B.asset=? AND B.subtype=?
 ) AND type=? AND subtype=?
 """
 BINDINGS_STABILITY_POOL_EVENTS = [
@@ -44,7 +44,7 @@ BINDINGS_STABILITY_POOL_EVENTS = [
     HistoryEventSubType.REWARD.serialize(),
 ]
 QUERY_STABILITY_POOL_DEPOSITS = (
-    'SELECT SUM(CAST(amount AS REAL)), SUM(CAST(usd_value AS REAL)) '
+    'SELECT SUM(CAST(amount AS REAL)), 0 '  # TODO: @yabirgb: Adjust the USD value removed here
     'FROM history_events WHERE asset=? AND type=? AND subtype=?'
 )
 

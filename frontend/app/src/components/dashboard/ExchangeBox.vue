@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { Routes } from '@/router/routes';
+import { useLocations } from '@/composables/locations';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import ListItem from '@/components/common/ListItem.vue';
 import type { BigNumber } from '@rotki/common';
 
 const props = defineProps<{
@@ -12,7 +16,7 @@ const { location } = toRefs(props);
 const { exchangeName } = useLocations();
 
 const exchangeLocationRoute = computed(() => {
-  const route = Routes.ACCOUNTS_BALANCES_EXCHANGE;
+  const route = Routes.BALANCES_EXCHANGE;
   return `${route}/${get(location)}`;
 });
 </script>

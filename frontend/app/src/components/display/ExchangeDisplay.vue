@@ -1,8 +1,16 @@
 <script setup lang="ts">
-const props = withDefaults(defineProps<{
-  exchange: string;
-  size?: string;
-}>(), { size: '1.5rem' });
+import { useRefMap } from '@/composables/utils/useRefMap';
+import { useLocations } from '@/composables/locations';
+import AppImage from '@/components/common/AppImage.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
+
+const props = withDefaults(
+  defineProps<{
+    exchange: string;
+    size?: string;
+  }>(),
+  { size: '1.5rem' },
+);
 
 const { exchange } = toRefs(props);
 const { locationData } = useLocations();

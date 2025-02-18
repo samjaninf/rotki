@@ -1,4 +1,13 @@
 <script setup lang="ts">
+import CustomAssetContent from '@/components/asset-manager/custom/CustomAssetContent.vue';
+
+definePage({
+  name: 'asset-manager-custom',
+  props: to => ({
+    identifier: to.query.id ?? null,
+  }),
+});
+
 const props = withDefaults(
   defineProps<{
     identifier?: string | null;

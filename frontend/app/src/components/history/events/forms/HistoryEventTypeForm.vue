@@ -1,65 +1,41 @@
 <script setup lang="ts">
 import { toMessages } from '@/utils/validation';
+import { useHistoryEventMappings } from '@/composables/history/events/mapping';
+import HistoryEventTypeCombination from '@/components/history/events/HistoryEventTypeCombination.vue';
 import type { Validation } from '@vuelidate/core';
 import type { ActionDataEntry } from '@/types/action';
 
-const props = withDefaults(
-  defineProps<{
-    eventType: string;
-    eventSubtype: string;
-    counterparty?: string | null;
-    v$: Validation;
-    disableWarning?: boolean;
-  }>(),
-  {
-    disableWarning: false,
-    counterparty: null,
-  },
-);
+interface HistoryEventTypeFormProps {
+  counterparty?: string | null;
+  location?: string | null;
+  v$: Validation;
+  disableWarning?: boolean;
+}
 
-const emit = defineEmits<{
-  (e: 'update:event-type', eventType: string): void;
-  (e: 'update:event-subtype', eventSubtype: string): void;
-}>();
+const eventType = defineModel<string>('eventType', { required: true });
+const eventSubType = defineModel<string | undefined>('eventSubtype', { required: true });
 
-const { eventType, eventSubtype, counterparty, v$ } = toRefs(props);
-
-const eventTypeModel = computed({
-  get() {
-    return get(eventType);
-  },
-  set(newValue: string | null) {
-    emit('update:event-type', newValue || '');
-  },
+const props = withDefaults(defineProps<HistoryEventTypeFormProps>(), {
+  counterparty: null,
+  disableWarning: false,
+  location: null,
 });
 
-const eventSubtypeModel = computed({
-  get() {
-    return get(eventSubtype);
-  },
-  set(newValue: string | null) {
-    emit('update:event-subtype', newValue || '');
-  },
-});
+const { counterparty, location, v$ } = toRefs(props);
+
 const {
   getEventTypeData,
-  historyEventTypesData,
   historyEventSubTypesData,
   historyEventTypeGlobalMapping,
+  historyEventTypesData,
 } = useHistoryEventMappings();
 
-const historyTypeCombination = computed(() =>
-  get(
-    getEventTypeData(
-      {
-        eventType: get(eventType),
-        eventSubtype: get(eventSubtype),
-        counterparty: get(counterparty),
-      },
-      false,
-    ),
-  ),
-);
+const historyTypeCombination = computed(() => get(getEventTypeData({
+  counterparty: get(counterparty),
+  eventSubtype: get(eventSubType) ?? 'none',
+  eventType: get(eventType),
+  location: get(location),
+}, false)));
 
 const showHistoryEventTypeCombinationWarning = computed(() => {
   const validator = get(v$);
@@ -69,25 +45,22 @@ const showHistoryEventTypeCombinationWarning = computed(() => {
   return !get(historyTypeCombination).identifier;
 });
 
-const historyEventSubTypeFilteredData: ComputedRef<ActionDataEntry[]>
-  = computed(() => {
-    const eventTypeVal = get(eventType);
-    const allData = get(historyEventSubTypesData);
-    const globalMapping = get(historyEventTypeGlobalMapping);
+const historyEventSubTypeFilteredData = computed<ActionDataEntry[]>(() => {
+  const eventTypeVal = get(eventType);
+  const allData = get(historyEventSubTypesData);
+  const globalMapping = get(historyEventTypeGlobalMapping);
 
-    if (!eventTypeVal)
-      return allData;
+  if (!eventTypeVal)
+    return allData;
 
-    let globalMappingKeys: string[] = [];
+  let globalMappingKeys: string[] = [];
 
-    const globalMappingFound = globalMapping[eventTypeVal];
-    if (globalMappingFound)
-      globalMappingKeys = Object.keys(globalMappingFound);
+  const globalMappingFound = globalMapping[eventTypeVal];
+  if (globalMappingFound)
+    globalMappingKeys = Object.keys(globalMappingFound);
 
-    return allData.filter((data: ActionDataEntry) =>
-      globalMappingKeys.includes(data.identifier),
-    );
-  });
+  return allData.filter((data: ActionDataEntry) => globalMappingKeys.includes(data.identifier));
+});
 
 const { t } = useI18n();
 </script>
@@ -96,7 +69,7 @@ const { t } = useI18n();
   <div>
     <div class="grid md:grid-cols-3 gap-4">
       <RuiAutoComplete
-        v-model="eventTypeModel"
+        v-model="eventType"
         variant="outlined"
         :label="t('transactions.events.form.event_type.label')"
         :options="historyEventTypesData"
@@ -108,7 +81,7 @@ const { t } = useI18n();
         @blur="v$.eventType.$touch()"
       />
       <RuiAutoComplete
-        v-model="eventSubtypeModel"
+        v-model="eventSubType"
         variant="outlined"
         :label="t('transactions.events.form.event_subtype.label')"
         :options="historyEventSubTypeFilteredData"

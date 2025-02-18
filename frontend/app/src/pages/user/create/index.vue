@@ -1,5 +1,21 @@
 <script setup lang="ts">
-import Fragment from '@/components/helper/Fragment';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useMainStore } from '@/store/main';
+import { useAccountManagement } from '@/composables/user/account';
+import { useAppNavigation } from '@/composables/navigation';
+import AccountManagementFooterText from '@/components/account-management/AccountManagementFooterText.vue';
+import RotkiLogo from '@/components/common/RotkiLogo.vue';
+import AccountManagementAside from '@/components/account-management/AccountManagementAside.vue';
+import AdaptiveFooterButton from '@/components/account-management/AdaptiveFooterButton.vue';
+import CreateAccountWizard from '@/components/account-management/create-account/CreateAccountWizard.vue';
+import UpgradeProgressDisplay from '@/components/account-management/upgrade/UpgradeProgressDisplay.vue';
+import UserHost from '@/components/account-management/UserHost.vue';
+
+definePage({
+  meta: {
+    layout: 'auth',
+  },
+});
 
 const { appVersion } = storeToRefs(useMainStore());
 
@@ -8,21 +24,20 @@ const { navigateToUserLogin } = useAppNavigation();
 const { createNewAccount, error, loading } = useAccountManagement();
 
 const { t } = useI18n();
-const css = useCssModule();
 
-const step: Ref<number> = ref(1);
+const step = ref<number>(1);
 const steps = [
   {
-    title: t('create_account.steps.step_1.title'),
     description: t('create_account.steps.step_1.description'),
+    title: t('create_account.steps.step_1.title'),
   },
   {
-    title: t('create_account.steps.step_2.title'),
     description: t('create_account.steps.step_2.description'),
+    title: t('create_account.steps.step_2.title'),
   },
   {
-    title: t('create_account.steps.step_3.title'),
     description: t('create_account.steps.step_3.description'),
+    title: t('create_account.steps.step_3.title'),
   },
   {
     title: t('create_account.steps.step_4.title'),
@@ -31,79 +46,77 @@ const steps = [
 </script>
 
 <template>
-  <Fragment>
-    <section :class="css.section">
-      <div :class="css.container">
-        <div :class="css.wrapper">
-          <div
-            class="pb-4"
-            data-cy="account-management"
-          >
-            <UserHost>
-              <UpgradeProgressDisplay v-if="upgradeVisible" />
-              <CreateAccountWizard
-                v-else
-                :step.sync="step"
-                :loading="loading"
-                :error="error"
-                @clear-error="error = ''"
-                @cancel="navigateToUserLogin(true)"
-                @confirm="createNewAccount($event)"
-              />
-            </UserHost>
-          </div>
-        </div>
-        <div class="w-[420px] max-w-full mx-auto px-4 mt-8">
-          <RuiFooterStepper
-            :value="step"
-            :pages="steps.length"
-            variant="pill"
-          />
-        </div>
-        <footer :class="css.container__footer">
-          <AccountManagementFooterText
-            #default="{ copyright }"
-            class="lg:hidden"
-          >
-            {{ copyright }}
-          </AccountManagementFooterText>
-          <div class="ml-4">
-            <AdaptiveFooterButton />
-          </div>
-        </footer>
-      </div>
-    </section>
-    <AccountManagementAside class="hidden lg:flex justify-between">
-      <div class="p-12">
-        <div class="mb-10">
-          <RotkiLogo
-            size="2"
-            unique-key="1"
-            text
-          />
-        </div>
-        <div>
-          <RuiStepper
-            custom
-            orientation="vertical"
-            :step="step"
-            :steps="steps"
-          />
+  <section :class="$style.section">
+    <div :class="$style.container">
+      <div :class="$style.wrapper">
+        <div
+          class="pb-4"
+          data-cy="account-management"
+        >
+          <UserHost>
+            <UpgradeProgressDisplay v-if="upgradeVisible" />
+            <CreateAccountWizard
+              v-else
+              v-model:step="step"
+              :loading="loading"
+              :error="error"
+              @clear-error="error = ''"
+              @cancel="navigateToUserLogin(true)"
+              @confirm="createNewAccount($event)"
+            />
+          </UserHost>
         </div>
       </div>
-      <AccountManagementFooterText
-        #default="{ copyright }"
-        class="flex items-center justify-between flex-wrap p-10"
-      >
-        <span>
-          {{ appVersion }}
-        </span>
-        <span>
+      <div class="w-[420px] max-w-full mx-auto px-4 mt-8">
+        <RuiFooterStepper
+          :model-value="step"
+          :pages="steps.length"
+          variant="pill"
+        />
+      </div>
+      <footer :class="$style.container__footer">
+        <AccountManagementFooterText
+          #default="{ copyright }"
+          class="lg:hidden"
+        >
           {{ copyright }}
-        </span>
-      </AccountManagementFooterText>
-    </AccountManagementAside>
-  </Fragment>
+        </AccountManagementFooterText>
+        <div class="ml-4">
+          <AdaptiveFooterButton />
+        </div>
+      </footer>
+    </div>
+  </section>
+  <AccountManagementAside class="hidden lg:flex justify-between">
+    <div class="p-12">
+      <div class="mb-10">
+        <RotkiLogo
+          size="2"
+          unique-key="1"
+          text
+        />
+      </div>
+      <div>
+        <RuiStepper
+          custom
+          orientation="vertical"
+          :step="step"
+          :steps="steps"
+        />
+      </div>
+    </div>
+    <AccountManagementFooterText
+      #default="{ copyright }"
+      class="flex items-center justify-between flex-wrap p-10"
+    >
+      <span>
+        {{ appVersion }}
+      </span>
+      <span>
+        {{ copyright }}
+      </span>
+    </AccountManagementFooterText>
+  </AccountManagementAside>
 </template>
 
 <style module lang="scss">

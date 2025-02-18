@@ -1,5 +1,11 @@
-import { afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useAssetsApi } from '@/composables/api/assets';
+import { useInterop } from '@/composables/electron-interop';
+import { useAssets } from '@/composables/assets';
 import type { AssetMergePayload, AssetUpdatePayload } from '@/types/asset';
+import type { useAssetIconApi } from '@/composables/api/assets/icon';
 
 vi.mock('@/composables/api/assets/index', () => ({
   useAssetsApi: vi.fn().mockReturnValue({
@@ -9,6 +15,12 @@ vi.mock('@/composables/api/assets/index', () => ({
     importCustom: vi.fn().mockResolvedValue(1),
     exportCustom: vi.fn().mockResolvedValue({}),
   }),
+}));
+
+vi.mock('@/composables/api/assets/icon', () => ({
+  useAssetIconApi: vi.fn().mockReturnValue({
+    checkAsset: vi.fn().mockResolvedValue(404),
+  } satisfies Partial<ReturnType<typeof useAssetIconApi>>),
 }));
 
 vi.mock('@/store/tasks', () => ({
@@ -27,12 +39,15 @@ vi.mock('@/composables/electron-interop', () => {
   const mockInterop = {
     appSession: vi.fn(),
     openDirectory: vi.fn(),
+    getPath: vi.fn().mockReturnValue(undefined),
   };
   return {
     useInterop: vi.fn().mockReturnValue(mockInterop),
     interop: mockInterop,
   };
 });
+
+vi.mock('');
 
 describe('store::assets/index', () => {
   setActivePinia(createPinia());
@@ -94,9 +109,7 @@ describe('store::assets/index', () => {
     });
 
     it('error', async () => {
-      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(
-        new Error('failed'),
-      );
+      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(new Error('failed'));
 
       const result = await store.checkForUpdate();
 
@@ -160,9 +173,7 @@ describe('store::assets/index', () => {
     });
 
     it('error', async () => {
-      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(
-        new Error('failed'),
-      );
+      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(new Error('failed'));
 
       const result = await store.applyUpdates(payload);
 
@@ -186,10 +197,7 @@ describe('store::assets/index', () => {
 
       const result = await store.mergeAssets(payload);
 
-      expect(api.mergeAssets).toHaveBeenCalledWith(
-        payload.sourceIdentifier,
-        payload.targetIdentifier,
-      );
+      expect(api.mergeAssets).toHaveBeenCalledWith(payload.sourceIdentifier, payload.targetIdentifier);
 
       expect(result).toEqual({
         success: true,
@@ -201,10 +209,7 @@ describe('store::assets/index', () => {
 
       const result = await store.mergeAssets(payload);
 
-      expect(api.mergeAssets).toHaveBeenCalledWith(
-        payload.sourceIdentifier,
-        payload.targetIdentifier,
-      );
+      expect(api.mergeAssets).toHaveBeenCalledWith(payload.sourceIdentifier, payload.targetIdentifier);
 
       expect(result).toEqual({
         success: false,
@@ -224,7 +229,7 @@ describe('store::assets/index', () => {
 
       const result = await store.importCustomAssets(file);
 
-      expect(api.importCustom).toHaveBeenCalledWith(file, false);
+      expect(api.importCustom).toHaveBeenCalledWith(file);
 
       expect(result).toEqual({
         success: true,
@@ -232,13 +237,11 @@ describe('store::assets/index', () => {
     });
 
     it('failed', async () => {
-      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(
-        new Error('failed'),
-      );
+      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(new Error('failed'));
 
       const result = await store.importCustomAssets(file);
 
-      expect(api.importCustom).toHaveBeenCalledWith(file, false);
+      expect(api.importCustom).toHaveBeenCalledWith(file);
 
       expect(result).toEqual({
         success: false,

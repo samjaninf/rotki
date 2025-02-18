@@ -1,39 +1,33 @@
-import { Severity } from '@rotki/common/lib/messages';
+import { Severity } from '@rotki/common';
 import { api } from '@/services/rotkehlchen-api';
 import { TaskType } from '@/types/task-type';
-import {
-  SYNC_DOWNLOAD,
-  SYNC_UPLOAD,
-  type SyncAction,
-} from '@/types/session/sync';
+import { SYNC_DOWNLOAD, SYNC_UPLOAD, type SyncAction } from '@/types/session/sync';
+import { isTaskCancelled } from '@/utils';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { serializer } from '@/composables/dynamic-messages';
+import { useSyncApi } from '@/composables/api/session/sync';
 import type { TaskMeta } from '@/types/task';
 import type { DbUploadResult } from '@/types/websocket-messages';
 
 export const useSync = createSharedComposable(() => {
-  const { isTaskRunning, awaitTask } = useTaskStore();
+  const { awaitTask, isTaskRunning } = useTaskStore();
   const { notify } = useNotificationsStore();
   const { t } = useI18n();
   const syncAction = ref<SyncAction>(SYNC_DOWNLOAD);
   const displaySyncConfirmation = ref(false);
   const confirmChecked = ref(false);
-  const uploadStatus = useSessionStorage<DbUploadResult>(
-    'rotki.upload_status.message',
-    null,
-    {
-      serializer,
-    },
-  );
-  const uploadStatusAlreadyHandled = useSessionStorage<boolean>(
-    'rotki.upload_status.handled',
-    false,
-  );
+  const uploadStatus = useSessionStorage<DbUploadResult>('rotki.upload_status.message', null, {
+    serializer,
+  });
+  const uploadStatusAlreadyHandled = useSessionStorage<boolean>('rotki.upload_status.handled', false);
 
-  const showSyncConfirmation = (action: SyncAction) => {
+  const showSyncConfirmation = (action: SyncAction): void => {
     set(syncAction, action);
     set(displaySyncConfirmation, true);
   };
 
-  const cancelSync = () => {
+  const cancelSync = (): void => {
     set(displaySyncConfirmation, false);
     set(confirmChecked, false);
   };
@@ -50,9 +44,9 @@ export const useSync = createSharedComposable(() => {
       });
 
       notify({
-        title,
-        message,
         display: true,
+        message,
+        title,
       });
     };
 
@@ -63,23 +57,19 @@ export const useSync = createSharedComposable(() => {
         set(displaySyncConfirmation, false);
 
       const { taskId } = await useSyncApi().forceSync(action);
-      const { result, message } = await awaitTask<boolean, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: t('actions.session.force_sync.task.title'),
-        },
-      );
+      const { message, result } = await awaitTask<boolean, TaskMeta>(taskId, taskType, {
+        title: t('actions.session.force_sync.task.title'),
+      });
 
       if (result) {
         const title = t('actions.session.force_sync.success.title');
         const message = t('actions.session.force_sync.success.message');
 
         notify({
-          title,
+          display: true,
           message,
           severity: Severity.INFO,
-          display: true,
+          title,
         });
 
         if (action === SYNC_DOWNLOAD)
@@ -95,19 +85,19 @@ export const useSync = createSharedComposable(() => {
     }
   };
 
-  const clearUploadStatus = () => {
+  const clearUploadStatus = (): void => {
     set(uploadStatus, null);
   };
 
   return {
-    syncAction,
+    cancelSync,
+    clearUploadStatus,
     confirmChecked,
     displaySyncConfirmation,
+    forceSync,
+    showSyncConfirmation,
+    syncAction,
     uploadStatus,
     uploadStatusAlreadyHandled,
-    forceSync,
-    cancelSync,
-    showSyncConfirmation,
-    clearUploadStatus,
   };
 });

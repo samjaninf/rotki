@@ -1,3 +1,7 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { useScramble } from '@/composables/scramble';
+
 describe('composables::message-handling', () => {
   let store: ReturnType<typeof useSessionSettingsStore>;
 
@@ -8,21 +12,21 @@ describe('composables::message-handling', () => {
   });
 
   it('should not scramble when the state is off', () => {
-    const { scrambleHex, scrambleIdentifier } = useScramble();
+    const { scrambleAddress, scrambleIdentifier } = useScramble();
 
     const hex = '0xabcdef';
     const numbers = '123456';
 
-    expect(scrambleHex(hex)).toEqual(hex);
+    expect(scrambleAddress(hex)).toEqual(hex);
     expect(scrambleIdentifier(numbers)).toEqual(numbers);
   });
 
   it('should scramble hex', () => {
     store.update({ scrambleData: true });
-    const { scrambleHex } = useScramble();
+    const { scrambleAddress } = useScramble();
 
     const address = '0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1';
-    const result = scrambleHex(address);
+    const result = scrambleAddress(address);
 
     expect(result).not.toEqual(address);
     expect(isValidEthAddress(result)).toBeTruthy();

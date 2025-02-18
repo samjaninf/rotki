@@ -26,10 +26,11 @@ using ImageMagick:
 """
 
 import argparse
+
 # Improvements:
 # - Draw the composite graphs with matplotlib instead of using convert and make
-#   sure to aling all the points
-# - Add the option to filter the data for plotting, effectivelly allowing
+#   sure to align all the points
+# - Add the option to filter the data for plotting, effectively allowing
 #   zooming
 import collections
 import datetime
@@ -50,7 +51,7 @@ MEMORY = 1
 
 
 def ts_to_dt(string_ts):
-    """converts a string timestamp to a datatime object"""
+    """converts a string timestamp to a datetime object"""
     return datetime.datetime.fromtimestamp(int(float(string_ts)), tz=datetime.UTC)
 
 
@@ -196,7 +197,7 @@ def memory_timeline(output, data_list):
 def memory_subplot(output, data_list):
     """Plots all data in separated axes, a simple way to look at distinct
     executions, keep in mind that the time-axis will be skewed, since each plot
-    has a differente running time but the same plotting area."""
+    has a difference running time but the same plotting area."""
     number_plots = len(data_list)
     fig, all_memory_axes = plt.subplots(1, number_plots, sharey='row')
 
@@ -271,7 +272,7 @@ def latency_scatter(output, data_list):
 
 
 def objcount_data(filepath):
-    # the file dosn't contain just one pickled object, but a sequence of
+    # the file doesn't contain just one pickled object, but a sequence of
     # pickled dictionaries (look at the sample_objects for details)
     #
     # note: this only works with objects that keep track of the reading

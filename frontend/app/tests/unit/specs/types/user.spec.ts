@@ -1,8 +1,5 @@
-import { describe } from 'vitest';
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { TimeFramePeriod } from '@rotki/common/lib/settings/graphs';
-import { BigNumber } from '@rotki/common';
-import { Theme } from '@rotki/common/lib/settings';
+import { describe, expect, it } from 'vitest';
+import { BigNumber, Blockchain, Theme, TimeFramePeriod } from '@rotki/common';
 import { CurrencyLocation } from '@/types/currency-location';
 import {
   BlockchainRefreshButtonBehaviour,
@@ -19,6 +16,7 @@ import { OtherSettings } from '@/types/user';
 describe('types/user', () => {
   it('otherSettings parsed correctly', () => {
     const frontendSettings: FrontendSettings = {
+      schemaVersion: 1,
       defiSetupDone: true,
       language: SupportedLanguage.EN,
       timeframeSetting: TimeFramePeriod.YEAR,
@@ -64,27 +62,26 @@ describe('types/user', () => {
       defaultThemeVersion: 1,
       graphZeroBased: true,
       showGraphRangeSelector: true,
+      notifyNewNfts: false,
       nftsInNetValue: true,
       renderAllNftImages: true,
       whitelistedDomainsForNftImages: [],
       dashboardTablesVisibleColumns: {
-        [DashboardTableType.ASSETS]: [
-          TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-        ],
-        [DashboardTableType.LIABILITIES]: [
-          TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-        ],
+        [DashboardTableType.ASSETS]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
+        [DashboardTableType.LIABILITIES]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
         [DashboardTableType.NFT]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
-        [DashboardTableType.LIQUIDITY_POSITION]: [
-          TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-        ],
+        [DashboardTableType.LIQUIDITY_POSITION]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
+        [DashboardTableType.BLOCKCHAIN_ASSET_BALANCES]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
       },
       dateInputFormat: DateFormat.DateMonthYearHourMinuteSecond,
       versionUpdateCheckFrequency: 24,
       enableAliasNames: true,
-      blockchainRefreshButtonBehaviour:
-        BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
+      blockchainRefreshButtonBehaviour: BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
+      shouldRefreshValidatorDailyStats: false,
+      subscriptDecimals: false,
       savedFilters: {},
+      balanceUsdValueThreshold: {},
+      useHistoricalAssetBalances: false,
     };
 
     const raw = {

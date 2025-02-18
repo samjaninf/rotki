@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useStatisticsStore } from '@/store/statistics';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const includeNfts = ref<boolean>(true);
 const { fetchNetValue } = useStatisticsStore();
 const { nftsInNetValue: enabled } = storeToRefs(useFrontendSettingsStore());
@@ -20,12 +24,10 @@ const { t } = useI18n();
     <RuiSwitch
       v-model="includeNfts"
       color="primary"
-      class="general-settings__fields__zero-base mb-4 mt-2"
       :label="t('general_settings.nft_setting.label.include_nfts')"
-      :hint="t('general_settings.nft_setting.label.include_nfts_hint')"
       :success-messages="success"
       :error-messages="error"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { TaskType } from '@/types/task-type';
+import { useTaskStore } from '@/store/tasks';
+import EvmChainIcon from '@/components/helper/display/icons/EvmChainIcon.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import type { EvmUnDecodedTransactionsData } from '@/types/websocket-messages';
 
 const props = defineProps<{ item: EvmUnDecodedTransactionsData }>();
@@ -12,7 +15,9 @@ const remaining = computed<number>(() => props.item.total - props.item.processed
 
 const isComplete = computed<boolean>(() => get(remaining) === 0);
 
-const decoding = computed<boolean>(() => get(isTaskRunning(TaskType.TRANSACTIONS_DECODING, { chain: props.item.chain })));
+const decoding = computed<boolean>(() =>
+  get(isTaskRunning(TaskType.TRANSACTIONS_DECODING, { chain: props.item.chain })),
+);
 </script>
 
 <template>

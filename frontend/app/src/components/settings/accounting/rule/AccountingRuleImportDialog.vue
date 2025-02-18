@@ -1,22 +1,22 @@
 <script setup lang="ts">
 import FileUpload from '@/components/import/FileUpload.vue';
+import { useMessageStore } from '@/store/message';
+import { useAccountingSettings } from '@/composables/settings/accounting';
 
-const props = defineProps<{
+const model = defineModel<boolean>({ required: true });
+
+defineProps<{
   loading: boolean;
-  value: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'refresh'): void;
-  (e: 'input', value: boolean): void;
 }>();
 
 const { t } = useI18n();
 
 const importFileUploader = ref<InstanceType<typeof FileUpload>>();
 const importFile = ref<File>();
-
-const model = useSimpleVModel(props, emit);
 
 const { importJSON } = useAccountingSettings();
 const { setMessage } = useMessageStore();
@@ -34,11 +34,11 @@ async function importData() {
   const { success } = response;
 
   setMessage({
-    title: t('actions.accounting_rules.import.title'),
     description: success
       ? t('actions.accounting_rules.import.message.success')
       : t('actions.accounting_rules.import.message.failure', { description: response.message }),
     success,
+    title: t('actions.accounting_rules.import.title'),
   });
 
   if (success) {

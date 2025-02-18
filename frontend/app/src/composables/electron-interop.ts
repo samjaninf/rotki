@@ -1,57 +1,105 @@
-import { externalLinks } from '@/data/external-links';
-import type {
-  BackendOptions,
-  Listeners,
-  SystemVersion,
-  TrayUpdate,
-} from '@/electron-main/ipc';
+import { externalLinks } from '@shared/external-links';
+import { getBackendUrl } from '@/utils/account-management';
+import type { BackendOptions, Listeners, SystemVersion, TrayUpdate } from '@shared/ipc';
 import type { WebVersion } from '@/types';
+
+interface UseInteropReturn {
+  readonly isPackaged: boolean;
+  readonly appSession: boolean;
+  logToFile: (message: string) => void;
+  navigate: (url: string) => Promise<void>;
+  navigateToPremium: () => Promise<void>;
+  setupListeners: (listeners: Listeners) => void;
+  openDirectory: (title: string) => Promise<string | undefined>;
+  openUrl: (url: string) => Promise<void>;
+  openPath: (path: string) => Promise<void>;
+  premiumUserLoggedIn: (premiumUser: boolean) => void;
+  closeApp: () => Promise<void>;
+  metamaskImport: () => Promise<string[]>;
+  restartBackend: (options: Partial<BackendOptions>) => Promise<boolean>;
+  config: (defaults: boolean) => Promise<Partial<BackendOptions>>;
+  version: () => Promise<SystemVersion | WebVersion>;
+  isMac: () => Promise<boolean>;
+  resetTray: () => void;
+  updateTray: (update: TrayUpdate) => void;
+  storePassword: (username: string, password: string) => Promise<boolean | undefined>;
+  getPassword: (username: string) => Promise<string | undefined>;
+  clearPassword: () => Promise<void>;
+  checkForUpdates: () => Promise<any>;
+  downloadUpdate: (progress: (percentage: number) => void) => Promise<boolean>;
+  installUpdate: () => Promise<boolean | Error>;
+  /**
+   * Electron attaches a path property to {@see File}. In normal DOM inside a browser this property does not exist.
+   * The method will return the path if we are in app session and the property exists or it will return undefined.
+   * It can be used to check if we will upload, or path the file.
+   *
+   * @param file The file we want to get the path.
+   */
+  getPath: (file: File) => string | undefined;
+}
 
 const electronApp = !!window.interop;
 
-const interop = {
+function isAppSession(): boolean {
+  const { url } = getBackendUrl();
+  return electronApp && !url;
+}
+
+const interop: UseInteropReturn = {
+  get appSession(): boolean {
+    return isAppSession();
+  },
+
+  checkForUpdates: async (): Promise<boolean> => (await window.interop?.checkForUpdates()) ?? false,
+
+  clearPassword: async (): Promise<void> => {
+    await window.interop?.clearPassword();
+  },
+
+  closeApp: async (): Promise<void> => {
+    await window.interop?.closeApp();
+  },
+
+  config: async (defaults: boolean): Promise<Partial<BackendOptions>> => {
+    assert(window.interop);
+    return window.interop.config(defaults);
+  },
+
+  downloadUpdate: async (progress: (percentage: number) => void): Promise<boolean> =>
+    (await window.interop?.downloadUpdate(progress)) ?? false,
+
+  getPassword: async (username: string): Promise<string | undefined> => {
+    assert(window.interop);
+    return window.interop.getPassword(username);
+  },
+
+  /**
+   * Electron attaches a path property to {@see File}. In normal DOM inside a browser this property does not exist.
+   * The method will return the path if we are in app session and the property exists or it will return undefined.
+   * It can be used to check if we will upload, or path the file.
+   *
+   * @param file The file we want to get the path.
+   */
+  getPath: (file: File): string | undefined => {
+    if (!isAppSession())
+      return undefined;
+
+    if ('path' in file && typeof file.path === 'string')
+      return file.path;
+
+    return undefined;
+  },
+
+  installUpdate: async (): Promise<boolean | Error> => (await window.interop?.installUpdate()) ?? false,
+
+  isMac: async (): Promise<boolean> => Promise.resolve(window.interop?.isMac() || navigator.platform?.startsWith?.('Mac')),
+
   get isPackaged(): boolean {
     return electronApp;
   },
 
-  get appSession(): boolean {
-    const { url } = getBackendUrl();
-    return electronApp && !url;
-  },
-
   logToFile: (message: string): void => {
     window.interop?.logToFile(message);
-  },
-
-  navigate: (url: string): void => {
-    window.interop?.openUrl(url);
-  },
-
-  navigateToPremium: () => {
-    window.interop?.openUrl(externalLinks.premium);
-  },
-
-  setupListeners: (listeners: Listeners) => {
-    window.interop?.setListeners(listeners);
-  },
-
-  openDirectory: async (title: string): Promise<string | undefined> =>
-    (await window.interop?.openDirectory(title)) ?? undefined,
-
-  openUrl: (url: string) => {
-    electronApp ? window.interop?.openUrl(url) : window.open(url, '_blank');
-  },
-
-  openPath: (path: string) => {
-    window.interop?.openPath(path);
-  },
-
-  premiumUserLoggedIn: (premiumUser: boolean) => {
-    window.interop?.premiumUserLoggedIn(premiumUser);
-  },
-
-  closeApp: () => {
-    window.interop?.closeApp();
   },
 
   metamaskImport: async (): Promise<string[]> => {
@@ -66,19 +114,57 @@ const interop = {
     return response.addresses;
   },
 
-  restartBackend: async (
-    options: Partial<BackendOptions>,
-  ): Promise<boolean> => {
-    assert(window.interop);
-    return await window.interop.restartBackend(options);
+  navigate: async (url: string): Promise<void> => {
+    await window.interop?.openUrl(url);
   },
 
-  config: async (defaults: boolean): Promise<Partial<BackendOptions>> => {
-    assert(window.interop);
-    return await window.interop.config(defaults);
+  navigateToPremium: async (): Promise<void> => {
+    await window.interop?.openUrl(externalLinks.premium);
   },
 
-  version: (): Promise<SystemVersion | WebVersion> => {
+  openDirectory: async (title: string): Promise<string | undefined> =>
+    (await window.interop?.openDirectory(title)) ?? undefined,
+
+  openPath: async (path: string): Promise<void> => {
+    await window.interop?.openPath(path);
+  },
+
+  openUrl: async (url: string): Promise<void> => {
+    if (electronApp) {
+      await window.interop?.openUrl(url);
+    }
+    else {
+      window.open(url, '_blank');
+    }
+  },
+
+  premiumUserLoggedIn: (premiumUser: boolean): void => {
+    window.interop?.premiumUserLoggedIn(premiumUser);
+  },
+
+  resetTray: (): void => {
+    window.interop?.updateTray({});
+  },
+
+  restartBackend: async (options: Partial<BackendOptions>): Promise<boolean> => {
+    assert(window.interop);
+    return window.interop.restartBackend(options);
+  },
+
+  setupListeners: (listeners: Listeners): void => {
+    window.interop?.setListeners(listeners);
+  },
+
+  storePassword: async (username: string, password: string): Promise<boolean | undefined> => {
+    assert(window.interop);
+    return window.interop.storePassword({ password, username });
+  },
+
+  updateTray: (update: TrayUpdate): void => {
+    window.interop?.updateTray(update);
+  },
+
+  version: async (): Promise<SystemVersion | WebVersion> => {
     if (!window.interop) {
       return Promise.resolve({
         platform: navigator?.platform,
@@ -87,44 +173,6 @@ const interop = {
     }
     return window.interop?.version();
   },
-
-  isMac: (): Promise<boolean> => Promise.resolve(window.interop?.isMac() || navigator.platform?.startsWith?.('Mac')),
-
-  resetTray: () => {
-    window.interop?.updateTray({});
-  },
-
-  updateTray: (update: TrayUpdate) => {
-    window.interop?.updateTray(update);
-  },
-
-  storePassword: async (
-    username: string,
-    password: string,
-  ): Promise<boolean | undefined> => {
-    assert(window.interop);
-    return await window.interop.storePassword(username, password);
-  },
-
-  getPassword: async (username: string): Promise<string | undefined> => {
-    assert(window.interop);
-    return await window.interop.getPassword(username);
-  },
-
-  clearPassword: async () => {
-    await window.interop?.clearPassword();
-  },
-
-  checkForUpdates: async () =>
-    (await window.interop?.checkForUpdates()) ?? false,
-
-  downloadUpdate: async (
-    progress: (percentage: number) => void,
-  ): Promise<boolean> =>
-    (await window.interop?.downloadUpdate(progress)) ?? false,
-
-  installUpdate: async (): Promise<boolean | Error> =>
-    (await window.interop?.installUpdate()) ?? false,
 };
 
-export const useInterop = () => interop;
+export const useInterop = (): UseInteropReturn => interop;

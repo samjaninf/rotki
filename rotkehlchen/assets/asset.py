@@ -4,9 +4,12 @@ from dataclasses import InitVar, dataclass, field
 from functools import total_ordering
 from typing import Any, NamedTuple, Optional, Union
 
+from eth_utils import to_checksum_address
+
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.chain.evm.decoding.aave.v3.constants import DEBT_TOKEN_SYMBOL_REGEX
+from rotkehlchen.chain.evm.decoding.spark.constants import CPT_SPARK
 from rotkehlchen.constants.misc import NFT_DIRECTIVE
 from rotkehlchen.constants.resolver import ChainID, evm_address_to_identifier
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset, WrongAssetType
@@ -258,13 +261,12 @@ class AssetWithOracles(AssetWithSymbol, abc.ABC):
         May raise:
             - UnsupportedAsset if the asset is not supported by cryptocompare
         """
-        cryptocompare_str = self.symbol if self.cryptocompare is None else self.cryptocompare
         # There is an asset which should not be queried in cryptocompare
-        if cryptocompare_str is None or cryptocompare_str == '':
+        if self.cryptocompare is None or self.cryptocompare == '':
             raise UnsupportedAsset(f'{self.identifier} is not supported by cryptocompare')
 
         # Seems cryptocompare capitalizes everything. So cDAI -> CDAI
-        return cryptocompare_str.upper()  # pylint: disable=no-member
+        return self.cryptocompare.upper()  # pylint: disable=no-member
 
     def to_coingecko(self) -> str:
         """
@@ -506,11 +508,13 @@ class EvmToken(CryptoAsset):
             decimals: int | None = None,
             protocol: str | None = None,
             underlying_tokens: list[UnderlyingToken] | None = None,
+            collectible_id: str | None = None,
     ) -> 'EvmToken':
         identifier = evm_address_to_identifier(
             address=address,
             chain_id=chain_id,
             token_type=token_kind,
+            collectible_id=collectible_id,
         )
         asset = EvmToken(identifier=identifier, direct_field_initialization=True)
         object.__setattr__(asset, 'asset_type', AssetType.EVM_TOKEN)
@@ -571,7 +575,7 @@ class EvmToken(CryptoAsset):
     def is_liability(self) -> bool:
         """Returns True if the token is a liability token, False if it's an asset token"""
         return (
-            self.protocol == CPT_AAVE_V3 and
+            self.protocol in (CPT_AAVE_V3, CPT_SPARK) and
             DEBT_TOKEN_SYMBOL_REGEX.match(self.symbol) is not None
         )
 
@@ -585,7 +589,7 @@ class Nft(EvmToken):
         identifier_parts = self.identifier[len(NFT_DIRECTIVE):].split('_')
         if len(identifier_parts) == 0 or len(identifier_parts[0]) == 0:
             raise UnknownAsset(self.identifier)
-        address = identifier_parts[0]
+        address = to_checksum_address(identifier_parts[0])
         object.__setattr__(self, 'asset_type', AssetType.EVM_TOKEN)
         object.__setattr__(self, 'name', f'nft with id {self.identifier}')
         object.__setattr__(self, 'symbol', self.identifier[len(NFT_DIRECTIVE):])

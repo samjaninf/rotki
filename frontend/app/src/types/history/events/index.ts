@@ -1,6 +1,5 @@
-import { Balance, NumericString } from '@rotki/common';
+import { type BigNumber, HistoryEventEntryType, NumericString } from '@rotki/common';
 import { z } from 'zod';
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
 import { EntryMeta } from '@/types/history/meta';
 import { CollectionCommonFields } from '@/types/collection';
 import type { PaginationRequestPayload } from '@/types/common';
@@ -20,14 +19,21 @@ export interface TransactionRequestPayload {
   readonly accounts: EvmChainAddress[];
 }
 
-export interface TransactionHashAndEvmChainPayload {
-  readonly txHashes?: string[] | null;
-  readonly evmChain: string;
+export interface PullEvmTransactionPayload {
+  readonly transactions: EvmChainAndTxHash[];
+  readonly deleteCustom?: boolean;
 }
 
-export interface AddressesAndEvmChainPayload {
-  readonly addresses?: string[] | null;
-  readonly evmChain: string;
+export interface PullEvmLikeTransactionPayload {
+  readonly transactions: ChainAndTxHash[];
+  readonly deleteCustom?: boolean;
+}
+
+export type PullTransactionPayload = PullEvmTransactionPayload | PullEvmLikeTransactionPayload;
+
+export interface ChainAndTxHash {
+  readonly chain: string;
+  readonly txHash: string;
 }
 
 export interface EvmChainAndTxHash {
@@ -53,11 +59,6 @@ export const EvmChainLikeAddress = z.object({
 
 export type EvmChainLikeAddress = z.infer<typeof EvmChainLikeAddress>;
 
-export interface TransactionEventRequestPayload {
-  readonly data: TransactionHashAndEvmChainPayload[];
-  readonly ignoreCache: boolean;
-}
-
 export const HistoryEventDetail = z
   .object({
     liquityStaking: LiquityStakingEventExtraData,
@@ -67,26 +68,26 @@ export const HistoryEventDetail = z
 export type HistoryEventDetail = z.infer<typeof HistoryEventDetail>;
 
 export const CommonHistoryEvent = z.object({
-  identifier: z.number(),
-  eventIdentifier: z.string(),
-  sequenceIndex: z.number().or(z.string()),
-  timestamp: z.number(),
-  location: z.string(),
+  amount: NumericString,
   asset: z.string(),
-  balance: Balance,
-  eventType: z.string(),
+  eventIdentifier: z.string(),
   eventSubtype: z.string(),
+  eventType: z.string(),
+  identifier: z.number(),
+  location: z.string(),
   locationLabel: z.string().nullable(),
   notes: z.string().nullable().optional(),
+  sequenceIndex: z.number().or(z.string()),
+  timestamp: z.number(),
 });
 
 export const EvmHistoryEvent = CommonHistoryEvent.extend({
-  entryType: z.literal(HistoryEventEntryType.EVM_EVENT),
   address: z.string().nullable(),
   counterparty: z.string().nullable(),
+  entryType: z.literal(HistoryEventEntryType.EVM_EVENT),
+  extraData: z.unknown().nullable(),
   product: z.string().nullable(),
   txHash: z.string(),
-  extraData: z.unknown().nullable(),
 });
 
 export type EvmHistoryEvent = z.infer<typeof EvmHistoryEvent>;
@@ -106,39 +107,45 @@ export const EthWithdrawalEvent = CommonHistoryEvent.extend({
 export type EthWithdrawalEvent = z.infer<typeof EthWithdrawalEvent>;
 
 export const EthBlockEvent = CommonHistoryEvent.extend({
-  entryType: z.literal(HistoryEventEntryType.ETH_BLOCK_EVENT),
   blockNumber: z.number(),
+  entryType: z.literal(HistoryEventEntryType.ETH_BLOCK_EVENT),
   validatorIndex: z.number(),
 });
 
 export type EthBlockEvent = z.infer<typeof EthBlockEvent>;
 
 export const EthDepositEvent = CommonHistoryEvent.extend({
-  entryType: z.literal(HistoryEventEntryType.ETH_DEPOSIT_EVENT),
   address: z.string().nullable(),
   counterparty: z.string().nullable(),
+  entryType: z.literal(HistoryEventEntryType.ETH_DEPOSIT_EVENT),
+  extraData: z.unknown().nullable(),
   product: z.string().nullable(),
   txHash: z.string(),
   validatorIndex: z.number(),
-  extraData: z.unknown().nullable(),
 });
 
 export type EthDepositEvent = z.infer<typeof EthDepositEvent>;
 
-export const HistoryEvent = EvmHistoryEvent.or(OnlineHistoryEvent)
+export const AssetMovementEvent = CommonHistoryEvent.extend({
+  entryType: z.literal(HistoryEventEntryType.ASSET_MOVEMENT_EVENT),
+  extraData: z.object({
+    address: z.string().nullish(),
+    reference: z.string().nullish(),
+    transactionId: z.string().nullish(),
+  }).nullable(),
+});
+
+export type AssetMovementEvent = z.infer<typeof AssetMovementEvent>;
+
+export const HistoryEvent = EvmHistoryEvent.or(AssetMovementEvent)
+  .or(OnlineHistoryEvent)
   .or(EthWithdrawalEvent)
   .or(EthBlockEvent)
   .or(EthDepositEvent);
 
-export type HistoryEvent =
-  | EvmHistoryEvent
-  | OnlineHistoryEvent
-  | EthWithdrawalEvent
-  | EthBlockEvent
-  | EthDepositEvent;
+export type HistoryEvent = EvmHistoryEvent | OnlineHistoryEvent | EthWithdrawalEvent | EthBlockEvent | EthDepositEvent | AssetMovementEvent;
 
-export interface HistoryEventRequestPayload
-  extends PaginationRequestPayload<{ timestamp: number }> {
+export interface HistoryEventRequestPayload extends PaginationRequestPayload<{ timestamp: number }> {
   readonly fromTimestamp?: string | number;
   readonly toTimestamp?: string | number;
   readonly groupByEventIds: boolean;
@@ -155,6 +162,7 @@ export interface HistoryEventRequestPayload
   readonly validatorIndices?: string | string[];
   readonly customizedEventsOnly?: boolean;
   readonly excludeIgnoredAssets?: boolean;
+  readonly identifiers?: string[];
 }
 
 export type EditEvmHistoryEventPayload = Omit<
@@ -164,26 +172,17 @@ export type EditEvmHistoryEventPayload = Omit<
   eventIdentifier: string | null;
 };
 
-export type NewEvmHistoryEventPayload = Omit<
-  EditEvmHistoryEventPayload,
-  'identifier'
->;
+export type NewEvmHistoryEventPayload = Omit<EditEvmHistoryEventPayload, 'identifier'>;
 
-export type EditOnlineHistoryEventPayload = Omit<
-  OnlineHistoryEvent,
-  'ignoredInAccounting' | 'customized'
->;
+export type EditOnlineHistoryEventPayload = Omit<OnlineHistoryEvent, 'ignoredInAccounting' | 'customized'>;
 
-export type NewOnlineHistoryEventPayload = Omit<
-  EditOnlineHistoryEventPayload,
-  'identifier'
->;
+export type NewOnlineHistoryEventPayload = Omit<EditOnlineHistoryEventPayload, 'identifier'>;
 
 export interface EditEthBlockEventPayload {
   entryType: typeof HistoryEventEntryType.ETH_BLOCK_EVENT;
   identifier: number;
   timestamp: number;
-  balance: Balance;
+  amount: BigNumber;
   validatorIndex: number;
   blockNumber: number;
   feeRecipient: string;
@@ -191,16 +190,13 @@ export interface EditEthBlockEventPayload {
   eventIdentifier: string | null;
 }
 
-export type NewEthBlockEventPayload = Omit<
-  EditEthBlockEventPayload,
-  'identifier'
->;
+export type NewEthBlockEventPayload = Omit<EditEthBlockEventPayload, 'identifier'>;
 
 export interface EditEthDepositEventPayload {
   entryType: typeof HistoryEventEntryType.ETH_DEPOSIT_EVENT;
   identifier: number;
   timestamp: number;
-  balance: Balance;
+  amount: BigNumber;
   validatorIndex: number;
   txHash: string;
   eventIdentifier: string | null;
@@ -209,40 +205,52 @@ export interface EditEthDepositEventPayload {
   extraData: object | null;
 }
 
-export type NewEthDepositEventPayload = Omit<
-  EditEthDepositEventPayload,
-  'identifier'
->;
+export type NewEthDepositEventPayload = Omit<EditEthDepositEventPayload, 'identifier'>;
 
 export interface EditEthWithdrawalEventPayload {
   entryType: typeof HistoryEventEntryType.ETH_WITHDRAWAL_EVENT;
   identifier: number;
   timestamp: number;
-  balance: Balance;
+  amount: BigNumber;
   validatorIndex: number;
   withdrawalAddress: string;
   isExit: boolean;
   eventIdentifier: string | null;
 }
 
-export type NewEthWithdrawalEventPayload = Omit<
-  EditEthWithdrawalEventPayload,
-  'identifier'
->;
+export type NewEthWithdrawalEventPayload = Omit<EditEthWithdrawalEventPayload, 'identifier'>;
+
+export interface EditAssetMovementEventPayload {
+  entryType: typeof HistoryEventEntryType.ASSET_MOVEMENT_EVENT;
+  identifier: number;
+  timestamp: number;
+  amount: BigNumber;
+  eventType: string;
+  location: string;
+  locationLabel: string | null;
+  eventIdentifier: string | null;
+  asset: string;
+  fee: string | null;
+  feeAsset: string | null;
+}
+
+export type NewAssetMovementEventPayload = Omit<EditAssetMovementEventPayload, 'identifier'>;
 
 export type EditHistoryEventPayload =
   | EditEvmHistoryEventPayload
   | EditOnlineHistoryEventPayload
   | EditEthBlockEventPayload
   | EditEthDepositEventPayload
-  | EditEthWithdrawalEventPayload;
+  | EditEthWithdrawalEventPayload
+  | EditAssetMovementEventPayload;
 
 export type NewHistoryEventPayload =
   | NewEvmHistoryEventPayload
   | NewOnlineHistoryEventPayload
   | NewEthBlockEventPayload
   | NewEthDepositEventPayload
-  | NewEthWithdrawalEventPayload;
+  | NewEthWithdrawalEventPayload
+  | NewAssetMovementEventPayload;
 
 export enum HistoryEventAccountingRuleStatus {
   HAS_RULE = 'has rule',
@@ -250,17 +258,16 @@ export enum HistoryEventAccountingRuleStatus {
   PROCESSED = 'processed',
 }
 
-export const HistoryEventAccountingRuleStatusEnum = z.nativeEnum(
-  HistoryEventAccountingRuleStatus,
-);
+export const HistoryEventAccountingRuleStatusEnum = z.nativeEnum(HistoryEventAccountingRuleStatus);
 
 export const HistoryEventMeta = EntryMeta.merge(
   z.object({
     customized: z.boolean().optional(),
+    defaultNotes: z.boolean().optional(),
+    eventAccountingRuleStatus: HistoryEventAccountingRuleStatusEnum,
+    groupedEventsNum: z.number().nullish(),
     hasDetails: z.boolean().optional(),
     hidden: z.boolean().optional(),
-    groupedEventsNum: z.number().nullish(),
-    eventAccountingRuleStatus: HistoryEventAccountingRuleStatusEnum,
   }),
 );
 
@@ -272,24 +279,19 @@ const HistoryEventEntryWithMeta = z
   })
   .merge(HistoryEventMeta);
 
-export type HistoryEventEntryWithMeta = z.infer<
-  typeof HistoryEventEntryWithMeta
->;
+export type HistoryEventEntryWithMeta = z.infer<typeof HistoryEventEntryWithMeta>;
 
 export const HistoryEventsCollectionResponse = CollectionCommonFields.extend({
   entries: z.array(HistoryEventEntryWithMeta),
 });
 
-export type HistoryEventsCollectionResponse = z.infer<
-  typeof HistoryEventsCollectionResponse
->;
+export type HistoryEventsCollectionResponse = z.infer<typeof HistoryEventsCollectionResponse>;
 
 export type HistoryEventEntry = HistoryEvent & HistoryEventMeta;
 
 export enum OnlineHistoryEventsQueryType {
   ETH_WITHDRAWALS = 'eth_withdrawals',
   BLOCK_PRODUCTIONS = 'block_productions',
-  EXCHANGES = 'exchanges',
 }
 
 export interface OnlineHistoryEventsRequestPayload {
@@ -302,15 +304,31 @@ export const SkippedHistoryEventsSummary = z.object({
   total: z.number(),
 });
 
-export type SkippedHistoryEventsSummary = z.infer<
-  typeof SkippedHistoryEventsSummary
->;
+export type SkippedHistoryEventsSummary = z.infer<typeof SkippedHistoryEventsSummary>;
 
 export const ProcessSkippedHistoryEventsResponse = z.object({
-  total: z.number(),
   successful: z.number(),
+  total: z.number(),
 });
 
-export type ProcessSkippedHistoryEventsResponse = z.infer<
-  typeof ProcessSkippedHistoryEventsResponse
->;
+export type ProcessSkippedHistoryEventsResponse = z.infer<typeof ProcessSkippedHistoryEventsResponse>;
+
+export interface ShowMissingRuleForm {
+  readonly type: 'missingRule';
+  readonly data: {
+    group: HistoryEventEntry;
+    event: HistoryEventEntry;
+  };
+}
+
+export interface ShowEventForm {
+  readonly type: 'event';
+  readonly data: {
+    group?: HistoryEvent;
+    event?: HistoryEvent;
+    nextSequenceId?: string;
+    eventsInGroup?: HistoryEvent[];
+  };
+}
+
+export type ShowEventHistoryForm = ShowEventForm | ShowMissingRuleForm;

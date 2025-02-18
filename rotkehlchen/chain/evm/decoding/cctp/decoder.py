@@ -21,7 +21,7 @@ from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
@@ -52,12 +52,12 @@ class CctpCommonDecoder(DecoderInterface):
         self.asset_identifier = asset_identifier
 
     def _decode_deposit(self, context: DecoderContext) -> DecodingOutput:
-        if not self.base.is_tracked(user_address := hex_or_bytes_to_address(context.tx_log.topics[3])):  # noqa: E501
+        if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[3])):
             return DEFAULT_DECODING_OUTPUT
 
-        to_chain = hex_or_bytes_to_int(context.tx_log.data[64:96])
+        to_chain = int.from_bytes(context.tx_log.data[64:96])
         deposit_amount = token_normalized_value_decimals(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data[0:32]),
+            token_amount=int.from_bytes(context.tx_log.data[0:32]),
             token_decimals=USDC_DECIMALS,
         )
         for event in context.decoded_events:
@@ -65,7 +65,7 @@ class CctpCommonDecoder(DecoderInterface):
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.asset.identifier == self.asset_identifier and
-                event.balance.amount == deposit_amount and
+                event.amount == deposit_amount and
                 event.location_label == user_address
             ):
                 try:
@@ -75,7 +75,7 @@ class CctpCommonDecoder(DecoderInterface):
                     chain_info = ''
                 event.event_type = HistoryEventType.DEPOSIT
                 event.event_subtype = HistoryEventSubType.BRIDGE
-                event.notes = f'Bridge {event.balance.amount} USDC{chain_info} via CCTP'
+                event.notes = f'Bridge {event.amount} USDC{chain_info} via CCTP'
                 event.counterparty = CPT_CCTP
                 break
         else:
@@ -84,11 +84,11 @@ class CctpCommonDecoder(DecoderInterface):
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_withdraw(self, context: DecoderContext) -> DecodingOutput:
-        if not self.base.is_tracked(user_address := hex_or_bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
+        if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1])):
             return DEFAULT_DECODING_OUTPUT
 
         deposit_amount = token_normalized_value_decimals(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data[0:32]),
+            token_amount=int.from_bytes(context.tx_log.data[0:32]),
             token_decimals=USDC_DECIMALS,
         )
         for event in context.decoded_events:
@@ -96,12 +96,12 @@ class CctpCommonDecoder(DecoderInterface):
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.asset.identifier == self.asset_identifier and
-                event.balance.amount == deposit_amount and
+                event.amount == deposit_amount and
                 event.location_label == user_address
             ):
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.BRIDGE
-                event.notes = f'Bridge {event.balance.amount} USDC via CCTP'
+                event.notes = f'Bridge {event.amount} USDC via CCTP'
                 event.counterparty = CPT_CCTP
                 break
         else:
@@ -120,10 +120,10 @@ class CctpCommonDecoder(DecoderInterface):
                 event.event_subtype == HistoryEventSubType.BRIDGE and
                 event.counterparty == CPT_CCTP
             ):
-                from_chain = hex_or_bytes_to_int(context.tx_log.data[:32])
+                from_chain = int.from_bytes(context.tx_log.data[:32])
                 try:
                     chain_info = f' from {CCTP_DOMAIN_MAPPING[from_chain].label()} to {self.evm_inquirer.chain_id.label()}'  # noqa: E501
-                    event.notes = f'Bridge {event.balance.amount} USDC{chain_info} via CCTP'
+                    event.notes = f'Bridge {event.amount} USDC{chain_info} via CCTP'
                 except KeyError:
                     log.error(f'Could not find chain ID {from_chain} for CCTP transfer to {self.evm_inquirer.chain_name}')  # noqa: E501
                 break
@@ -143,7 +143,7 @@ class CctpCommonDecoder(DecoderInterface):
 
     # -- DecoderInterface methods
 
-    @ staticmethod
+    @staticmethod
     def counterparties() -> tuple[CounterpartyDetails, ...]:
         return (CCTP_CPT_DETAILS,)
 

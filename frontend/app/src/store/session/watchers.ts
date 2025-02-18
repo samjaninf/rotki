@@ -1,48 +1,51 @@
 import { type Watcher, WatcherType } from '@/types/session';
+import { useNotificationsStore } from '@/store/notifications';
+import { useWatchersApi } from '@/composables/api/session/watchers';
+import { usePremium } from '@/composables/premium';
 
 export const useWatchersStore = defineStore('session/watchers', () => {
   const watchers = ref<Watcher[]>([]);
+  const monitorWatchers = ref<boolean>(true);
 
   const { t } = useI18n();
 
   const loanWatchers = computed(() => {
     const loanWatcherTypes = [WatcherType];
 
-    return get(watchers).filter(watcher =>
-      loanWatcherTypes.includes(watcher.type),
-    );
+    return get(watchers).filter(watcher => loanWatcherTypes.includes(watcher.type));
   });
 
-  const { premium } = storeToRefs(usePremiumStore());
+  const premium = usePremium();
   const { notify } = useNotificationsStore();
   const api = useWatchersApi();
 
   const fetchWatchers = async (): Promise<void> => {
-    if (!get(premium))
+    if (!get(premium) || !get(monitorWatchers))
       return;
 
     try {
       set(watchers, await api.watchers());
+      set(monitorWatchers, get(watchers).length > 0);
     }
     catch (error: any) {
       notify({
-        title: t('actions.session.fetch_watchers.error.title').toString(),
+        display: true,
         message: t('actions.session.fetch_watchers.error.message', {
           message: error.message,
-        }).toString(),
-        display: true,
+        }),
+        title: t('actions.session.fetch_watchers.error.title'),
       });
     }
   };
 
-  const addWatchers = async (
-    newWatchers: Omit<Watcher, 'identifier'>[],
-  ): Promise<void> => {
+  const addWatchers = async (newWatchers: Omit<Watcher, 'identifier'>[]): Promise<void> => {
     set(watchers, await api.addWatcher(newWatchers));
+    set(monitorWatchers, get(watchers).length > 0);
   };
 
   const deleteWatchers = async (identifiers: string[]): Promise<void> => {
     set(watchers, await api.deleteWatcher(identifiers));
+    set(monitorWatchers, get(watchers).length > 0);
   };
 
   const editWatchers = async (editedWatchers: Watcher[]): Promise<void> => {
@@ -50,12 +53,12 @@ export const useWatchersStore = defineStore('session/watchers', () => {
   };
 
   return {
-    watchers,
-    loanWatchers,
-    fetchWatchers,
     addWatchers,
-    editWatchers,
     deleteWatchers,
+    editWatchers,
+    fetchWatchers,
+    loanWatchers,
+    watchers,
   };
 });
 

@@ -4,16 +4,14 @@ const { t } = useI18n();
 
 <template>
   <div>
-    <RuiMenu
-      :popper="{ placement: 'right' }"
-    >
-      <template #activator="{ on }">
+    <RuiMenu :popper="{ placement: 'right' }">
+      <template #activator="{ attrs }">
         <RuiButton
           variant="text"
           icon
-          v-on="on"
+          v-bind="attrs"
         >
-          <RuiIcon name="question-line" />
+          <RuiIcon name="lu-circle-help" />
         </RuiButton>
       </template>
       <div class="p-4 max-w-[20rem] flex flex-col gap-2">

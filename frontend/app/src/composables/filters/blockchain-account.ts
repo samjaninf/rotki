@@ -1,5 +1,10 @@
 import { z } from 'zod';
+import { CommaSeparatedStringSchema, RouterExpandedIdsSchema } from '@/types/route';
+import { arrayify } from '@/utils/array';
+import { useAccountCategoryHelper } from '@/composables/accounts/use-account-category-helper';
+import type { MaybeRef } from '@vueuse/core';
 import type { MatchedKeywordWithBehaviour, SearchMatcher } from '@/types/filtering';
+import type { FilterSchema } from '@/composables/use-pagination-filter/types';
 
 enum BlockchainAccountFilterKeys {
   ADDRESS = 'address',
@@ -13,67 +18,75 @@ enum BlockchainAccountFilterValueKeys {
   LABEL = 'label',
 }
 
-export type Matcher = SearchMatcher<
-    BlockchainAccountFilterKeys,
-    BlockchainAccountFilterValueKeys
->;
+export type Matcher = SearchMatcher<BlockchainAccountFilterKeys, BlockchainAccountFilterValueKeys>;
 
 export type Filters = MatchedKeywordWithBehaviour<BlockchainAccountFilterValueKeys>;
 
-export function useBlockchainAccountFilter(t: ReturnType<typeof useI18n>['t']) {
+export function useBlockchainAccountFilter(t: ReturnType<typeof useI18n>['t'], category: MaybeRef<string>): FilterSchema<Filters, Matcher> {
   const filters = ref<Filters>({});
 
-  const { supportedChains } = useSupportedChains();
+  const { chainIds, isEvm } = useAccountCategoryHelper(category);
 
-  const chainIds = useArrayMap(supportedChains, chain => chain.id);
+  const filterableChains = computed(() => {
+    const evm = get(isEvm);
+    const ids = get(chainIds);
+    if (!evm)
+      return ids;
+    return [
+      ...ids,
+      'looopring',
+    ];
+  });
 
   const matchers = computed<Matcher[]>(() => [
     {
+      description: t('common.address'),
       key: BlockchainAccountFilterKeys.ADDRESS,
       keyValue: BlockchainAccountFilterValueKeys.ADDRESS,
-      description: t('common.address'),
       string: true,
-      suggestions: () => [],
-      validate: () => true,
+      suggestions: (): string[] => [],
+      validate: (): true => true,
     },
     {
+      description: t('common.chain'),
       key: BlockchainAccountFilterKeys.CHAIN,
       keyValue: BlockchainAccountFilterValueKeys.CHAIN,
-      description: t('common.chain'),
+      multiple: true,
       string: true,
-      suggestions: () => get(chainIds),
-      validate: (id: string) => get(chainIds).some(chainId => chainId.toLocaleLowerCase() === id.toLocaleLowerCase()),
+      suggestions: (): string[] => get(filterableChains),
+      validate: (id: string): boolean => get(filterableChains).some(chainId => chainId.toLocaleLowerCase() === id.toLocaleLowerCase()),
     },
     {
+      description: t('common.label'),
       key: BlockchainAccountFilterKeys.LABEL,
       keyValue: BlockchainAccountFilterValueKeys.LABEL,
-      description: t('common.label'),
       string: true,
-      suggestions: () => [],
-      validate: () => true,
+      suggestions: (): string[] => [],
+      validate: (): boolean => true,
     },
   ]);
 
-  const updateFilter = (newFilters: Filters) => {
-    set(filters, {
-      ...newFilters,
-    });
-  };
+  const OptionalMultipleString = z
+    .array(z.string())
+    .or(z.string())
+    .transform(arrayify)
+    .optional();
 
   const RouteFilterSchema = z.object({
     [BlockchainAccountFilterValueKeys.ADDRESS]: z.string().optional(),
-    [BlockchainAccountFilterValueKeys.CHAIN]: z.string().optional(),
+    [BlockchainAccountFilterValueKeys.CHAIN]: OptionalMultipleString,
     [BlockchainAccountFilterValueKeys.LABEL]: z.string().optional(),
   });
 
   return {
-    matchers,
     filters,
+    matchers,
     RouteFilterSchema,
-    updateFilter,
   };
 }
 
 export const AccountExternalFilterSchema = z.object({
-  tags: z.string().optional().transform(val => val ? val.split(',') : []),
-});
+  q: z.string().optional(),
+  tab: z.coerce.number().optional(),
+  tags: CommaSeparatedStringSchema,
+}).merge(RouterExpandedIdsSchema);

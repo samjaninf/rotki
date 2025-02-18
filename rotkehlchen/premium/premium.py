@@ -16,7 +16,6 @@ from urllib.parse import urlencode
 
 import machineid
 import requests
-from urllib3.util.retry import Retry
 
 from rotkehlchen.constants import ROTKEHLCHEN_SERVER_TIMEOUT
 from rotkehlchen.constants.timing import ROTKEHLCHEN_SERVER_BACKUP_TIMEOUT
@@ -29,6 +28,7 @@ from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import Timestamp
 from rotkehlchen.utils.misc import is_production, set_user_agent
+from rotkehlchen.utils.network import create_session
 from rotkehlchen.utils.serialization import jsonloads_dict
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ def _process_dict_response(
         status_codes: Sequence[HTTPStatus] = DEFAULT_OK_CODES,
         user_msg: str = DEFAULT_ERROR_MSG,
 ) -> dict:
-    """Processess a dict response returned from the Rotkehlchen server and returns
+    """Processes a dict response returned from the Rotkehlchen server and returns
     the result for success or raises RemoteError if an error happened"""
     check_response_status_code(
         response=response,
@@ -166,22 +166,7 @@ class Premium:
 
     def __init__(self, credentials: PremiumCredentials, username: str):
         self.status = SubscriptionStatus.UNKNOWN
-        self.session = requests.session()
-        # Make sure to have 3 retries on read/connect/other errors for all requests
-        # The reason for this is that we have noticed that in unstable/slow connections
-        # rotki.com server will close/cause the connection to result to a read timeout
-        # At the moment this only happens for the backup upload endpoint. More info:
-        # https://github.com/rotki/rotki/pull/6423
-        adapter = requests.adapters.HTTPAdapter()
-        # Have to set retries like this, since this granularity is not given by HTTPAdapter ctor
-        adapter.max_retries = Retry(
-            total=3,  # have to set each one individually as the code checks them all
-            read=3,
-            connect=3,
-            other=3,
-            allowed_methods=False,  # retry on all method verbs
-        )
-        self.session.mount('https://', adapter)
+        self.session = create_session()
         self.apiversion = '1'
         rotki_base_url = 'rotki.com'
         if is_production() is False and os.environ.get('ROTKI_API_ENVIRONMENT') == 'staging':
@@ -238,8 +223,7 @@ class Premium:
             log.error(msg)
             raise RemoteError(msg) from e
 
-        data = _process_dict_response(response)
-        return data
+        return _process_dict_response(response)
 
     def authenticate_device(self) -> None:
         """
@@ -259,7 +243,7 @@ class Premium:
         device_id = machineid.hashed_id(self.username)
 
         for device in device_data['devices']:
-            device = cast(dict[str, str], device)
+            device = cast('dict[str, str]', device)
             if (remote_id := device.get('device_identifier')) == device_id:
                 break
             if remote_id is None:
@@ -298,10 +282,9 @@ class Premium:
         except requests.exceptions.RequestException as e:
             raise RemoteError(f'Failed to register device due to: {e}') from e
 
-        response_body = _process_dict_response(response)
-        return response_body
+        return _process_dict_response(response)
 
-    def is_active(self, catch_connection_errors: bool = True) -> bool:
+    def is_active(self) -> bool:
         if self.status == SubscriptionStatus.ACTIVE:
             return True
 
@@ -309,8 +292,6 @@ class Premium:
             self.query_last_data_metadata()
         except RemoteError:
             self.status = SubscriptionStatus.INACTIVE
-            if catch_connection_errors is False:
-                raise
             return False
         except PremiumAuthenticationError:
             self.status = SubscriptionStatus.INACTIVE
@@ -468,7 +449,7 @@ class Premium:
         there is an error returned by the server
         - Raises PremiumAuthenticationError if the given key is rejected by the Rotkehlchen server
         """
-        data = self.sign('statistics_rendererv2', version=9)
+        data = self.sign('statistics_rendererv2', version=12)
 
         try:
             response = self.session.get(
@@ -527,8 +508,10 @@ def premium_create_and_verify(credentials: PremiumCredentials, username: str) ->
     - RemoteError if there are problems reaching the server
     """
     premium = Premium(credentials=credentials, username=username)
+    premium.query_last_data_metadata()
+    return premium
 
-    if premium.is_active(catch_connection_errors=True):
-        return premium
 
-    raise PremiumAuthenticationError('rotki API key was rejected by server')
+def has_premium_check(premium: Premium | None) -> bool:
+    """Helper function to check if we have premium"""
+    return premium is not None and premium.is_active()

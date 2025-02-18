@@ -1,7 +1,9 @@
+from typing import TYPE_CHECKING
+
 import pytest
 
 from rotkehlchen.accounting.structures.balance import Balance
-from rotkehlchen.assets.asset import EvmToken
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.zksync_lite.constants import ZKL_IDENTIFIER
 from rotkehlchen.chain.zksync_lite.structures import (
@@ -21,7 +23,7 @@ from rotkehlchen.constants.assets import (
     A_USDT,
     A_WBTC,
 )
-from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.db.filtering import EvmEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
@@ -29,17 +31,16 @@ from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.constants import A_PAN, CURRENT_PRICE_MOCK
 from rotkehlchen.types import Fee, Location, Timestamp, deserialize_evm_tx_hash
-from rotkehlchen.utils.misc import ts_now, ts_sec_to_ms
+from rotkehlchen.utils.misc import ts_sec_to_ms
+
+if TYPE_CHECKING:
+    from rotkehlchen.chain.zksync_lite.manager import ZksyncLiteManager
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.freeze_time('2024-03-24 00:00:00 GMT')
 def test_fetch_transactions(zksync_lite_manager):
-    zksync_lite_manager.fetch_transactions(
-        address=string_to_evm_address('0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12'),
-        start_ts=Timestamp(0),
-        end_ts=ts_now(),
-    )
+    zksync_lite_manager.fetch_transactions(string_to_evm_address('0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12'))
     transactions = []
     with zksync_lite_manager.database.conn.read_ctx() as cursor:
         cursor.execute(
@@ -143,10 +144,10 @@ def test_fetch_transactions(zksync_lite_manager):
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
 def test_balances(zksync_lite_manager, inquirer):  # pylint: disable=unused-argument
-    lefty, rotki = '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12', '0x9531C059098e3d194fF87FebB587aB07B30B1306'  # noqa: E501
-    balances = zksync_lite_manager.get_balances(addresses=[lefty, rotki])
-    lefty_eth_amount = FVal('6.6308508258')
-    eth, mana, uni, wbtc, link, dai, frax, usdc, storj, lrc, snx, pan, usdt = FVal('0.20670353608092'), FVal('16.38'), FVal('2.1409'), FVal('0.00012076'), FVal('0.47523'), FVal('46.16024376'), FVal('2.4306'), FVal('98.233404'), FVal('4.1524'), FVal('0.95'), FVal('0.95'), FVal('9202.65'), FVal('4.1')  # noqa: E501
+    lefty, rotki, empty = '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12', '0x9531C059098e3d194fF87FebB587aB07B30B1306', '0xB638e104563515a917025964ee874a484A489147'  # noqa: E501
+    balances = zksync_lite_manager.get_balances(addresses=[lefty, rotki, empty])
+    lefty_eth_amount = FVal('0.0004100008')
+    eth, mana, uni, wbtc, link, dai, frax, usdc, storj, lrc, snx, pan, usdt = FVal('0.00002036000092'), FVal('16.38'), FVal('2.1409'), FVal('0.00012076'), FVal('0.47523'), FVal('53.83503876'), FVal('2.4306'), FVal('98.233404'), FVal('2.2064'), FVal('0.95'), FVal('0.95'), FVal('9202.65'), FVal('4.1')  # noqa: E501
     assert balances == {
         lefty: {
             A_ETH: Balance(lefty_eth_amount, lefty_eth_amount * CURRENT_PRICE_MOCK),
@@ -166,6 +167,7 @@ def test_balances(zksync_lite_manager, inquirer):  # pylint: disable=unused-argu
             A_PAN: Balance(pan, pan * CURRENT_PRICE_MOCK),
             A_USDT: Balance(usdt, usdt * CURRENT_PRICE_MOCK),
         },
+        empty: {},
     }
 
 
@@ -176,11 +178,7 @@ def test_decode_fullexit(zksync_lite_manager, inquirer):  # pylint: disable=unus
     tx_hash = deserialize_evm_tx_hash('0xd61d5f242022a43b5a11c84b350cdf8b2923221bf4a89ef091d51a1494d36007')  # noqa: E501
     address = string_to_evm_address('0xd6dfD811E06267b25472753c4e57C0B28652bFB8')
     timestamp = Timestamp(1592248320)
-    zksync_lite_manager.fetch_transactions(  # timerange is not really respected
-        address=address,
-        start_ts=Timestamp(1592248200),  # 15/06/2020 - 19:10
-        end_ts=Timestamp(1592248800),  # 15/06/2020 - 19:20
-    )
+    zksync_lite_manager.fetch_transactions(address)
     transactions = zksync_lite_manager.get_db_transactions(
         queryfilter=' WHERE tx_hash=?', bindings=(tx_hash,),
     )
@@ -214,7 +212,7 @@ def test_decode_fullexit(zksync_lite_manager, inquirer):  # pylint: disable=unus
         event_type=HistoryEventType.INFORMATIONAL,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_ETH,
-        balance=Balance(),
+        amount=ZERO,
         location_label=address,
         notes='Full exit to Ethereum',
         address=address,
@@ -228,11 +226,7 @@ def test_decode_forcedexit(zksync_lite_manager, inquirer):  # pylint: disable=un
     tx_hash = deserialize_evm_tx_hash('0xfa3d59c21b709f4ffd9b0e6c7e2dfe4579d7dd5e85325575d381ad88e50a64f1')  # noqa: E501
     address = string_to_evm_address('0x4676b83307A2A4A1556cdfC4d0c21097B584f3cF')
     timestamp = Timestamp(1712296398)
-    zksync_lite_manager.fetch_transactions(  # timerange is not really respected
-        address=address,
-        start_ts=0,
-        end_ts=ts_now(),
-    )
+    zksync_lite_manager.fetch_transactions(address)
     transactions = zksync_lite_manager.get_db_transactions(
         queryfilter=' WHERE tx_hash=?', bindings=(tx_hash,),
     )
@@ -266,7 +260,7 @@ def test_decode_forcedexit(zksync_lite_manager, inquirer):  # pylint: disable=un
         event_type=HistoryEventType.INFORMATIONAL,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_USDT,
-        balance=Balance(),
+        amount=ZERO,
         location_label=address,
         notes='Forced exit to Ethereum',
         address=address,
@@ -280,11 +274,7 @@ def test_decode_swap(zksync_lite_manager, inquirer):  # pylint: disable=unused-a
     tx_hash = deserialize_evm_tx_hash('0x62819dad5d0d99dc5de633ecb95629c1073bcb80a8af15464ca4b0bc95b394b9')  # noqa: E501
     address = string_to_evm_address('0x721AF5c931BAA2415428064e5F71A251F30152B1')
     timestamp = Timestamp(1710752106)
-    zksync_lite_manager.fetch_transactions(  # timerange is not really respected
-        address=address,
-        start_ts=0,
-        end_ts=ts_now(),
-    )
+    zksync_lite_manager.fetch_transactions(address)
     transactions = zksync_lite_manager.get_db_transactions(
         queryfilter=' WHERE tx_hash=?', bindings=(tx_hash,),
     )
@@ -324,7 +314,7 @@ def test_decode_swap(zksync_lite_manager, inquirer):  # pylint: disable=unused-a
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_ETH,
-        balance=Balance(FVal('0.01042855223')),
+        amount=FVal('0.01042855223'),
         location_label=address,
         notes='Swap 0.01042855223 ETH via ZKSync Lite',
         address=address,
@@ -338,7 +328,7 @@ def test_decode_swap(zksync_lite_manager, inquirer):  # pylint: disable=unused-a
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_USDT,
-        balance=Balance(FVal('37.082973')),
+        amount=FVal('37.082973'),
         location_label=address,
         notes='Receive 37.082973 USDT as the result of a swap via ZKSync Lite',
         address=address,
@@ -352,8 +342,68 @@ def test_decode_swap(zksync_lite_manager, inquirer):  # pylint: disable=unused-a
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.FEE,
         asset=A_DAI,
-        balance=Balance(FVal('0.1659')),
+        amount=FVal('0.1659'),
         location_label=address,
         notes='Swap fee of 0.1659 DAI',
         address=address,
     )]
+
+
+def test_get_db_transactions(zksync_lite_manager: 'ZksyncLiteManager'):
+    """Test that all zksync lite transactions are loaded from the database
+    when a swap transaction is present.
+
+    Regression test for https://github.com/rotki/rotki/issues/8777
+    """
+    address = string_to_evm_address('0xc10fcf82f3b870cbb2b0136a0c891f6b410497c8')
+    with zksync_lite_manager.database.conn.write_ctx() as write_cursor:
+        zksync_lite_manager._add_zksynctxs_db(
+            write_cursor=write_cursor,
+            transactions=[
+                ZKSyncLiteTransaction(
+                    tx_hash=deserialize_evm_tx_hash('0x9922304b069ed8405edcc3c7c4a8c8cc9c8f1edb6a67809f57543e8fe0fa9875'),
+                    tx_type=ZKSyncLiteTXType.TRANSFER,
+                    timestamp=Timestamp(1663539042),
+                    block_number=105088,
+                    from_address=address,
+                    to_address=string_to_evm_address('0x10E87b05fe0EDE0BbB0a52aFa96c08618A3E02F0'),
+                    asset=Asset('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F'),
+                    amount=ONE,
+                    fee=None,
+                ),
+                ZKSyncLiteTransaction(
+                    tx_hash=deserialize_evm_tx_hash('0xca2192731809a75b76680d708eb992fe3f176bef8134414ff8bd5cf0a106bfcd'),
+                    tx_type=ZKSyncLiteTXType.SWAP,
+                    timestamp=Timestamp(1647648071),
+                    block_number=58134,
+                    from_address=address,
+                    to_address=address,
+                    asset=A_ETH,
+                    amount=FVal(0.0000982),
+                    fee=None,
+                    swap_data=ZKSyncLiteSwapData(
+                        from_asset=A_ETH,
+                        from_amount=FVal(10.177475971),
+                        to_asset=Asset('eip155:1/erc20:0xdCD90C7f6324cfa40d7169ef80b12031770B4325'),
+                        to_amount=FVal(9.091938315),
+                    ),
+                ),
+                ZKSyncLiteTransaction(
+                    tx_hash=deserialize_evm_tx_hash('0x34f4c91b42657bddd4698a7c61152f2a35613c4096f48f554945c4301e08464e'),
+                    tx_type=ZKSyncLiteTXType.TRANSFER,
+                    timestamp=Timestamp(1673340336),
+                    block_number=147251,
+                    from_address=address,
+                    to_address=address,
+                    asset=Asset('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F'),
+                    amount=ZERO,
+                    fee=None,
+                ),
+            ],
+        )
+
+    transactions = zksync_lite_manager.get_db_transactions(
+        queryfilter=' WHERE is_decoded=?',
+        bindings=(0,),
+    )
+    assert len(transactions) == 3

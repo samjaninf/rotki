@@ -1,37 +1,40 @@
 import csv
-import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.converters import asset_from_uphold
 from rotkehlchen.constants import ZERO
-from rotkehlchen.data_import.utils import BaseExchangeImporter, hash_csv_row
+from rotkehlchen.data_import.utils import BaseExchangeImporter, SkippedCSVEntry, hash_csv_row
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import AssetMovement, Trade
+from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount,
     deserialize_fee,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import AssetAmount, AssetMovementCategory, Fee, Location, Price, TradeType
+from rotkehlchen.types import AssetAmount, Fee, Location, Price, TradeType
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
-logger = logging.getLogger(__name__)
-log = RotkehlchenLogsAdapter(logger)
+if TYPE_CHECKING:
+    from rotkehlchen.db.dbhandler import DBHandler
 
 
 UPHOLD_PREFIX = 'UPH_'
 
 
 class UpholdTransactionsImporter(BaseExchangeImporter):
+    """Uphold CSV importer"""
+
+    def __init__(self, db: 'DBHandler') -> None:
+        super().__init__(db=db, name='Uphold')
+
     def _consume_uphold_transaction(
             self,
             write_cursor: DBCursor,
@@ -76,8 +79,7 @@ Activity from uphold with uphold transaction id:
                 elif transaction_type == 'out':
                     event_type = HistoryEventType.SPEND
                 else:
-                    log.debug(f'Ignoring uncaught transaction type of {transaction_type}.')
-                    return
+                    raise SkippedCSVEntry(f'Uncaught transaction type: {transaction_type}.')
                 event = HistoryEvent(
                     event_identifier=f'{UPHOLD_PREFIX}{hash_csv_row(csv_row)}',
                     sequence_index=0,
@@ -85,7 +87,7 @@ Activity from uphold with uphold transaction id:
                     location=Location.UPHOLD,
                     event_type=event_type,
                     event_subtype=HistoryEventSubType.NONE,
-                    balance=Balance(amount=destination_amount),
+                    amount=destination_amount,
                     asset=destination_asset,
                     notes=notes,
                 )
@@ -110,22 +112,27 @@ Activity from uphold with uphold transaction id:
                     )
                     self.add_trade(write_cursor, trade)
                 else:
-                    log.debug(f'Ignoring trade with Destination Amount: {destination_amount}.')
+                    raise SkippedCSVEntry(f'Trade destination amount is {destination_amount}.')
         elif origin == 'uphold' and transaction_type == 'out':
             if origin_asset == destination_asset:  # Withdrawals
-                asset_movement = AssetMovement(
+                events = [AssetMovement(
                     location=Location.UPHOLD,
-                    category=AssetMovementCategory.WITHDRAWAL,
-                    address=None,
-                    transaction_id=None,
-                    timestamp=timestamp,
+                    event_type=HistoryEventType.WITHDRAWAL,
+                    timestamp=ts_sec_to_ms(timestamp),
                     asset=origin_asset,
                     amount=origin_amount,
-                    fee=Fee(fee),
-                    fee_asset=fee_asset,
-                    link='',
-                )
-                self.add_asset_movement(write_cursor, asset_movement)
+                )]
+                if fee != ZERO:
+                    events.append(AssetMovement(
+                        event_identifier=events[0].event_identifier,
+                        location=Location.UPHOLD,
+                        event_type=HistoryEventType.WITHDRAWAL,
+                        timestamp=ts_sec_to_ms(timestamp),
+                        asset=fee_asset,
+                        amount=fee,
+                        is_fee=True,
+                    ))
+                self.add_history_events(write_cursor, events)
             elif origin_amount > 0:  # Trades (sell)
                 trade = Trade(
                     timestamp=timestamp,
@@ -142,23 +149,28 @@ Activity from uphold with uphold transaction id:
                 )
                 self.add_trade(write_cursor, trade)
             else:
-                log.debug(f'Ignoring trade with Origin Amount: {origin_amount}.')
+                raise SkippedCSVEntry(f'Trade origin amount is {origin_amount}.')
 
         elif destination == 'uphold' and transaction_type == 'in':
             if origin_asset == destination_asset:  # Deposits
-                asset_movement = AssetMovement(
+                events = [AssetMovement(
                     location=Location.UPHOLD,
-                    category=AssetMovementCategory.DEPOSIT,
-                    address=None,
-                    transaction_id=None,
-                    timestamp=timestamp,
+                    event_type=HistoryEventType.DEPOSIT,
+                    timestamp=ts_sec_to_ms(timestamp),
                     asset=origin_asset,
                     amount=origin_amount,
-                    fee=Fee(fee),
-                    fee_asset=fee_asset,
-                    link='',
-                )
-                self.add_asset_movement(write_cursor, asset_movement)
+                )]
+                if fee != ZERO:
+                    events.append(AssetMovement(
+                        event_identifier=events[0].event_identifier,
+                        location=Location.UPHOLD,
+                        event_type=HistoryEventType.DEPOSIT,
+                        timestamp=ts_sec_to_ms(timestamp),
+                        asset=fee_asset,
+                        amount=fee,
+                        is_fee=True,
+                    ))
+                self.add_history_events(write_cursor, events)
             elif destination_amount > 0:  # Trades (buy)
                 trade = Trade(
                     timestamp=timestamp,
@@ -175,28 +187,38 @@ Activity from uphold with uphold transaction id:
                 )
                 self.add_trade(write_cursor, trade)
             else:
-                log.debug(f'Ignoring trade with Destination Amount: {destination_amount}.')
+                raise SkippedCSVEntry(f'Trade destination amount is {destination_amount}.')
 
     def _import_csv(self, write_cursor: DBCursor, filepath: Path, **kwargs: Any) -> None:
         """
         Information for the values that the columns can have has been obtained from sample CSVs
         """
         with open(filepath, encoding='utf-8-sig') as csvfile:
-            data = csv.DictReader(csvfile)
-            for row in data:
+            for index, row in enumerate(csv.DictReader(csvfile), start=1):
                 try:
+                    self.total_entries += 1
                     self._consume_uphold_transaction(write_cursor, row, **kwargs)
+                    self.imported_entries += 1
                 except UnknownAsset as e:
-                    self.db.msg_aggregator.add_warning(
-                        f'During uphold CSV import found action with unknown '
-                        f'asset {e.identifier}. Ignoring entry',
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=f'Unknown asset {e.identifier}.',
+                        is_error=True,
                     )
-                    continue
                 except DeserializationError as e:
-                    self.db.msg_aggregator.add_warning(
-                        f'Deserialization error during uphold CSV import. '
-                        f'{e!s}. Ignoring entry',
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=f'Deserialization error: {e!s}.',
+                        is_error=True,
                     )
-                    continue
+                except SkippedCSVEntry as e:
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=str(e),
+                        is_error=False,
+                    )
                 except KeyError as e:
                     raise InputError(f'Could not find key {e!s} in csv row {row!s}') from e

@@ -5,9 +5,8 @@ from typing import Any
 
 from eth_utils.address import to_checksum_address
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.accounting.types import EventAccountingRuleStatus
-from rotkehlchen.assets.asset import CryptoAsset, EvmToken
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.substrate.types import SubstrateAddress
 from rotkehlchen.constants import ONE, ZERO
@@ -42,7 +41,7 @@ DEFAULT_START_TS = Timestamp(1451606400)
 ZERO_TIMESTAMP_MS = TimestampMS(0)
 ADDRESS_ETH = string_to_evm_address('0x9D904063e7e120302a13C6820561940538a2Ad57')
 ADDRESS_MULTICHAIN = string_to_evm_address('0x368B9ad9B6AAaeFCE33b8c21781cfF375e09be67')
-ADRESS_OP = string_to_evm_address('0x3D61AEBB1238062a21BE5CC79df308f030BF0c1B')
+ADDRESS_OP = string_to_evm_address('0x3D61AEBB1238062a21BE5CC79df308f030BF0c1B')
 
 
 def make_random_bytes(size: int) -> bytes:
@@ -131,7 +130,7 @@ def make_ethereum_event(
         index: int,
         tx_hash: bytes | None = None,
         location_label: str | None = None,
-        asset: CryptoAsset = CUSTOM_USDT,
+        asset: Asset = CUSTOM_USDT,
         counterparty: str | None = None,
         event_type: HistoryEventType = HistoryEventType.INFORMATIONAL,
         event_subtype: HistoryEventSubType = HistoryEventSubType.NONE,
@@ -151,7 +150,7 @@ def make_ethereum_event(
         event_type=event_type,
         event_subtype=event_subtype,
         asset=asset,
-        balance=Balance(amount=ONE, usd_value=ONE),
+        amount=ONE,
         counterparty=counterparty,
         address=address,
         product=product,
@@ -190,7 +189,7 @@ def make_addressbook_entries() -> list[AddressbookEntry]:
             blockchain=SupportedBlockchain.ETHEREUM,
         ),
         AddressbookEntry(
-            address=ADRESS_OP,
+            address=ADDRESS_OP,
             name='Secret agent Rose',
             blockchain=SupportedBlockchain.OPTIMISM,
         ),
@@ -268,8 +267,8 @@ def make_random_trades(num_trades: int, base_asset=A_ETH) -> list[Trade]:
     return trades
 
 
-UNIT_BTC_ADDRESS1 = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2'
-UNIT_BTC_ADDRESS2 = '1CounterpartyXXXXXXXXXXXXXXXUWLpVr'
-UNIT_BTC_ADDRESS3 = '18ddjB7HWTVxzvTbLp1nWvaBxU3U2oTZF2'
+UNIT_BTC_ADDRESS1 = BTCAddress('1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2')
+UNIT_BTC_ADDRESS2 = BTCAddress('1CounterpartyXXXXXXXXXXXXXXXUWLpVr')
+UNIT_BTC_ADDRESS3 = BTCAddress('18ddjB7HWTVxzvTbLp1nWvaBxU3U2oTZF2')
 
 ZERO_ETH_ADDRESS = string_to_evm_address('0x' + '0' * 40)

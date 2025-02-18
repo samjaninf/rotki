@@ -1,13 +1,27 @@
-import { groupBy } from 'lodash-es';
-import type {
-  AssetBalance,
-  AssetBalanceWithPrice,
-  Balance,
-  BigNumber,
-} from '@rotki/common';
+import { groupBy } from 'es-toolkit';
+import { sortDesc, zeroBalance } from '@/utils/bignumbers';
+import { balanceSum } from '@/utils/calculation';
+import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import type { AssetBalance, AssetBalanceWithPrice, Balance, BigNumber } from '@rotki/common';
 import type { AssetBalances } from '@/types/balances';
+import type { ComputedRef } from 'vue';
 
-export function useBalanceSorting() {
+interface UseBalanceSortingReturn {
+  toSortedAssetBalanceArray: (
+    ownedAssets: AssetBalances,
+    isIgnored: (asset: string) => boolean,
+    groupMultiChain?: boolean
+  ) => AssetBalance[];
+  toSortedAssetBalanceWithPrice: (
+    ownedAssets: AssetBalances,
+    isIgnored: (asset: string) => boolean,
+    getPrice: (asset: string) => ComputedRef<BigNumber | null | undefined>,
+    groupMultiChain?: boolean
+  ) => AssetBalanceWithPrice[];
+}
+
+export function useBalanceSorting(): UseBalanceSortingReturn {
   const { assetInfo } = useAssetInfoRetrieval();
   const { fetchedAssetCollections } = storeToRefs(useAssetCacheStore());
 
@@ -39,20 +53,18 @@ export function useBalanceSorting() {
       const grouped = groupedBalances[key];
       const isAssetCollection = key.startsWith('collection-');
       const collectionKey = key.split('collection-')[1];
-      const assetCollectionInfo = !isAssetCollection
-        ? false
-        : get(fetchedAssetCollections)?.[collectionKey];
+      const assetCollectionInfo = !isAssetCollection ? false : get(fetchedAssetCollections)?.[collectionKey];
 
       if (assetCollectionInfo && grouped.length > 1) {
         const sumBalance = grouped.reduce(
-          (accumulator, currentBalance) =>
-            balanceSum(accumulator, currentBalance),
+          (accumulator, currentBalance) => balanceSum(accumulator, currentBalance),
           zeroBalance(),
         );
 
         const parent: T = {
           ...grouped[0],
           ...sumBalance,
+          asset: assetCollectionInfo.mainAsset,
           breakdown: grouped,
         };
 
@@ -73,10 +85,10 @@ export function useBalanceSorting() {
     groupMultiChain = true,
   ): AssetBalanceWithPrice[] =>
     toSortedAndGroupedArray(ownedAssets, isIgnored, groupMultiChain, asset => ({
-      asset,
       amount: ownedAssets[asset].amount,
-      usdValue: ownedAssets[asset].usdValue,
+      asset,
       usdPrice: get(getPrice(asset)) ?? NoPrice,
+      usdValue: ownedAssets[asset].usdValue,
     }));
 
   const toSortedAssetBalanceArray = (
@@ -85,8 +97,8 @@ export function useBalanceSorting() {
     groupMultiChain = false,
   ): AssetBalance[] =>
     toSortedAndGroupedArray(ownedAssets, isIgnored, groupMultiChain, asset => ({
-      asset,
       amount: ownedAssets[asset].amount,
+      asset,
       usdValue: ownedAssets[asset].usdValue,
     }));
 

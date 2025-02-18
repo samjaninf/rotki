@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { helpers, required } from '@vuelidate/validators';
+import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
+import { useRefPropVModel } from '@/utils/model';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import LocationSelector from '@/components/helper/LocationSelector.vue';
+import { useFormStateWatcher } from '@/composables/form';
 import type { LocationDataSnapshotPayload } from '@/types/snapshots';
 
-const props = withDefaults(
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+const model = defineModel<LocationDataSnapshotPayload>({ required: true });
+
+withDefaults(
   defineProps<{
-    form: LocationDataSnapshotPayload;
     excludedLocations?: string[];
   }>(),
   {
@@ -13,12 +21,8 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{
-  (e: 'update:form', payload: LocationDataSnapshotPayload): void;
-}>();
-
-const location = usePropVModel(props, 'form', 'location', emit);
-const value = usePropVModel(props, 'form', 'usdValue', emit);
+const location = useRefPropVModel(model, 'location');
+const value = useRefPropVModel(model, 'usdValue');
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
@@ -26,29 +30,28 @@ const { t } = useI18n();
 
 const rules = {
   location: {
-    required: helpers.withMessage(
-      t('dashboard.snapshot.edit.dialog.location_data.rules.location'),
-      required,
-    ),
+    required: helpers.withMessage(t('dashboard.snapshot.edit.dialog.location_data.rules.location'), required),
   },
   value: {
-    required: helpers.withMessage(
-      t('dashboard.snapshot.edit.dialog.location_data.rules.value'),
-      required,
-    ),
+    required: helpers.withMessage(t('dashboard.snapshot.edit.dialog.location_data.rules.value'), required),
   },
 };
 
-const { setValidation } = useEditLocationsSnapshotForm();
+const states = {
+  location,
+  value,
+};
 
-const v$ = setValidation(
+const v$ = useVuelidate(
   rules,
-  {
-    location,
-    value,
-  },
+  states,
   { $autoDirty: true },
 );
+useFormStateWatcher(states, stateUpdated);
+
+defineExpose({
+  validate: () => get(v$).$validate(),
+});
 </script>
 
 <template>

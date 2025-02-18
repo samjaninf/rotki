@@ -1,13 +1,18 @@
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from rotkehlchen.chain.accounts import BlockchainAccountData
 from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE_NAME
+from rotkehlchen.chain.ethereum.modules.thegraph.constants import CONTRACT_STAKING
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
+from rotkehlchen.chain.evm.decoding.kyber.constants import KYBER_AGGREGATOR_SWAPPED
+from rotkehlchen.chain.evm.decoding.thegraph.constants import GRAPH_DELEGATION_TRANSFER_ABI
+from rotkehlchen.chain.evm.node_inquirer import _query_web3_get_logs
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
-from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.chain.evm.types import WeightedNode, string_to_evm_address
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.errors.misc import EventNotInABI, RemoteError
 from rotkehlchen.tests.utils.checks import assert_serialized_dicts_equal
@@ -22,6 +27,9 @@ from rotkehlchen.tests.utils.ethereum import (
 from rotkehlchen.tests.utils.factories import make_evm_address
 from rotkehlchen.types import ChainID, EvmTransaction, SupportedBlockchain, deserialize_evm_tx_hash
 from rotkehlchen.utils.hexbytes import hexstring_to_bytes
+
+if TYPE_CHECKING:
+    from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
 
 
 @pytest.mark.parametrize(*ETHEREUM_TEST_PARAMETERS)
@@ -109,7 +117,6 @@ def test_get_transaction_receipt(
                 log_index=235,
                 data=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02T\x0b\xe4\x00',
                 address='0x5bEaBAEBB3146685Dd74176f68a0721F91297D37',
-                removed=False,
                 topics=[
                     ERC20_OR_ERC721_TRANSFER,
                     b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00s(*c\xf0\xe3\xd7\xe9`EuB\x0fwsa\xec\xa3\xc8j',
@@ -118,12 +125,12 @@ def test_get_transaction_receipt(
                     log_index=236,
                     data=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb6 \xf1\x93ME\x84\xdd\xa6\x99\x9e\xdc\xad\xd3)\x81)dj\xa5\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb6 \xf1\x93ME\x84\xdd\xa6\x99\x9e\xdc\xad\xd3)\x81)dj\xa5\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[\xea\xba\xeb\xb3\x14f\x85\xddt\x17oh\xa0r\x1f\x91)}7\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02T\x0b\xe4\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\r\xe0\xb6\xb3\xa7d\x00\x00',  # noqa: E501
                     address='0x73282A63F0e3D7e9604575420F777361ecA3C86A',
-                    removed=False,
-                    topics=[b'\xd6\xd4\xf5h\x1c$l\x9fB\xc2\x03\xe2\x87\x97Z\xf1`\x1f\x8d\xf8\x03Z\x92Q\xf7\x9a\xab\\\x8f\t\xe2\xf8'],
+                    topics=[KYBER_AGGREGATOR_SWAPPED],
             ),
         ])
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize(*ETHEREUM_TEST_PARAMETERS)
 def test_get_transaction_by_hash(ethereum_inquirer, call_order, ethereum_manager_connect_at_start):
     wait_until_all_nodes_connected(
@@ -200,6 +207,7 @@ def test_call_contract(ethereum_inquirer, ethereum_manager_connect_at_start):
     assert result >= 0
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize(*ETHEREUM_TEST_PARAMETERS)
 def test_get_logs(ethereum_inquirer, call_order, ethereum_manager_connect_at_start):
     wait_until_all_nodes_connected(
@@ -248,6 +256,7 @@ def test_get_logs(ethereum_inquirer, call_order, ethereum_manager_connect_at_sta
     )
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize(*ETHEREUM_TEST_PARAMETERS)
 def test_get_log_and_receipt_etherscan_bad_tx_index(
         ethereum_inquirer,
@@ -313,6 +322,7 @@ def _test_get_blocknumber_by_time(ethereum_inquirer):
     assert result == 9193265
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_get_blocknumber_by_time_blockscout(ethereum_inquirer):
     """Queries blockscout api for known block times"""
     with patch(
@@ -322,18 +332,20 @@ def test_get_blocknumber_by_time_blockscout(ethereum_inquirer):
         _test_get_blocknumber_by_time(ethereum_inquirer)
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_get_blocknumber_by_time_etherscan(ethereum_inquirer):
     """Queries etherscan for known block times"""
     _test_get_blocknumber_by_time(ethereum_inquirer)
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize(*ETHEREUM_NODES_PARAMETERS_WITH_PRUNED_AND_NOT_ARCHIVED)
 def test_ethereum_nodes_prune_and_archive_status(
-        ethereum_inquirer,
-        ethereum_manager_connect_at_start,
+        ethereum_inquirer: 'EthereumInquirer',
+        ethereum_manager_connect_at_start: list[WeightedNode],
 ):
     """Checks that connecting to a set of ethereum nodes, the capabilities of those nodes are known and stored."""  # noqa: E501
+    ethereum_inquirer.maybe_connect_to_nodes(when_tracked_accounts=True)
     wait_until_all_nodes_connected(
         connect_at_start=ethereum_manager_connect_at_start,
         evm_inquirer=ethereum_inquirer,
@@ -436,3 +448,169 @@ def test_get_contract_deployed_block(ethereum_inquirer):
     """Test that getting deployed block of a contract address works"""
     assert ethereum_inquirer.get_contract_deployed_block('0x5a464C28D19848f44199D003BeF5ecc87d090F87') == 12251871  # noqa: E501
     assert ethereum_inquirer.get_contract_deployed_block('0x9531C059098e3d194fF87FebB587aB07B30B1306') is None  # noqa: E501
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_manager_connect_at_start', [(), (INFURA_ETH_NODE,)])
+def test_get_logs_graph_delegation(ethereum_inquirer, ethereum_manager_connect_at_start):
+    """Check that the log events queries are formulated correctly when there is a
+    filter given both for etherscan and for web3 node query.
+
+    This is a test for non-anonymous logs and regression test for the specific graph
+    delegation query where the ABI was using strings instead of booleans.
+
+    This test also checks that the results are sent and processed correctly.
+    """
+    call_order = None
+    if len(ethereum_manager_connect_at_start) != 0 and ethereum_manager_connect_at_start[0] == INFURA_ETH_NODE:  # noqa: E501
+        wait_until_all_nodes_connected(
+            connect_at_start=ethereum_manager_connect_at_start,
+            evm_inquirer=ethereum_inquirer,
+        )
+        # by default logs always query etherscan first due to indexing speed.
+        # Here we want to check normal web3 query, so force it
+        call_order = [INFURA_ETH_NODE]
+
+    user_address, v_from_block, v_to_block, topic0 = '0x9bA6D627fB731F447a68326E61280494C9A5ad02', 20879644, 20881207, '0x231e5cfeff7759a468241d939ab04a60d603b17e359057abbb8f52afc3e4986b'  # noqa: E501
+
+    original_etherscan_query = ethereum_inquirer.etherscan._query
+
+    def mock_etherscan_query(module, action, options, timeout):
+        """Mock etherscan query to check the options are formulated correctly."""
+        assert options == {
+            'address': CONTRACT_STAKING,
+            'fromBlock': v_from_block, 'toBlock': v_to_block,
+            'topic0': topic0, 'topic0_1opr': 'and',
+            'topic2': f'0x000000000000000000000000{user_address.lower()[2:]}',
+            'topic2_3opr': 'and',
+        }
+        return original_etherscan_query(module, action, options, timeout)
+
+    original_query_web3_get_logs = _query_web3_get_logs
+
+    def mock_query_web3_get_logs(web3, filter_args, from_block, to_block, contract_address, event_name, argument_filters, initial_block_range, log_iteration_cb, log_iteration_cb_arguments):  # noqa: E501
+        """Similarly to etherscan let's check the right arguments make it here"""
+        assert filter_args == {
+            'address': CONTRACT_STAKING,
+            'fromBlock': v_from_block, 'toBlock': v_to_block,
+            'topics': [
+                topic0, None, f'0x000000000000000000000000{user_address.lower()[2:]}',
+            ],
+        }
+        assert argument_filters == {'l2Delegator': '0x9bA6D627fB731F447a68326E61280494C9A5ad02'}
+        assert contract_address == CONTRACT_STAKING
+        return original_query_web3_get_logs(web3, filter_args, from_block, to_block, contract_address, event_name, argument_filters, initial_block_range, log_iteration_cb, log_iteration_cb_arguments)  # noqa: E501
+
+    etherscan_query_patch = patch.object(ethereum_inquirer.etherscan, '_query', side_effect=mock_etherscan_query, autospec=True)  # noqa: E501
+    query_web3_logs_patch = patch('rotkehlchen.chain.evm.node_inquirer._query_web3_get_logs', side_effect=mock_query_web3_get_logs)  # noqa: E501
+
+    expected_logs = [{
+        'address': CONTRACT_STAKING,
+        'topics': ['0x231e5cfeff7759a468241d939ab04a60d603b17e359057abbb8f52afc3e4986b', '0x0000000000000000000000009ba6d627fb731f447a68326e61280494c9a5ad02', '0x0000000000000000000000009ba6d627fb731f447a68326e61280494c9a5ad02', '0x0000000000000000000000005a8904be09625965d9aec4bffd30d853438a053e'],  # noqa: E501
+        'data': '0x0000000000000000000000002f09092aacd80196fc984908c5a9a7ab3ee4f1ce000000000000000000000000000000000000000000000098e6a976f9df23110d',  # noqa: E501
+        'blockNumber': 20879646,
+        'blockHash': '0xe8681d4fd55ebe77c4632e5ee8743211596f9bd3d8147c7cc182fc10a8c40e78',
+        'timeStamp': 1727894171,
+        'gasPrice': 26315422572,
+        'gasUsed': 234729,
+        'logIndex': 412,
+        'transactionHash': '0x1ab7a55f3c5c44cbc3361f5f17c00fd95b1c690df48441e17d24372ec900906a',
+        'transactionIndex': 62,
+    }]
+    with etherscan_query_patch, query_web3_logs_patch:
+        logs = ethereum_inquirer.get_logs(
+            contract_address=CONTRACT_STAKING,
+            abi=GRAPH_DELEGATION_TRANSFER_ABI,
+            event_name='DelegationTransferredToL2',
+            argument_filters={'l2Delegator': user_address},
+            from_block=v_from_block,
+            to_block=v_to_block,
+            call_order=call_order,
+        )
+
+    if len(ethereum_manager_connect_at_start) != 0 and ethereum_manager_connect_at_start[0] == INFURA_ETH_NODE:  # noqa: E501
+        del expected_logs[0]['gasPrice']
+        del expected_logs[0]['gasUsed']
+        del expected_logs[0]['timeStamp']
+        del logs[0]['removed']
+
+    assert logs == expected_logs
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_manager_connect_at_start', [(), (INFURA_ETH_NODE,)])
+def test_get_logs_anonymous(ethereum_inquirer, ethereum_manager_connect_at_start):
+    """Check that for anonymous logs the topic0 is not given (bug in web3.py function we use)"""
+    call_order = None
+    if len(ethereum_manager_connect_at_start) != 0 and ethereum_manager_connect_at_start[0] == INFURA_ETH_NODE:  # noqa: E501
+        wait_until_all_nodes_connected(
+            connect_at_start=ethereum_manager_connect_at_start,
+            evm_inquirer=ethereum_inquirer,
+        )
+        # by default logs always query etherscan first due to indexing speed.
+        # Here we want to check normal web3 query, so force it
+        call_order = [INFURA_ETH_NODE]
+
+    proxy_address, pot_address = make_evm_address(), string_to_evm_address('0x197E90f9FAD81970bA7976f33CbD77088E5D7cf7')  # noqa: E501
+    makerdao_pot = ethereum_inquirer.contracts.contract(pot_address)
+    argument_filters = {
+        'sig': '0x049878f3',  # join
+        'usr': proxy_address,
+    }
+    deployment_block, v_to_block, topic0 = 8928160, 8928170, '0x049878f300000000000000000000000000000000000000000000000000000000'  # noqa: E501
+
+    def mock_etherscan_query(module, action, options=None, timeout=None):
+        """Mock etherscan query to check the options are formulated correctly."""
+        if action == 'eth_blockNumber':
+            return '0x883baa'  # int: 8928170
+        assert options == {
+            'address': pot_address,
+            'fromBlock': deployment_block, 'toBlock': v_to_block,
+            'topic0': topic0, 'topic0_1opr': 'and',
+            'topic1': f'0x000000000000000000000000{proxy_address.lower()[2:]}',  # pylint: disable=no-member
+            'topic1_2opr': 'and',
+        }
+        return []  # empty list to make it succeed
+
+    def mock_query_web3_get_logs(web3, filter_args, from_block, to_block, contract_address, event_name, argument_filters, initial_block_range, log_iteration_cb, log_iteration_cb_arguments):  # noqa: E501
+        """Similarly to etherscan let's check the right arguments make it here"""
+        assert from_block == deployment_block
+        assert to_block == 'latest'
+        assert filter_args == {
+            'address': pot_address,
+            'fromBlock': from_block, 'toBlock': 'latest',
+            'topics': [
+                topic0, f'0x000000000000000000000000{proxy_address.lower()[2:]}',    # pylint: disable=no-member
+            ],
+        }
+        assert argument_filters == {'sig': '0x049878f3', 'usr': proxy_address}
+        assert contract_address == pot_address
+        return []  # empty list to make it succeed
+
+    etherscan_query_patch = patch.object(ethereum_inquirer.etherscan, '_query', side_effect=mock_etherscan_query, autospec=True)  # noqa: E501
+    query_web3_logs_patch = patch('rotkehlchen.chain.evm.node_inquirer._query_web3_get_logs', side_effect=mock_query_web3_get_logs)  # noqa: E501
+
+    with etherscan_query_patch, query_web3_logs_patch:
+        makerdao_pot.get_logs_since_deployment(
+            node_inquirer=ethereum_inquirer,
+            event_name='LogNote',
+            argument_filters=argument_filters,
+            call_order=call_order,
+        )
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE,)])
+def test_contract_call_raises_on_non_checksum_token_address(ethereum_inquirer):
+    """Check that contract calls fail properly when given a non-checksum token address.
+
+    Validates that a RemoteError is raised with appropriate message when providing
+    a non-checksum token address to tokens_balance call.
+    """
+    token_address = '0x5283d291dbcf85356a21ba090e6db59121208b44'
+    with pytest.raises(RemoteError, match=f'non-checksum address {token_address}'):
+        ethereum_inquirer.contract_scan.call(
+            node_inquirer=ethereum_inquirer,
+            method_name='tokens_balance',
+            arguments=['0xBCaBdc5eBd28dC9d1629210f92D27171852eBa53', [token_address]],
+        )

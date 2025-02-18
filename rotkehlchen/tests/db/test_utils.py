@@ -1,4 +1,3 @@
-from typing import Any
 
 import pytest
 
@@ -8,8 +7,6 @@ from rotkehlchen.db.utils import (
     combine_asset_balances,
     db_tuple_to_str,
     form_query_to_filter_timestamps,
-    need_cursor,
-    need_writable_cursor,
 )
 from rotkehlchen.fval import FVal
 from rotkehlchen.types import SUPPORTED_EVM_EVMLIKE_CHAINS, SupportedBlockchain
@@ -159,46 +156,12 @@ def test_combine_asset_balances():
     ], 'common time appearing outside of pair with odd failed'
 
 
-def test_need_cursor_and_need_writable_cursor(database):
-    """Test that the decorator handles all possible argument combos"""
-    class OtherDB:
-
-        def __init__(self, db) -> None:
-            self.db = db
-
-        @need_writable_cursor('db.user_write')
-        def set_setting(self, write_cursor, name, value) -> None:
-            self.db.set_setting(write_cursor, name, value)
-
-        @need_cursor('db.conn.read_ctx')
-        def get_setting(self, cursor, name) -> Any:
-            return self.db.get_setting(cursor, name)
-
-    # pylint: disable=no-value-for-parameter
-    otherdb = OtherDB(database)
-    otherdb.set_setting('premium_should_sync', True)
-    assert otherdb.get_setting('premium_should_sync') is True
-    otherdb.set_setting(name='premium_should_sync', value=False)
-    assert otherdb.get_setting('premium_should_sync') is False
-    with otherdb.db.user_write() as cursor:
-        otherdb.set_setting(cursor, 'premium_should_sync', True)
-        assert otherdb.get_setting('premium_should_sync') is True
-        otherdb.set_setting(write_cursor=cursor, name='premium_should_sync', value=False)
-        assert otherdb.get_setting('premium_should_sync') is False
-        otherdb.set_setting(cursor, name='premium_should_sync', value=True)
-        assert otherdb.get_setting('premium_should_sync') is True
-
-
 @pytest.mark.parametrize(
     ('data', 'tuple_type', 'expected_str'),
     [(
         ('1', 1674510513, 'B', 'ETH', 'USD', 'A', '1', '100', '0.1', 'USD', 'link', 'no notes'),
         'trade',
         'buy trade with id 1 in kraken and base/quote asset ETH / USD at timestamp 1674510513',
-    ), (
-        ('42', 'C', 'A', 1674510513, 'ETH', '1', 'USD', '0.1', 'link', 'address', 'txid'),
-        'asset_movement',
-        'deposit of ETH with id 42 in poloniex at timestamp 1674510513',
     ), (
         ('44', 'F', 1674510513, 1674510513, '1', 'ETH', '0.1', 'USD', 'link', 'notes'),
         'margin_position',
@@ -221,7 +184,7 @@ def test_db_tuple_to_str(data, tuple_type, expected_str):
 
 @pytest.mark.parametrize(('db_settings', 'expected_chains'), [
     ({'evmchains_to_skip_detection': []}, set(SUPPORTED_EVM_EVMLIKE_CHAINS)),
-    ({'evmchains_to_skip_detection': [SupportedBlockchain.POLYGON_POS, SupportedBlockchain.BASE, SupportedBlockchain.ARBITRUM_ONE]}, {SupportedBlockchain.ETHEREUM, SupportedBlockchain.OPTIMISM, SupportedBlockchain.AVALANCHE, SupportedBlockchain.GNOSIS, SupportedBlockchain.SCROLL, SupportedBlockchain.ZKSYNC_LITE}),  # noqa: E501
+    ({'evmchains_to_skip_detection': [SupportedBlockchain.POLYGON_POS, SupportedBlockchain.BASE, SupportedBlockchain.ARBITRUM_ONE]}, {SupportedBlockchain.ETHEREUM, SupportedBlockchain.OPTIMISM, SupportedBlockchain.AVALANCHE, SupportedBlockchain.GNOSIS, SupportedBlockchain.SCROLL, SupportedBlockchain.BINANCE_SC, SupportedBlockchain.ZKSYNC_LITE}),  # noqa: E501
 ])
 def test_get_chains_to_detect_evm_accounts(database, expected_chains):
     assert set(database.get_chains_to_detect_evm_accounts()) == expected_chains

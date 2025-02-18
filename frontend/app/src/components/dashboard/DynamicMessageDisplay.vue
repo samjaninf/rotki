@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useRandomStepper } from '@/composables/random-stepper';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import FadeTransition from '@/components/helper/FadeTransition.vue';
 import type { DashboardMessage } from '@/types/dynamic-messages';
 
 const props = defineProps<{
@@ -9,9 +12,9 @@ const emit = defineEmits<{
   (e: 'dismiss'): void;
 }>();
 
-const { step, steps, onNavigate, onPause, onResume } = useRandomStepper(props.messages.length);
+const { onNavigate, onPause, onResume, step, steps } = useRandomStepper(props.messages.length);
 
-const activeItem = computed(() => props.messages[get(step) - 1]);
+const activeItem = computed<DashboardMessage>(() => props.messages[get(step) - 1]);
 </script>
 
 <template>
@@ -31,13 +34,13 @@ const activeItem = computed(() => props.messages[get(step) - 1]);
           {{ activeItem.message }}
           <div class="font-semibold inline">
             <template v-if="activeItem.messageHighlight">
-              {{ activeItem.messageHighlight }}
+              {{ ` ${activeItem.messageHighlight} ` }}
             </template>
 
             <ExternalLink
               v-if="activeItem.action"
               color="primary"
-              class="text-left md:text-center"
+              class="text-left md:text-center !ms-1"
               :url="activeItem.action?.url"
             >
               {{ activeItem.action.text }}
@@ -50,11 +53,11 @@ const activeItem = computed(() => props.messages[get(step) - 1]);
     <RuiFooterStepper
       v-if="steps > 1"
       class="ml-auto"
-      :value="step"
+      :model-value="step"
       :pages="steps"
       variant="bullet"
       hide-buttons
-      @input="onNavigate($event)"
+      @update:model-value="onNavigate($event)"
     />
 
     <RuiButton
@@ -64,7 +67,7 @@ const activeItem = computed(() => props.messages[get(step) - 1]);
       size="sm"
       @click="emit('dismiss')"
     >
-      <RuiIcon name="close-line" />
+      <RuiIcon name="lu-x" />
     </RuiButton>
   </div>
 </template>

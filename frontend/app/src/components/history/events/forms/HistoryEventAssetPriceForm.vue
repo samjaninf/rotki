@@ -1,147 +1,73 @@
 <script setup lang="ts">
 import { toMessages } from '@/utils/validation';
-import { CURRENCY_USD } from '@/types/currencies';
 import { TaskType } from '@/types/task-type';
 import { ApiValidationError, type ValidationErrors } from '@/types/api/errors';
 import { DateFormat } from '@/types/date-format';
+import { bigNumberifyFromRef } from '@/utils/bignumbers';
+import { convertToTimestamp } from '@/utils/date';
+import { useHistoricCachePriceStore } from '@/store/prices/historic';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useTaskStore } from '@/store/tasks';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useAssetPricesApi } from '@/composables/api/assets/prices';
+import TwoFieldsAmountInput from '@/components/inputs/TwoFieldsAmountInput.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import type { Validation } from '@vuelidate/core';
 import type { BigNumber } from '@rotki/common';
 import type { HistoricalPriceFormPayload } from '@/types/prices';
 import type { NewHistoryEventPayload } from '@/types/history/events';
 import type { ActionStatus } from '@/types/action';
 
-const props = withDefaults(
-  defineProps<{
-    datetime: string;
-    asset: string;
-    amount: string;
-    usdValue: string;
-    disableAsset?: boolean;
-    v$: Validation;
-  }>(),
-  {
-    disableAsset: false,
-  },
-);
+interface HistoryEventAssetPriceFormProps {
+  datetime: string;
+  disableAsset?: boolean;
+  v$: Validation;
+  hidePriceFields?: boolean;
+}
 
-const emit = defineEmits<{
-  (e: 'update:asset', asset: string): void;
-  (e: 'update:amount', amount: string): void;
-  (e: 'update:usd-value', usdValue: string): void;
-}>();
+const amount = defineModel<string>('amount', { required: true });
+const asset = defineModel<string | undefined>('asset', { required: true });
 
-const { datetime, amount, usdValue, asset, disableAsset } = toRefs(props);
-
-const assetModel = computed({
-  get() {
-    return get(asset);
-  },
-  set(asset: string) {
-    if (get(disableAsset))
-      return;
-
-    emit('update:asset', asset);
-  },
+const props = withDefaults(defineProps<HistoryEventAssetPriceFormProps>(), {
+  disableAsset: false,
+  hidePriceFields: false,
 });
 
-const amountModel = computed({
-  get() {
-    return get(amount);
-  },
-  set(amount: string) {
-    emit('update:amount', amount);
-  },
-});
-
-const usdValueModel = computed({
-  get() {
-    return get(usdValue);
-  },
-  set(usdValue: string) {
-    emit('update:usd-value', usdValue);
-  },
-});
+const { datetime, disableAsset, hidePriceFields } = toRefs(props);
 
 const { t } = useI18n();
 
-const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
-
-const isCurrentCurrencyUsd: ComputedRef<boolean> = computed(
-  () => get(currencySymbol) === CURRENCY_USD,
-);
-
-const fiatValue: Ref<string> = ref('');
-const assetToUsdPrice: Ref<string> = ref('');
-const assetToFiatPrice: Ref<string> = ref('');
+const fiatValue = ref<string>('');
+const assetToFiatPrice = ref<string>('');
+const fiatValueFocused = ref<boolean>(false);
+const fetchedAssetToFiatPrice = ref<string>('');
 
 const { isTaskRunning } = useTaskStore();
+const { resetHistoricalPricesData } = useHistoricCachePriceStore();
+const { getHistoricPrice } = useBalancePricesStore();
+const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
+const { addHistoricalPrice } = useAssetPricesApi();
 
 const fetching = isTaskRunning(TaskType.FETCH_HISTORIC_PRICE);
 
-const fiatValueFocused: Ref<boolean> = ref(false);
-
-const fetchedAssetToUsdPrice: Ref<string> = ref('');
-const fetchedAssetToFiatPrice: Ref<string> = ref('');
-
-const { resetHistoricalPricesData } = useHistoricCachePriceStore();
-
-const { getHistoricPrice } = useBalancePricesStore();
-const { addHistoricalPrice } = useAssetPricesApi();
+const numericAssetToFiatPrice = bigNumberifyFromRef(assetToFiatPrice);
+const numericFiatValue = bigNumberifyFromRef(fiatValue);
+const numericAmount = bigNumberifyFromRef(amount);
 
 async function savePrice(payload: HistoricalPriceFormPayload) {
   await addHistoricalPrice(payload);
   resetHistoricalPricesData([payload]);
 }
 
-const numericAssetToUsdPrice = bigNumberifyFromRef(assetToUsdPrice);
-const numericAssetToFiatPrice = bigNumberifyFromRef(assetToFiatPrice);
-const numericFiatValue = bigNumberifyFromRef(fiatValue);
-
-const numericAmount = bigNumberifyFromRef(amount);
-const numericUsdValue = bigNumberifyFromRef(usdValue);
-
-function onAssetToUsdPriceChange(forceUpdate = false) {
-  if (
-    get(amount)
-    && get(assetToUsdPrice)
-    && (!get(fiatValueFocused) || forceUpdate)
-  ) {
-    set(
-      usdValueModel,
-      get(numericAmount).multipliedBy(get(numericAssetToUsdPrice)).toFixed(),
-    );
-  }
-}
-
 function onAssetToFiatPriceChanged(forceUpdate = false) {
-  if (
-    get(amount)
-    && get(assetToFiatPrice)
-    && (!get(fiatValueFocused) || forceUpdate)
-  ) {
-    set(
-      fiatValue,
-      get(numericAmount).multipliedBy(get(numericAssetToFiatPrice)).toFixed(),
-    );
-  }
-}
-
-function onUsdValueChange() {
-  if (get(amount) && get(fiatValueFocused)) {
-    set(
-      assetToUsdPrice,
-      get(numericUsdValue).div(get(numericAmount)).toFixed(),
-    );
-  }
+  if (get(amount) && get(assetToFiatPrice) && (!get(fiatValueFocused) || forceUpdate))
+    set(fiatValue, get(numericAmount).multipliedBy(get(numericAssetToFiatPrice)).toFixed());
 }
 
 function onFiatValueChange() {
-  if (get(amount) && get(fiatValueFocused)) {
-    set(
-      assetToFiatPrice,
-      get(numericFiatValue).div(get(numericAmount)).toFixed(),
-    );
-  }
+  if (get(amount) && get(fiatValueFocused))
+    set(assetToFiatPrice, get(numericFiatValue).div(get(numericAmount)).toFixed());
 }
 
 async function fetchHistoricPrices() {
@@ -150,60 +76,25 @@ async function fetchHistoricPrices() {
   if (!datetimeVal || !assetVal)
     return;
 
-  const timestamp = convertToTimestamp(
-    get(datetime),
-    DateFormat.DateMonthYearHourMinuteSecond,
-  );
+  const timestamp = convertToTimestamp(get(datetime), DateFormat.DateMonthYearHourMinuteSecond);
 
-  if (assetVal === CURRENCY_USD) {
-    set(fetchedAssetToUsdPrice, '1');
-  }
-  else {
-    const price: BigNumber = await getHistoricPrice({
-      timestamp,
-      fromAsset: assetVal,
-      toAsset: CURRENCY_USD,
-    });
+  const price: BigNumber = await getHistoricPrice({
+    fromAsset: assetVal,
+    timestamp,
+    toAsset: get(currencySymbol),
+  });
 
-    if (price.gt(0))
-      set(fetchedAssetToUsdPrice, price.toFixed());
-  }
-
-  if (!get(isCurrentCurrencyUsd)) {
-    const currentCurrency = get(currencySymbol);
-
-    if (assetVal === currentCurrency) {
-      set(fetchedAssetToFiatPrice, '1');
-      return;
-    }
-
-    const price = await getHistoricPrice({
-      timestamp,
-      fromAsset: assetVal,
-      toAsset: currentCurrency,
-    });
-
-    if (price.gt(0))
-      set(fetchedAssetToFiatPrice, price.toFixed());
-  }
+  if (price.gte(0))
+    set(fetchedAssetToFiatPrice, price.toFixed());
 }
 
-watch([datetime, asset], async () => {
-  await fetchHistoricPrices();
-});
-
-watch(fetchedAssetToUsdPrice, (price) => {
-  set(assetToUsdPrice, price);
-  onAssetToUsdPriceChange(true);
-});
-
-watch(assetToUsdPrice, () => {
-  onAssetToUsdPriceChange();
-});
-
-watch(usdValue, () => {
-  onUsdValueChange();
-});
+watchImmediate(
+  [datetime, asset, hidePriceFields],
+  async ([datetime, asset, hidePriceFields], [oldDatetime, oldAsset, oldHidePriceFields]) => {
+    if (datetime !== oldDatetime || asset !== oldAsset || (oldHidePriceFields && !hidePriceFields))
+      await fetchHistoricPrices();
+  },
+);
 
 watch(fetchedAssetToFiatPrice, (price) => {
   set(assetToFiatPrice, price);
@@ -219,40 +110,25 @@ watch(fiatValue, () => {
 });
 
 watch(amount, () => {
-  if (get(isCurrentCurrencyUsd)) {
-    onAssetToUsdPriceChange();
-    onUsdValueChange();
-  }
-  else {
-    onAssetToFiatPriceChanged();
-    onFiatValueChange();
-  }
+  onAssetToFiatPriceChanged();
+  onFiatValueChange();
 });
 
 async function submitPrice(payload: NewHistoryEventPayload): Promise<ActionStatus<ValidationErrors | string>> {
+  if (get(hidePriceFields))
+    return { success: true };
+
   const assetVal = get(asset);
-  const timestamp = convertToTimestamp(
-    get(datetime),
-    DateFormat.DateMonthYearHourMinuteSecond,
-  );
+  assert(assetVal);
+  const timestamp = convertToTimestamp(get(datetime), DateFormat.DateMonthYearHourMinuteSecond);
 
   try {
-    if (get(isCurrentCurrencyUsd)) {
-      if (get(assetToUsdPrice) !== get(fetchedAssetToUsdPrice)) {
-        await savePrice({
-          fromAsset: assetVal,
-          toAsset: CURRENCY_USD,
-          timestamp,
-          price: get(assetToUsdPrice),
-        });
-      }
-    }
-    else if (get(assetToFiatPrice) !== get(fetchedAssetToFiatPrice)) {
+    if (get(assetToFiatPrice) !== get(fetchedAssetToFiatPrice)) {
       await savePrice({
         fromAsset: assetVal,
-        toAsset: get(currencySymbol),
-        timestamp,
         price: get(assetToFiatPrice),
+        timestamp,
+        toAsset: get(currencySymbol),
       });
     }
 
@@ -263,18 +139,19 @@ async function submitPrice(payload: NewHistoryEventPayload): Promise<ActionStatu
     if (error instanceof ApiValidationError)
       message = error.getValidationErrors(payload);
 
-    return { success: false, message };
+    return { message, success: false };
   }
 }
 
 function reset() {
-  set(fetchedAssetToUsdPrice, '');
   set(fetchedAssetToFiatPrice, '');
+  set(assetToFiatPrice, '');
+  set(fiatValue, '');
 }
 
 defineExpose({
-  submitPrice,
   reset,
+  submitPrice,
 });
 </script>
 
@@ -285,7 +162,7 @@ defineExpose({
       class="grid md:grid-cols-2 gap-4 mb-4"
     >
       <AssetSelect
-        v-model="assetModel"
+        v-model="asset"
         outlined
         :disabled="disableAsset"
         data-cy="asset"
@@ -293,7 +170,7 @@ defineExpose({
         @blur="v$.asset.$touch()"
       />
       <AmountInput
-        v-model="amountModel"
+        v-model="amount"
         variant="outlined"
         data-cy="amount"
         :label="t('common.amount')"
@@ -301,46 +178,23 @@ defineExpose({
         @blur="v$.amount.$touch()"
       />
     </div>
-
-    <TwoFieldsAmountInput
-      v-if="isCurrentCurrencyUsd"
-      class="mb-5"
-      :primary-value.sync="assetToUsdPrice"
-      :secondary-value.sync="usdValueModel"
-      :loading="fetching"
-      :disabled="fetching"
-      :label="{
-        primary: t('transactions.events.form.asset_price.label', {
-          symbol: currencySymbol,
-        }),
-        secondary: t('common.value_in_symbol', {
-          symbol: currencySymbol,
-        }),
-      }"
-      :error-messages="{
-        primary: toMessages(v$.usdValue),
-        secondary: toMessages(v$.usdValue),
-      }"
-      :hint="t('transactions.events.form.asset_price.hint')"
-      @update:reversed="fiatValueFocused = $event"
-    />
-
-    <TwoFieldsAmountInput
-      v-else
-      class="mb-5"
-      :primary-value.sync="assetToFiatPrice"
-      :secondary-value.sync="fiatValue"
-      :loading="fetching"
-      :disabled="fetching"
-      :label="{
-        primary: t('transactions.events.form.asset_price.label', {
-          symbol: currencySymbol,
-        }),
-        secondary: t('common.value_in_symbol', {
-          symbol: currencySymbol,
-        }),
-      }"
-      @update:reversed="fiatValueFocused = $event"
-    />
+    <template v-if="!hidePriceFields">
+      <TwoFieldsAmountInput
+        v-model:primary-value="assetToFiatPrice"
+        v-model:secondary-value="fiatValue"
+        class="mb-5"
+        :loading="fetching"
+        :disabled="fetching"
+        :label="{
+          primary: t('transactions.events.form.asset_price.label', {
+            symbol: currencySymbol,
+          }),
+          secondary: t('common.value_in_symbol', {
+            symbol: currencySymbol,
+          }),
+        }"
+        @update:reversed="fiatValueFocused = $event"
+      />
+    </template>
   </div>
 </template>

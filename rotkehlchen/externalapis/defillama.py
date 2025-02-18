@@ -1,8 +1,7 @@
 import json
 import logging
 from http import HTTPStatus
-from typing import Any
-from urllib.parse import urlencode
+from typing import TYPE_CHECKING, Any
 
 import requests
 
@@ -10,37 +9,48 @@ from rotkehlchen.assets.asset import Asset, AssetWithOracles
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.constants.prices import ZERO_PRICE
-from rotkehlchen.constants.timing import DAY_IN_SECONDS
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp, PriceQueryUnsupportedAsset
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.externalapis.interface import ExternalServiceWithApiKeyOptionalDB
 from rotkehlchen.fval import FVal
-from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.deserialization import deserialize_price
 from rotkehlchen.history.price import PriceHistorian
-from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.interfaces import HistoricalPriceOracleInterface
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChainID, Price, Timestamp
-from rotkehlchen.utils.misc import create_timestamp, timestamp_to_date, ts_now
+from rotkehlchen.types import ChainID, ExternalService, Price, Timestamp
+from rotkehlchen.utils.misc import ts_now
 from rotkehlchen.utils.mixins.penalizable_oracle import PenalizablePriceOracleMixin
+from rotkehlchen.utils.network import create_session
+
+if TYPE_CHECKING:
+    from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 MIN_DEFILLAMA_CONFIDENCE = FVal('0.20')
 
 
-class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
+class Defillama(
+        ExternalServiceWithApiKeyOptionalDB,
+        HistoricalPriceOracleInterface,
+        PenalizablePriceOracleMixin,
+):
 
-    def __init__(self) -> None:
+    def __init__(self, database: 'DBHandler | None') -> None:
+        ExternalServiceWithApiKeyOptionalDB.__init__(
+            self,
+            database=database,
+            service_name=ExternalService.DEFILLAMA,
+        )
         HistoricalPriceOracleInterface.__init__(self, oracle_name='defillama')
         PenalizablePriceOracleMixin.__init__(self)
-        self.session = requests.session()
+        self.session = create_session()
         self.session.headers.update({'User-Agent': 'rotkehlchen'})
-        self.last_rate_limit = 0
+        self.db: DBHandler | None  # type: ignore  # "solve" the self.db discrepancy
 
     def _query(
             self,
@@ -53,16 +63,19 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
         May raise:
         - RemoteError if there is a problem querying defillama
         """
+        if (api_key := self._get_api_key()) is not None:
+            base_url = f'https://pro-api.llama.fi/{api_key}/coins/'
+        else:
+            base_url = 'https://coins.llama.fi/'
+
         if options is None:
             options = {}
-        url = f'https://coins.llama.fi/{module}/'
-        if subpath:
-            url += subpath
-
-        log.debug(f'Querying defillama: {url}?{urlencode(options)}')
+        url = base_url + f'{module}/{subpath or ""}'
+        log.debug(f'Querying defillama: {url=} with {options=}')
         try:
             response = self.session.get(
-                f'{url}?{urlencode(options)}',
+                url=url,
+                params=options,
                 timeout=CachedSettings().get_timeout_tuple(),
             )
         except requests.exceptions.RequestException as e:
@@ -104,10 +117,12 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
                 chain_name = 'polygon'
             elif asset.chain_id == ChainID.ARBITRUM_ONE:
                 chain_name = 'arbitrum'
-            elif asset.chain_id == ChainID.BINANCE:
+            elif asset.chain_id == ChainID.BINANCE_SC:
                 chain_name = 'bsc'
             elif asset.chain_id == ChainID.AVALANCHE:
                 chain_name = 'avax'
+            elif asset.chain_id == ChainID.ZKSYNC_ERA:
+                chain_name = 'era'
             else:
                 chain_name = str(asset.chain_id)
 
@@ -162,11 +177,9 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
             self,
             from_asset: AssetWithOracles,
             to_asset: AssetWithOracles,
-            match_main_currency: bool,
-    ) -> tuple[Price, bool]:
+    ) -> Price:
         """
-        Returns a simple price for from_asset to to_asset in Defillama and `False` value
-        since it never tries to match main currency.
+        Returns a simple price for from_asset to to_asset in Defillama.
 
         May raise:
         - RemoteError if there is a problem querying defillama
@@ -179,7 +192,7 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
                 f'{to_asset} but {from_asset} is not an EVM token and is not '
                 f'supported by defillama',
             )
-            return ZERO_PRICE, False
+            return ZERO_PRICE
 
         result = self._query(
             module='prices',
@@ -188,12 +201,12 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
 
         usd_price = self._deserialize_price(result, coin_id, from_asset, to_asset)
         if usd_price == ZERO or to_asset == A_USD:
-            return usd_price, False
+            return usd_price
 
         # We got the price in usd but that is not what we need we should query for the next
         # step in the chain of prices
         rate_price = Inquirer.find_price(from_asset=A_USD, to_asset=to_asset)
-        return Price(usd_price * rate_price), False
+        return Price(usd_price * rate_price)
 
     def can_query_history(
             self,
@@ -203,15 +216,6 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
             seconds: int | None = None,
     ) -> bool:
         return not self.is_penalized()
-
-    def rate_limited_in_last(
-            self,
-            seconds: int | None = None,
-    ) -> bool:
-        if seconds is None:
-            return False
-
-        return ts_now() - self.last_rate_limit <= seconds
 
     def query_historical_price(
             self,
@@ -230,17 +234,6 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
         except UnknownAsset as e:
             raise PriceQueryUnsupportedAsset(e.identifier) from e
 
-        # check DB cache
-        price_cache_entry = GlobalDBHandler.get_historical_price(
-            from_asset=from_asset,
-            to_asset=to_asset,
-            timestamp=timestamp,
-            max_seconds_distance=DAY_IN_SECONDS,
-            source=HistoricalPriceOracle.DEFILLAMA,
-        )
-        if price_cache_entry:
-            return price_cache_entry.price
-
         try:
             coin_id = self._get_asset_id(from_asset)
         except UnsupportedAsset as e:
@@ -256,8 +249,6 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
                 rate_limited=False,
             ) from e
 
-        # no cache, query defillama for historical price
-        date = timestamp_to_date(timestamp, formatstr='%d-%m-%Y')
         result = self._query(
             module='prices',
             subpath=f'historical/{timestamp}/{coin_id}',
@@ -284,13 +275,4 @@ class Defillama(HistoricalPriceOracleInterface, PenalizablePriceOracleMixin):
         else:
             price = usd_price
 
-        # save result in the DB and return
-        date_timestamp = create_timestamp(date, formatstr='%d-%m-%Y')
-        GlobalDBHandler.add_historical_prices(entries=[HistoricalPrice(
-            from_asset=from_asset,
-            to_asset=to_asset,
-            source=HistoricalPriceOracle.DEFILLAMA,
-            timestamp=date_timestamp,
-            price=price,
-        )])
         return price

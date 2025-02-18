@@ -4,7 +4,7 @@ import operator
 from collections import defaultdict
 from collections.abc import Sequence
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import requests
 
@@ -20,12 +20,17 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_int,
     deserialize_str,
 )
-from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey
+from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey, Timestamp
 from rotkehlchen.utils.misc import from_gwei
+from rotkehlchen.utils.network import create_session
 from rotkehlchen.utils.serialization import jsonloads_dict
 
-from .constants import BEACONCHAIN_MAX_EPOCH, DEFAULT_VALIDATOR_CHUNK_SIZE
-from .structures import ValidatorDetails, ValidatorID
+from .constants import (
+    BEACONCHAIN_MAX_EPOCH,
+    DEFAULT_BEACONCHAIN_API_VALIDATOR_CHUNK_SIZE,
+    FREE_VALIDATORS_LIMIT,
+)
+from .structures import ValidatorDailyStats, ValidatorDetails, ValidatorID
 from .utils import calculate_query_chunks, epoch_to_timestamp
 
 if TYPE_CHECKING:
@@ -44,7 +49,7 @@ class BeaconNode:
         May raise:
         - RemoteError if we can't connect to the given rpc endpoint
         """
-        self.session = requests.session()
+        self.session = create_session()
         self.set_rpc_endpoint(rpc_endpoint)
 
     def set_rpc_endpoint(self, rpc_endpoint: str) -> None:
@@ -52,33 +57,62 @@ class BeaconNode:
         - RemoteError if we can't connect to the given rpc endpoint
         """
         self.rpc_endpoint = rpc_endpoint.rstrip('/')
-        result = self.query('eth/v1/node/version')
+        result = self.query(method='GET', endpoint='eth/v1/node/version')
         try:
-            version = result['version']  # type: ignore  # related to the overload problem below
+            version = result['version']
         except KeyError as e:
             raise RemoteError(f'Failed to parse the node version response from {rpc_endpoint}') from e  # noqa: E501
 
         log.info(f'Connected to {rpc_endpoint} with beacon node {version}')
 
     @overload
-    def query(self, querystr: Literal['/eth/v1/node/version']) -> dict:  # type: ignore  # not sure how to fix the overlapping type at overload here
+    def query(  # type: ignore  # not sure how to fix the overlapping type at overload here
+            self,
+            method: Literal['GET'],
+            endpoint: Literal['eth/v1/node/version'],
+            data: dict[str, Any] | None = None,
+    ) -> dict:
         ...
 
     @overload
-    def query(self, querystr: str) -> list[dict]:
+    def query(
+            self,
+            method: Literal['POST'],
+            endpoint: Literal['eth/v1/beacon/states/head/validators'],
+            data: dict[str, Any],
+    ) -> list[dict]:
         ...
 
-    def query(self, querystr: str) -> list[dict] | dict:
+    @overload
+    def query(
+            self,
+            method: Literal['GET', 'POST'],
+            endpoint: str,
+            data: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        ...
+
+    def query(
+            self,
+            method: Literal['GET', 'POST'],
+            endpoint: str,
+            data: dict[str, Any] | None = None,
+    ) -> dict | list[dict]:
         """
         May raise:
         - RemoteError due to problems querying the node
         """
-        querystr = self.rpc_endpoint + '/' + querystr
-        log.debug(f'Querying beacon node {querystr}')
+        url = self.rpc_endpoint + '/' + endpoint
+        log.debug(f'Querying beacon node {endpoint} with {data=}')
         try:
-            response = self.session.get(querystr, timeout=CachedSettings().get_timeout_tuple())
+            response = self.session.request(
+                url=url,
+                json=data,
+                method=method,
+                timeout=CachedSettings().get_timeout_tuple(),
+            )
         except requests.exceptions.RequestException as e:
-            raise RemoteError(f'Querying beacon node {querystr} failed due to {e!s}') from e
+            raise RemoteError(f'Querying beacon node {url} failed due to {e!s}') from e
 
         if response.status_code != HTTPStatus.OK:
             raise RemoteError(
@@ -91,19 +125,19 @@ class BeaconNode:
             json_ret = jsonloads_dict(response.text)
         except json.JSONDecodeError as e:
             raise RemoteError(
-                f'Beaconchain node query {querystr} returned invalid JSON response: {response.text}',  # noqa: E501
+                f'Beaconchain node query {url} returned invalid JSON response: {response.text}',
             ) from e
 
         if (data := json_ret.get('data')) is None:
-            raise RemoteError(f'Beaconchain node query {querystr} did not contain a data key. Response: {json_ret}')  # noqa: E501
+            raise RemoteError(f'Beaconchain node query {url} did not contain a data key. Response: {json_ret}')  # noqa: E501
 
         return data
 
     def query_chunked(
             self,
             indices_or_pubkeys: Sequence[int | Eth2PubKey],
-            querystr: str,
-            chunk_size: int = DEFAULT_VALIDATOR_CHUNK_SIZE,
+            endpoint: Literal['eth/v1/beacon/states/head/validators'],
+            chunk_size: Literal[80, 100] = DEFAULT_BEACONCHAIN_API_VALIDATOR_CHUNK_SIZE,
     ) -> list[dict]:
         """
         May raise:
@@ -112,7 +146,11 @@ class BeaconNode:
         chunks = calculate_query_chunks(indices_or_pubkeys, chunk_size=chunk_size)
         data = []
         for chunk in chunks:
-            data.extend(self.query(querystr.format(chunk=','.join(str(x) for x in chunk))))
+            data.extend(self.query(
+                endpoint=endpoint,
+                method='POST',
+                data={'ids': [str(x) for x in chunk]},
+            ))
 
         return data
 
@@ -146,6 +184,7 @@ class BeaconInquirer:
     def get_balances(
             self,
             indices_or_pubkeys: Sequence[int | Eth2PubKey],
+            has_premium: bool,
     ) -> dict[Eth2PubKey, Balance]:
         """Returns a mapping of validator public key to eth balance.
 
@@ -155,13 +194,17 @@ class BeaconInquirer:
         May Raise:
         - RemoteError
         """
+        if not has_premium and len(indices_or_pubkeys) > FREE_VALIDATORS_LIMIT:
+            # Limit number of validators queried for balances for non-premium users
+            indices_or_pubkeys = indices_or_pubkeys[:FREE_VALIDATORS_LIMIT]
+
         usd_price = Inquirer.find_usd_price(A_ETH)
         balance_mapping: dict[Eth2PubKey, Balance] = defaultdict(Balance)
         if self.node is not None:
             try:
                 node_results = self.node.query_chunked(
                     indices_or_pubkeys=indices_or_pubkeys,
-                    querystr='eth/v1/beacon/states/head/validators?id={chunk}',
+                    endpoint='eth/v1/beacon/states/head/validators',
                 )
             except RemoteError as e:  # log and try beaconcha.in
                 log.error(f'Querying validator balances via a beacon node failed due to {e!s}')
@@ -191,23 +234,25 @@ class BeaconInquirer:
         - DeserializationError if any of the entry data could not be
           deserialized due to unexpected format
         """
-
         # Beaconcha.in only keys
-        index_key = 'validatorindex'
+        beacon_chain_index_key = 'validatorindex'
+        index_key = beacon_chain_index_key
         valuegetter = operator.getitem
         withdrawal_credentials_key = 'withdrawalcredentials'
         activation_epoch_key = 'activationepoch'
         withdrawable_epoch_key = 'withdrawableepoch'
+        queried_beaconchain = False
         if self.node is not None:
             try:
                 node_results = self.node.query_chunked(
                     indices_or_pubkeys=indices_or_pubkeys,
-                    querystr='eth/v1/beacon/states/head/validators?id={chunk}',
+                    endpoint='eth/v1/beacon/states/head/validators',
                 )
             except RemoteError as e:  # log and try beaconcha.in
                 log.error(f'Querying validator data via a beacon node failed due to {e!s}')
                 node_results = self.beaconchain.get_validator_data(indices_or_pubkeys)
-            else:  # succesfull beacon node query. Set keys
+                queried_beaconchain = True
+            else:  # successful beacon node query. Set keys
                 index_key = 'index'
                 valuegetter = lambda x, y: x['validator'][y]  # don't want to turn this into a def, and can't find a way to do this with functools # noqa: E501, E731
                 withdrawal_credentials_key = 'withdrawal_credentials'
@@ -215,12 +260,14 @@ class BeaconInquirer:
                 withdrawable_epoch_key = 'withdrawable_epoch'
         else:  # query beaconcha.in since no node is connected
             node_results = self.beaconchain.get_validator_data(indices_or_pubkeys)
+            queried_beaconchain = True
 
         details = []
-        for entry in node_results:
+        indices_mapping_to_query_beaconchain = {}
+        for idx, entry in enumerate(node_results):
             activation_epoch = deserialize_int(valuegetter(entry, activation_epoch_key))
             withdrawable_epoch = deserialize_int(valuegetter(entry, withdrawable_epoch_key))
-            activation_ts, withdrawable_ts = None, None
+            activation_ts, withdrawable_ts, exited_ts = None, None, None
             if activation_epoch < BEACONCHAIN_MAX_EPOCH:
                 activation_ts = epoch_to_timestamp(activation_epoch)
             if withdrawable_epoch < BEACONCHAIN_MAX_EPOCH:
@@ -234,13 +281,26 @@ class BeaconInquirer:
                 except DeserializationError:
                     log.error(f'Could not deserialize 0x01 withdrawal credentials for {entry}')
 
+            if withdrawable_ts is not None:
+                if queried_beaconchain and (exit_epoch := entry.get('exitepoch', 0)) != 0:
+                    exited_ts = epoch_to_timestamp(exit_epoch)
+                else:  # query this index from beaconchain to see if exited
+                    indices_mapping_to_query_beaconchain[deserialize_int(entry[index_key])] = idx
+
             details.append(ValidatorDetails(
                 validator_index=deserialize_int(entry[index_key]),
                 public_key=Eth2PubKey(deserialize_str(valuegetter(entry, 'pubkey'))),
                 withdrawal_address=withdrawal_address,
                 activation_timestamp=activation_ts,
                 withdrawable_timestamp=withdrawable_ts,
+                exited_timestamp=exited_ts,
             ))
+
+        if len(indices_mapping_to_query_beaconchain) != 0:  # if needed check beaconchain for exit
+            node_results = self.beaconchain.get_validator_data(list(indices_mapping_to_query_beaconchain))  # noqa: E501
+            for entry in node_results:
+                if (exit_epoch := entry.get('exitepoch', 0)) != 0:
+                    details[indices_mapping_to_query_beaconchain[entry[beacon_chain_index_key]]].exited_timestamp = epoch_to_timestamp(exit_epoch)  # noqa: E501
 
         return details
 
@@ -249,3 +309,19 @@ class BeaconInquirer:
         and withdrawal address setting as part of https://github.com/rotki/rotki/issues/6816
         """
         return self.beaconchain.get_eth1_address_validators(address)
+
+    def query_validator_daily_stats(
+            self,
+            validator_index: int,
+            last_known_timestamp: Timestamp,
+            exit_ts: Timestamp | None,
+    ) -> list[ValidatorDailyStats]:
+        """
+        May raise:
+        - RemoteError if we can't query beaconcha.in or if the data is not in the expected format
+        """
+        return self.beaconchain.query_validator_daily_stats(
+            validator_index=validator_index,
+            last_known_timestamp=last_known_timestamp,
+            exit_ts=exit_ts,
+        )

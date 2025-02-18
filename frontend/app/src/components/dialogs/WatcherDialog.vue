@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { cloneDeep } from 'lodash-es';
-import {
-  type Watcher,
-  type WatcherOpTypes,
-  WatcherType,
-} from '@/types/session';
+import { cloneDeep } from 'es-toolkit';
+import { type Watcher, type WatcherOpTypes, WatcherType } from '@/types/session';
+import { useWatchersStore } from '@/store/session/watchers';
+import type { RuiIcons } from '@rotki/ui-library';
+
+interface WatcherOperation {
+  op: WatcherOpTypes;
+  value: WatcherOpTypes;
+  text: string;
+}
 
 const props = withDefaults(
   defineProps<{
@@ -17,35 +21,32 @@ const props = withDefaults(
     existingWatchers?: Watcher[];
   }>(),
   {
-    watcherValueLabel: 'Watcher Value',
-    watcherContentId: undefined,
-    preselectWatcherType: undefined,
     existingWatchers: () => [],
+    preselectWatcherType: undefined,
+    watcherContentId: undefined,
+    watcherValueLabel: 'Watcher Value',
   },
 );
 
 const emit = defineEmits<{ (e: 'cancel'): void }>();
 
-const { display, preselectWatcherType, existingWatchers, watcherContentId }
-  = toRefs(props);
-const watcherType: Ref<typeof WatcherType | null> = ref(null);
-const watcherOperation: Ref<WatcherOpTypes | null> = ref(null);
-const watcherValue: Ref<string | undefined> = ref();
-const validationMessage: Ref<string> = ref('');
-const validationStatus: Ref<'success' | 'error' | ''> = ref('');
-const existingWatchersEdit: Ref<Record<string, boolean>> = ref({});
+const { display, existingWatchers, preselectWatcherType, watcherContentId } = toRefs(props);
+const watcherType = ref<typeof WatcherType>();
+const watcherOperation = ref<WatcherOpTypes>();
+const watcherValue = ref<string>('');
+const validationMessage = ref<string>('');
+const validationStatus = ref<'success' | 'error' | ''>('');
+const existingWatchersEdit = ref<Record<string, boolean>>({});
 
 const { t } = useI18n();
 
 const store = useWatchersStore();
 const { watchers } = storeToRefs(store);
-const { addWatchers, editWatchers, deleteWatchers } = store;
+const { addWatchers, deleteWatchers, editWatchers } = store;
 
-const loadedWatchers: ComputedRef<Watcher[]> = computed(() => {
+const loadedWatchers = computed<Watcher[]>(() => {
   const id = get(watcherContentId)?.toString();
-  return cloneDeep(get(watchers)).filter(
-    watcher => watcher.args.vaultId === id,
-  );
+  return cloneDeep(get(watchers)).filter(watcher => watcher.args.vaultId === id);
 });
 
 const watcherTypes = computed(() => [
@@ -56,32 +57,32 @@ const watcherTypes = computed(() => [
   },
 ]);
 
-const watcherOperations = computed(() => ({
+const watcherOperations = computed<{ [WatcherType]: WatcherOperation[] }>(() => ({
   makervault_collateralization_ratio: [
     {
       op: 'gt',
-      value: 'gt',
       text: t('watcher_dialog.ratio.gt'),
+      value: 'gt',
     },
     {
       op: 'ge',
-      value: 'ge',
       text: t('watcher_dialog.ratio.ge'),
+      value: 'ge',
     },
     {
       op: 'lt',
-      value: 'lt',
       text: t('watcher_dialog.ratio.lt'),
+      value: 'lt',
     },
     {
       op: 'le',
-      value: 'le',
       text: t('watcher_dialog.ratio.le'),
+      value: 'le',
     },
   ],
 }));
 
-const operations = computed(() => {
+const operations = computed<WatcherOperation[]>(() => {
   const operations = get(watcherOperations);
   const type = get(watcherType);
   if (!type)
@@ -90,9 +91,9 @@ const operations = computed(() => {
   return operations[type] ?? [];
 });
 
-function existingWatchersIcon(identifier: string): string {
+function existingWatchersIcon(identifier: string): RuiIcons {
   const edit = get(existingWatchersEdit);
-  return edit[identifier] ? 'check-line' : 'pencil-line';
+  return edit[identifier] ? 'lu-check' : 'lu-pencil';
 }
 
 function validateSettingChange(targetState: string, message = '', timeOut = 5500) {
@@ -125,12 +126,12 @@ async function addWatcher() {
     return;
 
   const watcherData: Omit<Watcher, 'identifier'> = {
-    type,
     args: {
-      ratio: value,
       op: operation,
+      ratio: value,
       vaultId: contentId.toString(),
     },
+    type,
   };
 
   try {
@@ -139,10 +140,7 @@ async function addWatcher() {
     clear();
   }
   catch (error: any) {
-    validateSettingChange(
-      'error',
-      t('watcher_dialog.add_error', { message: error.message }),
-    );
+    validateSettingChange('error', t('watcher_dialog.add_error', { message: error.message }));
   }
 }
 
@@ -160,10 +158,7 @@ async function editWatcher(watcher: Watcher) {
     )!.args;
     const modifiedWatcherArgs = watcher.args;
 
-    if (
-      existingWatcherArgs.op !== modifiedWatcherArgs.op
-      || existingWatcherArgs.ratio !== modifiedWatcherArgs.ratio
-    ) {
+    if (existingWatcherArgs.op !== modifiedWatcherArgs.op || existingWatcherArgs.ratio !== modifiedWatcherArgs.ratio) {
       try {
         await editWatchers([watcher]);
         validateSettingChange('success', t('watcher_dialog.edit_success'));
@@ -238,7 +233,7 @@ const [CreateLabel, ReuseLabel] = createReusableTemplate<{ label: string }>();
 
 <template>
   <RuiDialog
-    :value="display"
+    :model-value="display"
     persistent
     max-width="650"
     class="watcher-dialog"
@@ -266,8 +261,6 @@ const [CreateLabel, ReuseLabel] = createReusableTemplate<{ label: string }>();
         v-model="watcherType"
         :options="watcherTypes"
         :label="t('watcher_dialog.labels.type')"
-        key-attr="value"
-        text-attr="text"
         dense
         variant="outlined"
         required
@@ -329,7 +322,7 @@ const [CreateLabel, ReuseLabel] = createReusableTemplate<{ label: string }>();
                 @click="deleteWatcher(watcher.identifier)"
               >
                 <RuiIcon
-                  name="delete-bin-5-line"
+                  name="lu-trash-2"
                   size="20"
                 />
               </RuiButton>
@@ -374,7 +367,7 @@ const [CreateLabel, ReuseLabel] = createReusableTemplate<{ label: string }>();
               icon
               @click="addWatcher()"
             >
-              <RuiIcon name="add-line" />
+              <RuiIcon name="lu-plus" />
             </RuiButton>
           </div>
         </div>

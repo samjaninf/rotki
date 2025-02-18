@@ -1,17 +1,23 @@
 import csv
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.accounting.structures.balance import AssetBalance, Balance
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_BTC, A_USD
-from rotkehlchen.data_import.utils import BaseExchangeImporter, UnsupportedCSVEntry
+from rotkehlchen.data_import.utils import (
+    BaseExchangeImporter,
+    UnsupportedCSVEntry,
+    maybe_set_transaction_extra_data,
+)
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition
+from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address, get_key_if_has_val
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -20,14 +26,22 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_fee,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import AssetAmount, AssetMovementCategory, Fee, Location
-from rotkehlchen.utils.misc import satoshis_to_btc
+from rotkehlchen.types import AssetAmount, Fee, Location
+from rotkehlchen.utils.misc import satoshis_to_btc, ts_sec_to_ms
+
+if TYPE_CHECKING:
+    from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
 class BitMEXImporter(BaseExchangeImporter):
+    """BitMEX CSV importer"""
+
+    def __init__(self, db: 'DBHandler') -> None:
+        super().__init__(db=db, name='BitMEX')
+
     @staticmethod
     def _consume_realised_pnl(
             csv_row: dict[str, Any], timestamp_format: str = '%m/%d/%Y, %H:%M:%S %p',
@@ -70,8 +84,9 @@ class BitMEXImporter(BaseExchangeImporter):
 
     @staticmethod
     def _consume_deposits_or_withdrawals(
-            csv_row: dict[str, Any], timestamp_format: str = '%m/%d/%Y, %H:%M:%S %p',
-    ) -> AssetMovement:
+            csv_row: dict[str, Any],
+            timestamp_format: str = '%m/%d/%Y, %H:%M:%S %p',
+    ) -> list[AssetMovement]:
         """
         Use Deposit and Withdrawal entries to generate an AssetMovement object.
         May raise:
@@ -82,7 +97,7 @@ class BitMEXImporter(BaseExchangeImporter):
         amount = deserialize_asset_amount_force_positive(csv_row['amount'])
         fee = deserialize_fee(csv_row['fee']) if csv_row['fee'] != 'null' else Fee(ZERO)
         transact_type = csv_row['transactType']
-        category = AssetMovementCategory.DEPOSIT if transact_type == 'Deposit' else AssetMovementCategory.WITHDRAWAL  # noqa: E501
+        event_type: Final = HistoryEventType.DEPOSIT if transact_type == 'Deposit' else HistoryEventType.WITHDRAWAL  # noqa: E501
         amount = AssetAmount(satoshis_to_btc(amount))  # bitmex stores amounts in satoshis
         fee = Fee(satoshis_to_btc(fee))
         ts = deserialize_timestamp_from_date(
@@ -90,18 +105,29 @@ class BitMEXImporter(BaseExchangeImporter):
             formatstr=timestamp_format,
             location='Bitmex Wallet History Import',
         )
-        return AssetMovement(
+        events = [AssetMovement(
+            timestamp=ts_sec_to_ms(ts),
             location=Location.BITMEX,
-            category=category,
-            address=deserialize_asset_movement_address(csv_row, 'address', asset),
-            transaction_id=get_key_if_has_val(csv_row, 'tx'),
-            timestamp=ts,
+            event_type=event_type,
             asset=asset,
             amount=amount,
-            fee_asset=asset,
-            fee=fee,
-            link=f'Imported from BitMEX CSV file. Transact Type: {transact_type}',
-        )
+            unique_id=(transaction_id := get_key_if_has_val(csv_row, 'tx')),
+            extra_data=maybe_set_transaction_extra_data(
+                address=deserialize_asset_movement_address(csv_row, 'address', asset),
+                transaction_id=transaction_id,
+            ),
+        )]
+        if fee != ZERO:
+            events.append(AssetMovement(
+                timestamp=ts_sec_to_ms(ts),
+                location=Location.BITMEX,
+                event_type=event_type,
+                asset=asset,
+                amount=fee,
+                unique_id=transaction_id,
+                is_fee=True,
+            ))
+        return events
 
     def _import_csv(self, write_cursor: DBCursor, filepath: Path, **kwargs: Any) -> None:
         """
@@ -111,25 +137,35 @@ class BitMEXImporter(BaseExchangeImporter):
         - InputError if a column we need is missing
         """
         with open(filepath, encoding='utf-8-sig') as csvfile:
-            data = csv.DictReader(csvfile)
-            for row in data:
+            for index, row in enumerate(csv.DictReader(csvfile), start=1):
                 try:
+                    self.total_entries += 1
                     if row['transactType'] == 'RealisedPNL':
                         margin_position = self._consume_realised_pnl(row, **kwargs)
                         self.add_margin_trade(write_cursor, margin_position)
                     elif row['transactType'] in {'Deposit', 'Withdrawal'}:
                         if row['transactStatus'] == 'Completed':
-                            self.add_asset_movement(
+                            self.add_history_events(
                                 write_cursor, self._consume_deposits_or_withdrawals(row, **kwargs),
                             )
                     else:
                         raise UnsupportedCSVEntry(
                             f'transactType {row["transactType"]} is not currently supported',
                         )
+                    self.imported_entries += 1
                 except DeserializationError as e:
-                    self.db.msg_aggregator.add_warning(
-                        f'Deserialization error during BitMEX CSV import. '
-                        f'{e!s}. Ignoring entry',
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=f'Deserialization error: {e!s}.',
+                        is_error=True,
+                    )
+                except UnsupportedCSVEntry as e:
+                    self.send_message(
+                        row_index=index,
+                        csv_row=row,
+                        msg=str(e),
+                        is_error=True,
                     )
                 except KeyError as e:
                     raise InputError(f'Could not find key {e!s} in csv row {row!s}') from e

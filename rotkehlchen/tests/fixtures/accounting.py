@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 from collections import defaultdict
+from collections.abc import Generator
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from rotkehlchen.config import default_data_directory
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.misc import USERSDIR_NAME
 from rotkehlchen.db.updates import RotkiDataUpdater
+from rotkehlchen.externalapis.alchemy import Alchemy
 from rotkehlchen.externalapis.coingecko import Coingecko
 from rotkehlchen.externalapis.cryptocompare import Cryptocompare
 from rotkehlchen.externalapis.defillama import Defillama
@@ -24,7 +26,7 @@ from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.oracles.structures import DEFAULT_CURRENT_PRICE_ORACLES_ORDER, CurrentPriceOracle
 from rotkehlchen.premium.premium import Premium
 from rotkehlchen.tests.utils.constants import CURRENT_PRICE_MOCK
-from rotkehlchen.tests.utils.inquirer import inquirer_inject_ethereum_set_order
+from rotkehlchen.tests.utils.inquirer import inquirer_inject_evm_managers_set_order
 from rotkehlchen.types import Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 
@@ -38,23 +40,30 @@ def fixture_use_clean_caching_directory():
 
 
 @pytest.fixture(name='data_dir')
-def fixture_data_dir(use_clean_caching_directory, tmpdir_factory) -> Path:
-    """The tests data dir is peristent so that we can cache global DB.
+def fixture_data_dir(use_clean_caching_directory, tmpdir_factory, worker_id) -> Generator[Path | None, None, None]:  # noqa: E501
+    """The tests data dir is persistent so that we can cache global DB.
     Adjusted from old code. Not sure if it makes sense to keep. Could also just
     force clean caching directory everywhere"""
     if use_clean_caching_directory:
-        return Path(tmpdir_factory.mktemp('test_data_dir'))
-
-    if 'CI' in os.environ:
-        data_directory = Path.home() / '.cache' / '.rotkehlchen-test-dir'
+        path = Path(tmpdir_factory.mktemp('test_data_dir'))
+        yield path
+        shutil.rmtree(path, ignore_errors=sys.platform == 'win32')
     else:
-        data_directory = default_data_directory().parent / 'test_data'
+        if 'CI' in os.environ:
+            data_directory = Path.home() / '.cache' / '.rotkehlchen-test-dir'
+        else:
+            data_directory = default_data_directory().parent / 'test_data'
 
-    data_directory.mkdir(parents=True, exist_ok=True)
-    # But always reset users
-    shutil.rmtree(data_directory / USERSDIR_NAME, ignore_errors=True)
+        if worker_id != 'master':
+            # when running the test in parallel use a path based in the worker id to avoid
+            # conflicts between workers
+            data_directory /= worker_id
 
-    return data_directory
+        data_directory.mkdir(parents=True, exist_ok=True)
+        # But always reset users
+        shutil.rmtree(data_directory / USERSDIR_NAME, ignore_errors=True)
+
+        yield data_directory
 
 
 @pytest.fixture(name='should_mock_price_queries')
@@ -62,7 +71,7 @@ def fixture_should_mock_price_queries():
     return True
 
 
-@pytest.fixture()
+@pytest.fixture
 def default_mock_price_value() -> FVal | None:
     """Determines test behavior If a mock price is not found
 
@@ -74,7 +83,7 @@ def default_mock_price_value() -> FVal | None:
     return None
 
 
-@pytest.fixture()
+@pytest.fixture
 def mocked_price_queries():
     return defaultdict(defaultdict)
 
@@ -118,27 +127,33 @@ def fixture_use_dummy_pot() -> bool:
 
 @pytest.fixture(name='last_accounting_rules_version', scope='session')
 def fixture_last_accounting_rules_version() -> int:
-    return 1
+    return 5
 
 
 @pytest.fixture(name='latest_accounting_rules', autouse=True, scope='session')
-def fixture_download_rules(last_accounting_rules_version) -> Path:
+def fixture_download_rules(last_accounting_rules_version) -> list[tuple[int, Path]]:
     """
-    Returns the path to the file containing the accounting rules as the RotkiDataUpdater ingest
-    them. If the file doesn't exist it is downloaded from github using the version in
-    `last_accounting_rules_version` otherwise we just return the local path.
+    Gets the paths to the files containing the accounting rules as the RotkiDataUpdater ingest
+    them. For each update file, if the files doesn't exist it is downloaded from github. Until we
+    reach the last_acounting_rules_version.
+
+    Returns a list of tuples. (version, update_json_file_path)
     """
     root_dir = default_data_directory().parent / 'test-caching'
     base_dir = root_dir / 'accounting_rules'
-    rules_file = Path(base_dir / f'v{last_accounting_rules_version}.json')
+    result = []
+    for i in range(1, last_accounting_rules_version + 1):
+        rules_file = Path(base_dir / f'v{i}.json')
+        if (rules_file := Path(base_dir / f'v{i}.json')).exists():
+            result.append((i, rules_file))
+            continue
 
-    if rules_file.exists():
-        return rules_file
+        response = requests.get(f'https://raw.githubusercontent.com/rotki/data/develop/updates/accounting_rules/v{i}.json')
+        rules_file.parent.mkdir(exist_ok=True, parents=True)
+        rules_file.write_text(response.text, encoding='utf-8')
+        result.append((i, rules_file))
 
-    response = requests.get(f'https://raw.githubusercontent.com/rotki/data/develop/updates/accounting_rules/v{last_accounting_rules_version}.json')
-    rules_file.parent.mkdir(exist_ok=True, parents=True)
-    rules_file.write_text(response.text, encoding='utf-8')
-    return rules_file
+    return result
 
 
 @pytest.fixture(name='accountant')
@@ -170,10 +185,11 @@ def fixture_accountant(
     )
 
     if accountant_without_rules is False:
-        data_updater.update_accounting_rules(
-            data=json.loads(latest_accounting_rules.read_text(encoding='utf-8'))['accounting_rules'],
-            version=999999,  # only for logs
-        )
+        for version, jsonfile in latest_accounting_rules:
+            data_updater.update_accounting_rules(
+                data=json.loads(jsonfile.read_text(encoding='utf-8'))['accounting_rules'],
+                version=version,
+            )
 
     with ExitStack() as stack:
         if use_dummy_pot:  # don't load ignored assets if dummy
@@ -237,20 +253,21 @@ def _create_inquirer(
         mocked_prices,
         mocked_current_prices_with_oracles,
         current_price_oracles_order,
-        ethereum_manager,
+        evm_managers,
         add_defi_oracles,
         ignore_mocked_prices_for=None,
 ) -> Inquirer:
     # Since this is a singleton and we want it initialized everytime the fixture
     # is called make sure its instance is always starting from scratch
     Inquirer._Inquirer__instance = None  # type: ignore
-    # Get a cryptocompare without a DB since invoking DB fixture here causes problems
+    # Get a defillama,cryptocompare etc without a DB since invoking DB fixture here causes problems
     # of existing user for some tests
     inquirer = Inquirer(
         data_dir=data_directory,
         cryptocompare=Cryptocompare(database=None),
-        coingecko=Coingecko(),
-        defillama=Defillama(),
+        coingecko=Coingecko(database=None),
+        defillama=Defillama(database=None),
+        alchemy=Alchemy(database=None),
         manualcurrent=ManualCurrentOracle(),
         msg_aggregator=MessagesAggregator(),
     )
@@ -262,12 +279,12 @@ def _create_inquirer(
             setattr(Inquirer, x, staticmethod(original_method))
             delattr(Inquirer, old)
 
-    if ethereum_manager is not None:
-        inquirer_inject_ethereum_set_order(
+    if len(evm_managers) > 0:
+        inquirer_inject_evm_managers_set_order(
             inquirer=inquirer,
             add_defi_oracles=add_defi_oracles,
             current_price_oracles_order=current_price_oracles_order,
-            ethereum_manager=ethereum_manager,
+            evm_managers=evm_managers,
         )
 
     inquirer.set_oracles_order(current_price_oracles_order)
@@ -294,15 +311,14 @@ def _create_inquirer(
             to_asset,
             **kwargs,  # pylint: disable=unused-argument
     ):
-        result = mocked_current_prices_with_oracles.get((from_asset, to_asset))
-        if result is not None:  # check mocked_current_prices_with_oracles first
-            return *result, False
-        price, oracle = mocked_prices.get((from_asset, to_asset), (CURRENT_PRICE_MOCK, CurrentPriceOracle.BLOCKCHAIN))  # noqa: E501
-        return price, oracle, False
+        # check mocked_current_prices_with_oracles first
+        if (result := mocked_current_prices_with_oracles.get((from_asset, to_asset))) is not None:
+            return result
+
+        return mocked_prices.get((from_asset, to_asset), (CURRENT_PRICE_MOCK, CurrentPriceOracle.BLOCKCHAIN))  # noqa: E501
 
     def mock_find_usd_price_with_oracle(asset, ignore_cache: bool = False):  # pylint: disable=unused-argument
-        price, oracle = mocked_prices.get(asset, (FVal('1.5'), CurrentPriceOracle.BLOCKCHAIN))
-        return price, oracle, False
+        return mocked_prices.get(asset, (FVal('1.5'), CurrentPriceOracle.BLOCKCHAIN))
 
     # Since we are not yielding here we are using a **really** hacky way in order to
     # achieve two things:
@@ -330,7 +346,7 @@ def _create_inquirer(
                 coming_from_latest_price=False,
         ):
             if from_asset.identifier in ignore_mocked_prices_for:
-                return inquirer.find_price_old(  # pylint: disable=no-member - dynamic attribute
+                return inquirer.find_price_old(  # pylint: disable=no-member # dynamic attribute
                     from_asset=from_asset,
                     to_asset=to_asset,
                     ignore_cache=ignore_cache,
@@ -349,7 +365,7 @@ def _create_inquirer(
                 coming_from_latest_price=False,
         ):
             if asset.identifier in ignore_mocked_prices_for:
-                return inquirer.find_usd_price_old(  # pylint: disable=no-member  dynamic attribute
+                return inquirer.find_usd_price_old(  # pylint: disable=no-member # dynamic attribute
                     asset=asset,
                     ignore_cache=ignore_cache,
                     coming_from_latest_price=coming_from_latest_price,
@@ -360,43 +376,41 @@ def _create_inquirer(
                 coming_from_latest_price=coming_from_latest_price,
             )
 
-        def mock_prices_with_oracles(from_asset, to_asset, ignore_cache=False, coming_from_latest_price=False, match_main_currency=False):  # noqa: E501
+        def mock_prices_with_oracles(from_asset, to_asset, ignore_cache=False, coming_from_latest_price=False):  # noqa: E501
             if from_asset.identifier in ignore_mocked_prices_for:
-                return inquirer.find_price_and_oracle_old(  # pylint: disable=no-member - dynamic attribute
+                return inquirer.find_price_and_oracle_old(  # pylint: disable=no-member # dynamic attribute
                     from_asset=from_asset,
                     to_asset=to_asset,
                     ignore_cache=ignore_cache,
                     coming_from_latest_price=coming_from_latest_price,
-                    match_main_currency=match_main_currency,
                 )
             if len(mocked_current_prices_with_oracles) != 0:
                 price, oracle = mocked_current_prices_with_oracles.get((from_asset, to_asset), (FVal('1.5'), CurrentPriceOracle.BLOCKCHAIN))  # noqa: E501
-                return price, oracle, False
+                return price, oracle
             price = mock_find_price(
                 from_asset=from_asset,
                 to_asset=to_asset,
                 ignore_cache=ignore_cache,
                 coming_from_latest_price=coming_from_latest_price,
             )
-            return price, CurrentPriceOracle.BLOCKCHAIN, False
+            return price, CurrentPriceOracle.BLOCKCHAIN
 
-        def mock_usd_prices_with_oracles(asset, ignore_cache=False, coming_from_latest_price=False, match_main_currency=False):  # noqa: E501
+        def mock_usd_prices_with_oracles(asset, ignore_cache=False, coming_from_latest_price=False):  # noqa: E501
             if asset.identifier in ignore_mocked_prices_for:
-                return inquirer.find_usd_price_and_oracle_old(  # pylint: disable=no-member - dynamic attribute
+                return inquirer.find_usd_price_and_oracle_old(  # pylint: disable=no-member # dynamic attribute
                     asset=asset,
                     ignore_cache=ignore_cache,
                     coming_from_latest_price=coming_from_latest_price,
-                    match_main_currency=match_main_currency,
                 )
             if len(mocked_current_prices_with_oracles) != 0:
                 price, oracle = mocked_current_prices_with_oracles.get(asset, (FVal('1.5'), CurrentPriceOracle.BLOCKCHAIN))  # noqa: E501
-                return price, oracle, False
+                return price, oracle
             price = mock_find_usd_price(
                 asset=asset,
                 ignore_cache=ignore_cache,
                 coming_from_latest_price=coming_from_latest_price,
             )
-            return price, CurrentPriceOracle.BLOCKCHAIN, False
+            return price, CurrentPriceOracle.BLOCKCHAIN
 
         inquirer.find_price = Inquirer.find_price = mock_some_prices  # type: ignore
         inquirer.find_usd_price = Inquirer.find_usd_price = mock_some_usd_prices  # type: ignore
@@ -433,7 +447,7 @@ def fixture_inquirer(
         mocked_current_prices_with_oracles=mocked_current_prices_with_oracles,
         current_price_oracles_order=current_price_oracles_order,
         add_defi_oracles=False,
-        ethereum_manager=None,
+        evm_managers=[],
         ignore_mocked_prices_for=ignore_mocked_prices_for,
     )
 
@@ -448,6 +462,11 @@ def fixture_inquirer_defi(
         current_price_oracles_order,
         ignore_mocked_prices_for,
         ethereum_manager,
+        polygon_pos_manager,
+        arbitrum_one_manager,
+        optimism_manager,
+        base_manager,
+        binance_sc_manager,
 ):
     """This fixture is different from `inquirer` just in the use of defi oracles to query
     prices. If you don't need to use the defi oracles it is faster to use the `inquirer` fixture.
@@ -458,7 +477,14 @@ def fixture_inquirer_defi(
         mocked_prices=mocked_current_prices,
         mocked_current_prices_with_oracles=mocked_current_prices_with_oracles,
         current_price_oracles_order=current_price_oracles_order,
-        ethereum_manager=ethereum_manager,
+        evm_managers=[
+            ethereum_manager,
+            polygon_pos_manager,
+            arbitrum_one_manager,
+            optimism_manager,
+            base_manager,
+            binance_sc_manager,
+        ],
         add_defi_oracles=True,
         ignore_mocked_prices_for=ignore_mocked_prices_for,
     )

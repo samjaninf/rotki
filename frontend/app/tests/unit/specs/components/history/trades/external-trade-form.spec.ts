@@ -1,14 +1,16 @@
-import {
-  type ThisTypedMountOptions,
-  type Wrapper,
-  mount,
-} from '@vue/test-utils';
+import { type ComponentMountingOptions, type VueWrapper, mount } from '@vue/test-utils';
 import BigNumber from 'bignumber.js';
 import { type Pinia, createPinia, setActivePinia } from 'pinia';
-import Vuetify from 'vuetify';
+import { RuiAutoComplete } from '@rotki/ui-library';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ExternalTradeForm from '@/components/history/trades/ExternalTradeForm.vue';
+import { setupDayjs } from '@/utils/date';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useAssetInfoApi } from '@/composables/api/assets/info';
+import { type Trade, TradeType } from '@/types/history/trade';
+import { createNewTrade } from '@/utils/history/trades';
 import type { AssetMap } from '@/types/asset';
-import type { Trade } from '@/types/history/trade';
+import type { useAssetIconApi } from '@/composables/api/assets/icon';
 
 vi.mock('@/store/balances/prices', () => ({
   useBalancePricesStore: vi.fn().mockReturnValue({
@@ -16,9 +18,15 @@ vi.mock('@/store/balances/prices', () => ({
   }),
 }));
 
+vi.mock('@/composables/api/assets/icon', () => ({
+  useAssetIconApi: vi.fn().mockReturnValue({
+    checkAsset: vi.fn().mockResolvedValue(404),
+  } satisfies Partial<ReturnType<typeof useAssetIconApi>>),
+}));
+
 describe('externalTradeForm.vue', () => {
   setupDayjs();
-  let wrapper: Wrapper<ExternalTradeForm>;
+  let wrapper: VueWrapper<InstanceType<typeof ExternalTradeForm>>;
   let pinia: Pinia;
 
   const baseAsset = {
@@ -45,7 +53,7 @@ describe('externalTradeForm.vue', () => {
     location: 'binance',
     baseAsset: 'eip155:1/erc20:0xdAC17F958D2ee523a2206206994597C13D831ec7',
     quoteAsset: 'USD',
-    tradeType: 'buy',
+    tradeType: TradeType.BUY,
     amount: BigNumber('164.02653038'),
     rate: BigNumber('1.0455016'),
     fee: BigNumber('3.51'),
@@ -63,115 +71,68 @@ describe('externalTradeForm.vue', () => {
     vi.mocked(useBalancePricesStore().getHistoricPrice).mockResolvedValue(One);
   });
 
-  const createWrapper = (options: ThisTypedMountOptions<any> = {}) => {
-    const vuetify = new Vuetify();
-    return mount(ExternalTradeForm, {
-      pinia,
-      vuetify,
+  afterEach(() => {
+    wrapper.unmount();
+  });
+
+  const createWrapper = (options: ComponentMountingOptions<typeof ExternalTradeForm> = {}) =>
+    mount(ExternalTradeForm, {
+      global: {
+        plugins: [pinia],
+        components: {
+          RuiAutoComplete,
+        },
+        stubs: {
+          Transition: false,
+          Teleport: true,
+        },
+      },
       ...options,
     });
-  };
 
   describe('should prefill the fields based on the props', () => {
-    it('no `editableItem` passed', async () => {
-      wrapper = createWrapper();
+    it('empty trade data passed', async () => {
+      wrapper = createWrapper({ props: { modelValue: createNewTrade(), editMode: false, errorMessages: {} } });
       await nextTick();
 
-      expect(
-        (wrapper.find('[data-cy=date] input').element as HTMLInputElement).value,
-      ).toBeDefined();
-
-      expect(
-        (
-          wrapper.find('[data-cy=type] [data-cy=trade-input-buy] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe('buy');
-
-      expect(
-        (
-          wrapper.find('[data-cy=type] [data-cy=trade-input-sell] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe('buy');
-
-      expect(
-        (wrapper.find('[data-cy=base-asset] input').element as HTMLInputElement)
-          .value,
-      ).toBe('');
-
-      expect(
-        (
-          wrapper.find('[data-cy=quote-asset] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe('');
-
-      expect(
-        (wrapper.find('[data-cy=amount] input').element as HTMLInputElement)
-          .value,
-      ).toBe('');
-
-      expect(
-        (
-          wrapper.find('[data-cy=trade-rate] [data-cy=primary] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe('');
-
-      expect(
-        (
-          wrapper.find('[data-cy=trade-rate] [data-cy=secondary] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe('');
-
-      expect(
-        (wrapper.find('[data-cy=fee] input').element as HTMLInputElement).value,
-      ).toBe('');
+      expect((wrapper.find('[data-cy=date] input').element as HTMLInputElement).value).toBeDefined();
+      expect(wrapper.find('[data-cy=type] [data-cy=trade-input-buy] input').attributes()).toHaveProperty('checked');
+      expect(wrapper.find('[data-cy=type] [data-cy=trade-input-sell] input').attributes()).not.toHaveProperty(
+        'checked',
+      );
+      expect((wrapper.find('[data-cy=base-asset] input').element as HTMLInputElement).value).toBe('');
+      expect((wrapper.find('[data-cy=quote-asset] input').element as HTMLInputElement).value).toBe('');
+      expect((wrapper.find('[data-cy=amount] input').element as HTMLInputElement).value).toBe('');
+      expect((wrapper.find('[data-cy=trade-rate] [data-cy=primary] input').element as HTMLInputElement).value).toBe('');
+      expect((wrapper.find('[data-cy=trade-rate] [data-cy=secondary] input').element as HTMLInputElement).value).toBe(
+        '',
+      );
+      expect((wrapper.find('[data-cy=fee] input').element as HTMLInputElement).value).toBe('');
     });
 
-    it('`editableItem` passed', async () => {
-      wrapper = createWrapper();
+    it('filled trade data passed', async () => {
+      wrapper = createWrapper({ props: { modelValue: editableItem, editMode: true, errorMessages: {} } });
       await nextTick();
-      await wrapper.setProps({ editableItem });
 
-      const buyRadio = wrapper.find(
-        '[data-cy=type] [data-cy=trade-input-buy] input',
-      );
-      const sellRadio = wrapper.find(
-        '[data-cy=type] [data-cy=trade-input-sell] input',
-      );
+      const buyRadio = wrapper.find('[data-cy=type] [data-cy=trade-input-buy] input');
+      const sellRadio = wrapper.find('[data-cy=type] [data-cy=trade-input-sell] input');
 
-      expect((buyRadio.element as HTMLInputElement).value).toBe(
-        editableItem.tradeType,
-      );
+      const radioAttributes = editableItem.tradeType === TradeType.BUY ? buyRadio.attributes() : sellRadio.attributes();
+      expect(radioAttributes).toHaveProperty('checked');
 
-      expect((sellRadio.element as HTMLInputElement).value).toBe(
-        editableItem.tradeType,
-      );
-
-      await wrapper
-        .find('[data-cy=type] [data-cy=trade-input-sell] input')
-        .trigger('click');
+      await wrapper.find('[data-cy=type] [data-cy=trade-input-sell] input').trigger('click');
 
       await nextTick();
 
-      expect(
-        (wrapper.find('[data-cy=amount] input').element as HTMLInputElement)
-          .value,
-      ).toBe(editableItem.amount.toString());
-
-      expect(
-        (
-          wrapper.find('[data-cy=trade-rate] [data-cy=primary] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe(editableItem.rate.toString());
-
-      expect(
-        (wrapper.find('[data-cy=fee] input').element as HTMLInputElement).value,
-      ).toBe(editableItem.fee?.toString());
+      expect((wrapper.find('[data-cy=amount] input').element as HTMLInputElement).value).toBe(
+        editableItem.amount.toString(),
+      );
+      expect((wrapper.find('[data-cy=trade-rate] [data-cy=primary] input').element as HTMLInputElement).value).toBe(
+        editableItem.rate.toString(),
+      );
+      expect((wrapper.find('[data-cy=fee] input').element as HTMLInputElement).value).toBe(
+        editableItem.fee?.toString(),
+      );
     });
   });
 });

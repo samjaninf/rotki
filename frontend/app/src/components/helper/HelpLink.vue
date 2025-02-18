@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useLinks } from '@/composables/links';
+
 const props = withDefaults(
   defineProps<{
     url: string;
@@ -32,7 +34,7 @@ const { href, onLinkClick } = useLinks(url);
       >
         <RuiIcon
           :size="small ? 20 : 24"
-          name="question-line"
+          name="lu-circle-help"
         />
       </RuiButton>
     </template>

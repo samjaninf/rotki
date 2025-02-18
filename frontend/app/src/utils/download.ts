@@ -14,12 +14,16 @@ export function downloadFileByUrl(url: string, fileName: string): void {
   }
 }
 
-export function downloadFileByBlobResponse(response: AxiosResponse, filename: string) {
+export function downloadFileByBlobResponse(response: AxiosResponse, filename: string): void {
   const url = window.URL.createObjectURL(response.request.response);
   downloadFileByUrl(url, filename);
 }
 
-export function downloadFileByTextContent(text: string, filename: string, type: 'text/plain' | 'application/json' | 'text/csv' = 'text/plain') {
+export function downloadFileByTextContent(
+  text: string,
+  filename: string,
+  type: 'text/plain' | 'application/json' | 'text/csv' = 'text/plain',
+): void {
   const file = new Blob([text], {
     type,
   });

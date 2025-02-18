@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Final, TypedDict, Unpack, overload
+from typing import Any, Final, TypedDict, Unpack, overload
 
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.db.constants import EXTRAINTERNALTXPREFIX
@@ -18,13 +18,14 @@ class DBCacheStatic(Enum):
     LAST_SPAM_ASSETS_DETECT_KEY: Final = 'last_spam_assets_detect_key'
     LAST_AUGMENTED_SPAM_ASSETS_DETECT_KEY: Final = 'last_augmented_spam_assets_detect_key'
     LAST_EVENTS_PROCESSING_TASK_TS: Final = 'last_events_processing_task_ts'
-    LAST_PRODUCED_BLOCKS_QUERY_TS: Final = 'last_produced_blocks_query_ts'
     LAST_WITHDRAWALS_EXIT_QUERY_TS: Final = 'last_withdrawals_exit_query_ts'
     LAST_MONERIUM_QUERY_TS: Final = 'last_monerium_query_ts'
     LAST_AAVE_V3_ASSETS_UPDATE: Final = 'last_aave_v3_assets_update'
     LAST_DELETE_PAST_CALENDAR_EVENTS: Final = 'last_delete_past_calendar_events'
     LAST_CREATE_REMINDER_CHECK_TS: Final = 'last_create_reminder_check_ts'
     LAST_GRAPH_DELEGATIONS_CHECK_TS: Final = 'last_graph_delegations_check_ts'
+    LAST_GNOSISPAY_QUERY_TS: Final = 'last_gnosispay_query_ts'
+    LAST_SPARK_ASSETS_UPDATE: Final = 'last_spark_assets_update'
 
 
 class LabeledLocationArgsType(TypedDict):
@@ -43,10 +44,23 @@ class AddressArgType(TypedDict):
     address: ChecksumEvmAddress
 
 
+class IndexArgType(TypedDict):
+    """Type of kwargs, used to get the value of `DBCacheDynamic.LAST_PRODUCED_BLOCKS_QUERY_TS`"""
+    index: int
+
+
 class ExtraTxArgType(TypedDict):
     """Type of kwargs, used to get the value of `DBCacheDynamic.EXTRA_INTERNAL_TX`"""
-    tx_hash: str  # using str instead of EVMTxHash because DB schema is in TEXT
+    chain_id: int
     receiver: ChecksumEvmAddress
+    tx_hash: str  # using str instead of EVMTxHash because DB schema is in TEXT
+
+
+class BinancePairLastTradeArgsType(TypedDict):
+    """Type of kwargs, used to get the value of `DBCacheDynamic.LAST_CRYPTOTX_OFFSET`"""
+    location: str
+    location_name: str
+    queried_pair: str
 
 
 def _deserialize_int_from_str(value: str) -> int | None:
@@ -66,7 +80,9 @@ class DBCacheDynamic(Enum):
     LAST_BLOCK_ID: Final = '{location}_{location_name}_{account_id}_last_block_id', _deserialize_int_from_str  # noqa: E501
     WITHDRAWALS_TS: Final = 'ethwithdrawalsts_{address}', _deserialize_timestamp_from_str
     WITHDRAWALS_IDX: Final = 'ethwithdrawalsidx_{address}', _deserialize_int_from_str
-    EXTRA_INTERNAL_TX: Final = f'{EXTRAINTERNALTXPREFIX}_{{tx_hash}}_{{receiver}}', string_to_evm_address  # noqa: E501
+    EXTRA_INTERNAL_TX: Final = f'{EXTRAINTERNALTXPREFIX}_{{chain_id}}_{{receiver}}_{{tx_hash}}', string_to_evm_address  # noqa: E501
+    LAST_PRODUCED_BLOCKS_QUERY_TS: Final = 'last_produced_blocks_query_ts_{index}', _deserialize_timestamp_from_str  # noqa: E501
+    BINANCE_PAIR_LAST_ID: Final = '{location}_{location_name}_{queried_pair}', _deserialize_int_from_str  # noqa: E501  # notice that location is added because it can be either binance or binance_us
 
     @overload
     def get_db_key(self, **kwargs: Unpack[LabeledLocationArgsType]) -> str:
@@ -84,7 +100,11 @@ class DBCacheDynamic(Enum):
     def get_db_key(self, **kwargs: Unpack[ExtraTxArgType]) -> str:
         ...
 
-    def get_db_key(self, **kwargs: str) -> str:
+    @overload
+    def get_db_key(self, **kwargs: Unpack[IndexArgType]) -> str:
+        ...
+
+    def get_db_key(self, **kwargs: Any) -> str:
         """Get the key that is used in the DB schema for the given kwargs.
 
         May Raise KeyError if incompatible kwargs are passed. Pass the kwargs according to the

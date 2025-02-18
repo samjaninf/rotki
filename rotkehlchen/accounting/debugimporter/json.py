@@ -13,7 +13,8 @@ from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import AssetMovement, Loan, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import Loan, MarginPosition, Trade
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -51,6 +52,8 @@ class DebugHistoryImporter:
         events: list[AccountingEventMixin] = []
         try:
             for event in debug_data['events']:
+                if 'extra_data' not in event:  # May be missing for non EVM events in old debug data  # noqa: E501
+                    event['extra_data'] = None
                 event_type = AccountingEventType.deserialize(event['accounting_event_type'])
                 match event_type:
                     case AccountingEventType.TRADE:

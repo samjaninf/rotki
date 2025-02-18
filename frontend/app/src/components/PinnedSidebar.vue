@@ -1,17 +1,11 @@
 <script setup lang="ts">
-const props = defineProps<{ visible: boolean }>();
+import { useAreaVisibilityStore } from '@/store/session/visibility';
 
-const emit = defineEmits<{
-  (e: 'update:visible', visible: boolean): void;
-}>();
+const ReportActionableCard = defineAsyncComponent(() => import('@/components/profitloss/ReportActionableCard.vue'));
 
-const display = useVModel(props, 'visible', emit);
+const { pinned, showPinned } = storeToRefs(useAreaVisibilityStore());
 
-const ReportActionableCard = defineAsyncComponent(
-  () => import('@/components/profitloss/ReportActionableCard.vue'),
-);
-
-const { pinned } = storeToRefs(useAreaVisibilityStore());
+const { isLgAndDown } = useBreakpoint();
 
 const component: ComputedRef = computed(() => {
   const pinnedValue = get(pinned);
@@ -23,14 +17,12 @@ const component: ComputedRef = computed(() => {
 </script>
 
 <template>
-  <VNavigationDrawer
-    v-model="display"
-    class="pinned-sidebar"
-    clipped
-    width="560px"
-    right
-    temporary
-    hide-overlay
+  <RuiNavigationDrawer
+    v-model="showPinned"
+    :temporary="isLgAndDown"
+    width="500px"
+    position="right"
+    class="border-l border-rui-grey-300 dark:border-rui-grey-800 z-[6]"
   >
     <div>
       <Component
@@ -39,24 +31,5 @@ const component: ComputedRef = computed(() => {
         v-bind="pinned.props"
       />
     </div>
-  </VNavigationDrawer>
+  </RuiNavigationDrawer>
 </template>
-
-<style scoped lang="scss">
-.pinned-sidebar {
-  top: 64px !important;
-  box-shadow: 0 2px 12px rgba(74, 91, 120, 0.1);
-  padding-top: 0 !important;
-  border-top: var(--v-rotki-light-grey-darken1) solid thin;
-
-  &--mobile {
-    top: 56px !important;
-  }
-
-  &.v-navigation-drawer {
-    &--is-mobile {
-      padding-top: 0 !important;
-    }
-  }
-}
-</style>

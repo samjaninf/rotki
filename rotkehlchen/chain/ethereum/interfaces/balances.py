@@ -21,8 +21,8 @@ from rotkehlchen.types import ChecksumEvmAddress, Location
 from rotkehlchen.utils.misc import get_chunks
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.evm.decoding.decoder import EVMTransactionDecoder
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,19 @@ PROTOCOLS_WITH_BALANCES = Literal[
     'compound-v3',
     'aave',
     'blur',
-    'hop-protocol',
+    'hop',
+    'gearbox',
+    'safe',
+    'extrafi',
+    'umami',
+    'balancer-v1',
+    'balancer-v2',
+    'walletconnect',
+    'aura-finance',
+    'giveth',
+    'uniswap-v3',
+    'hedgey',
 ]
-BalancesType = dict[ChecksumEvmAddress, dict[EvmToken, Balance]]
 BalancesSheetType = dict[ChecksumEvmAddress, BalanceSheet]
 
 
@@ -56,14 +66,15 @@ class ProtocolWithBalance(abc.ABC):
 
     def __init__(
             self,
-            database: 'DBHandler',
             evm_inquirer: 'EvmNodeInquirer',
+            tx_decoder: 'EVMTransactionDecoder',
             counterparty: PROTOCOLS_WITH_BALANCES,
             deposit_event_types: set[tuple[HistoryEventType, HistoryEventSubType]],
     ):
         self.counterparty = counterparty
-        self.event_db = DBHistoryEvents(database)
+        self.event_db = DBHistoryEvents(evm_inquirer.database)
         self.evm_inquirer = evm_inquirer
+        self.tx_decoder = tx_decoder
         self.deposit_event_types = deposit_event_types
 
     def addresses_with_activity(
@@ -119,13 +130,13 @@ class ProtocolWithGauges(ProtocolWithBalance):
 
     def __init__(
             self,
-            database: 'DBHandler',
             evm_inquirer: 'EvmNodeInquirer',
+            tx_decoder: 'EVMTransactionDecoder',
             counterparty: PROTOCOLS_WITH_BALANCES,
             deposit_event_types: set[tuple[HistoryEventType, HistoryEventSubType]],
             gauge_deposit_event_types: set[tuple[HistoryEventType, HistoryEventSubType]],
     ):
-        super().__init__(database=database, evm_inquirer=evm_inquirer, counterparty=counterparty, deposit_event_types=deposit_event_types)  # noqa: E501
+        super().__init__(evm_inquirer=evm_inquirer, tx_decoder=tx_decoder, counterparty=counterparty, deposit_event_types=deposit_event_types)  # noqa: E501
         self.gauge_deposit_event_types = gauge_deposit_event_types
 
     def addresses_with_gauge_deposits(self) -> dict[ChecksumEvmAddress, list['EvmEvent']]:
@@ -195,7 +206,7 @@ class ProtocolWithGauges(ProtocolWithBalance):
         )
         result = self.evm_inquirer.contract_scan.call(
             node_inquirer=self.evm_inquirer,
-            method_name='tokensBalance',
+            method_name='tokens_balance',
             arguments=[address, staking_addresses],
             call_order=call_order,
         )

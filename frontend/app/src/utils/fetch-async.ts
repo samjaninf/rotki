@@ -1,14 +1,16 @@
-import { Severity } from '@rotki/common/lib/messages';
-import * as logger from 'loglevel';
+import { Severity } from '@rotki/common';
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
+import { logger } from '@/utils/logging';
+import { isTaskCancelled } from '@/utils/index';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useStatusUpdater } from '@/composables/status';
 import type { TaskMeta } from '@/types/task';
 import type { FetchData } from '@/types/fetch';
+import type { Ref } from 'vue';
 
-export async function fetchDataAsync<T extends TaskMeta, R>(
-  data: FetchData<T, R>,
-  state: Ref<R>,
-): Promise<void> {
+export async function fetchDataAsync<T extends TaskMeta, R>(data: FetchData<T, R>, state: Ref<R>): Promise<void> {
   if (
     !get(data.state.activeModules).includes(data.requires.module)
     || (data.requires.premium && !get(data.state.isPremium))
@@ -21,10 +23,7 @@ export async function fetchDataAsync<T extends TaskMeta, R>(
   const task = data.task;
   const { getStatus, setStatus } = useStatusUpdater(task.section);
 
-  if (
-    get(isTaskRunning(task.type, data.task.checkLoading))
-    || (getStatus() === Status.LOADED && !data.refresh)
-  ) {
+  if (get(isTaskRunning(task.type, data.task.checkLoading)) || (getStatus() === Status.LOADED && !data.refresh)) {
     logger.debug(`${Section[data.task.section]} is already loading`);
     return;
   }
@@ -41,10 +40,10 @@ export async function fetchDataAsync<T extends TaskMeta, R>(
       logger.error(`action failure for task ${TaskType[task.type]}:`, error);
       const { notify } = useNotificationsStore();
       notify({
-        title: task.onError.title,
+        display: true,
         message: task.onError.error(error.message),
         severity: Severity.ERROR,
-        display: true,
+        title: task.onError.title,
       });
     }
   }

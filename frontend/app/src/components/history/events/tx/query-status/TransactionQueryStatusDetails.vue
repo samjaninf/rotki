@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import TransactionQueryStatusLine from '@/components/history/events/tx/query-status/TransactionQueryStatusLine.vue';
+import EvmChainIcon from '@/components/helper/display/icons/EvmChainIcon.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import type { EvmTransactionQueryData } from '@/types/websocket-messages';
 
 defineProps<{ item: EvmTransactionQueryData }>();
@@ -25,16 +29,18 @@ defineProps<{ item: EvmTransactionQueryData }>();
       <template #activator>
         <RuiIcon
           class="text-rui-text-secondary"
-          name="question-line"
+          name="lu-circle-help"
+          size="18"
         />
       </template>
 
-      <i18n
-        :path="
+      <i18n-t
+        :keypath="
           item.period[0] === 0
             ? 'transactions.query_status.latest_period_end_date'
             : 'transactions.query_status.latest_period_date_range'
         "
+        tag="span"
       >
         <template #start>
           <DateDisplay :timestamp="item.period[0]" />
@@ -42,7 +48,7 @@ defineProps<{ item: EvmTransactionQueryData }>();
         <template #end>
           <DateDisplay :timestamp="item.period[1]" />
         </template>
-      </i18n>
+      </i18n-t>
     </RuiTooltip>
   </div>
 </template>

@@ -1,10 +1,14 @@
 import flushPromises from 'flush-promises';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useEth2Staking } from '@/composables/staking/eth2/eth2';
+import { usePremium } from '@/composables/premium';
+import { useItemsPerPage } from '@/composables/session/use-items-per-page';
 
 describe('composables::staking/eth2/eth2', () => {
   setActivePinia(createPinia());
 
   beforeEach(() => {
-    const { premium } = storeToRefs(usePremiumStore());
+    const premium = usePremium();
     set(premium, true);
     vi.clearAllMocks();
   });
@@ -17,7 +21,7 @@ describe('composables::staking/eth2/eth2', () => {
       expect(get(performance).validators).toHaveLength(10);
       expect(get(performance).entriesTotal).toBe(11);
 
-      const { itemsPerPage } = storeToRefs(useFrontendSettingsStore());
+      const itemsPerPage = useItemsPerPage();
 
       set(itemsPerPage, 25);
       set(pagination, { ...get(pagination), offset: 10 });

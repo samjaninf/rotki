@@ -7,6 +7,7 @@ if TYPE_CHECKING:
 
 
 def _do_upgrade(cursor: 'DBCursor', progress_handler: 'DBUpgradeProgressHandler') -> None:
+    progress_handler.new_step(name='Updating balancer tables.')
     cursor.execute('DROP TABLE IF EXISTS balancer_events;')
     cursor.execute("""
 CREATE TABLE IF NOT EXISTS balancer_events (
@@ -31,9 +32,9 @@ CREATE TABLE IF NOT EXISTS balancer_events (
 );
 """)
     cursor.execute('DROP TABLE IF EXISTS balancer_pools;')
-    cursor.execute('DELETE FROM used_query_ranges WHERE name LIKE "balancer_events%";')
-    progress_handler.new_step()
+    cursor.execute("DELETE FROM used_query_ranges WHERE name LIKE 'balancer_events%';")
 
+    progress_handler.new_step(name='Updating amm_swaps table.')
     cursor.execute('DROP TABLE IF EXISTS amm_swaps;')
     cursor.execute("""
 CREATE TABLE IF NOT EXISTS amm_swaps (
@@ -54,10 +55,10 @@ CREATE TABLE IF NOT EXISTS amm_swaps (
     FOREIGN KEY(token1_identifier) REFERENCES assets(identifier) ON UPDATE CASCADE,
     PRIMARY KEY (tx_hash, log_index)
 );""")
-    cursor.execute('DELETE FROM used_query_ranges WHERE name LIKE "balancer_trades%";')
-    cursor.execute('DELETE FROM used_query_ranges WHERE name LIKE "uniswap_trades%";')
-    progress_handler.new_step()
+    cursor.execute("DELETE FROM used_query_ranges WHERE name LIKE 'balancer_trades%';")
+    cursor.execute("DELETE FROM used_query_ranges WHERE name LIKE 'uniswap_trades%';")
 
+    progress_handler.new_step(name='Updating uniswap_events table.')
     cursor.execute('DROP TABLE IF EXISTS uniswap_events;')
     cursor.execute("""
 CREATE TABLE IF NOT EXISTS uniswap_events (
@@ -77,8 +78,7 @@ CREATE TABLE IF NOT EXISTS uniswap_events (
     FOREIGN KEY(token1_identifier) REFERENCES assets(identifier) ON UPDATE CASCADE,
     PRIMARY KEY (tx_hash, log_index)
 );""")
-    cursor.execute('DELETE FROM used_query_ranges WHERE name LIKE "uniswap_events%";')
-    progress_handler.new_step()
+    cursor.execute("DELETE FROM used_query_ranges WHERE name LIKE 'uniswap_events%';")
 
 
 def upgrade_v26_to_v27(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHandler') -> None:

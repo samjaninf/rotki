@@ -1,22 +1,32 @@
+import { createBlockie } from '@/utils/blockie';
+import { logger } from '@/utils/logging';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+
 const CACHE_SIZE = 100;
 
-export const useBlockie = createSharedComposable(() => {
+interface UseBlockieReturn {
+  cache: Map<string, string>;
+  getBlockie: (address?: string | null) => string;
+}
+
+export const useBlockie = createSharedComposable((): UseBlockieReturn => {
   const cache: Map<string, string> = new Map();
 
   const { itemsPerPage } = storeToRefs(useFrontendSettingsStore());
 
-  const put = (address: string, image: string) => {
+  const put = (address: string, image: string): void => {
     const cacheSize = Math.max(CACHE_SIZE, 3 * get(itemsPerPage));
 
     if (cache.size === cacheSize) {
       logger.debug(`Hit cache size of ${cacheSize} going to evict items`);
       const removeKey = cache.keys().next().value;
+      assert(removeKey, 'removeKey is null');
       cache.delete(removeKey);
     }
     cache.set(address, image);
   };
 
-  const getBlockie = (address: string | null = '') => {
+  const getBlockie = (address: string | null = ''): string => {
     if (!address)
       return '';
 

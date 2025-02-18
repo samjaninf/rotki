@@ -1,6 +1,5 @@
 import pytest
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.arbitrum_one.modules.gmx.constants import (
     CPT_GMX,
@@ -19,13 +18,12 @@ from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('arbitrum_one_accounts', [['0x22E798f9440F563B92AAE24E94C75DfA499e3d3E']])
-def test_swap_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
+def test_swap_in_gmx(arbitrum_one_inquirer, arbitrum_one_accounts):
     evmhash = deserialize_evm_tx_hash('0x5969392c45eaf7e6e3453e2405afb23eb2424e8e4ba2d14e38943fdcdab55d5f')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=arbitrum_one_inquirer,
-        database=database,
         tx_hash=evmhash,
     )
     user_address = arbitrum_one_accounts[0]
@@ -43,9 +41,9 @@ def test_swap_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(amount=FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=evmhash,
@@ -55,7 +53,7 @@ def test_swap_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.APPROVE,
             asset=a_usdce,
-            balance=Balance(FVal('18446744073709551614999995512857.612984')),
+            amount=FVal('18446744073709551614999995512857.612984'),
             location_label=user_address,
             address=GMX_ROUTER_ADDRESS,
             notes='Set USDC.e spending approval of 0x22E798f9440F563B92AAE24E94C75DfA499e3d3E by 0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064 to 18446744073709551614999995512857.612984',  # noqa: E501
@@ -67,7 +65,7 @@ def test_swap_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.SPEND,
             asset=a_usdce,
-            balance=Balance(amount=FVal(swap_amount)),
+            amount=FVal(swap_amount),
             location_label=user_address,
             notes=f'Swap {swap_amount} USDC.e in GMX',
             counterparty=CPT_GMX,
@@ -80,7 +78,7 @@ def test_swap_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=a_link,
-            balance=Balance(amount=FVal(received_amount)),
+            amount=FVal(received_amount),
             location_label=user_address,
             notes=f'Receive {received_amount} LINK as the result of a GMX swap',
             counterparty=CPT_GMX,
@@ -89,13 +87,12 @@ def test_swap_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
     ]
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('arbitrum_one_accounts', [['0x0C0e6d63A7933e1C2dE16E1d5E61dB1cA802BF51']])
-def test_long_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
+def test_long_in_gmx(arbitrum_one_inquirer, arbitrum_one_accounts):
     evmhash = deserialize_evm_tx_hash('0x99eed649e7845813353b29dba0ac248dc328253051a778ca895a0a6c34092798')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=arbitrum_one_inquirer,
-        database=database,
         tx_hash=evmhash,
     )
     user_address = arbitrum_one_accounts[0]
@@ -110,9 +107,9 @@ def test_long_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(amount=FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=evmhash,
@@ -122,7 +119,7 @@ def test_long_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_ETH,
-            balance=Balance(FVal(amount_deposited)),
+            amount=FVal(amount_deposited),
             location_label=user_address,
             notes=f'Increase long position with {amount_deposited} ETH in GMX',
             address=GMX_POSITION_ROUTER,
@@ -136,7 +133,7 @@ def test_long_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(FVal(fee_amount)),
+            amount=FVal(fee_amount),
             location_label=user_address,
             notes=f'Spend {fee_amount} ETH as GMX fee',
             counterparty=CPT_GMX,
@@ -145,13 +142,12 @@ def test_long_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
     ]
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('arbitrum_one_accounts', [['0x3D4d8A52D5717b09CA1e1980393d244Ac258C6AA']])
-def test_decrease_short_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
+def test_decrease_short_in_gmx(arbitrum_one_inquirer, arbitrum_one_accounts):
     evmhash = deserialize_evm_tx_hash('0xa3dd437d57689479db67ce685c4b70ee9bdbfbcc53f99fc343f73c89edaafe7a')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=arbitrum_one_inquirer,
-        database=database,
         tx_hash=evmhash,
     )
     user_address = arbitrum_one_accounts[0]
@@ -167,7 +163,7 @@ def test_decrease_short_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_acc
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
             asset=a_usdc,
-            balance=Balance(FVal(amount_withdrawn)),
+            amount=FVal(amount_withdrawn),
             location_label=user_address,
             notes=f'Decrease short position withdrawing {amount_withdrawn} USDC in GMX',
             address=GMX_POSITION_ROUTER,
@@ -181,7 +177,7 @@ def test_decrease_short_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_acc
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(FVal(fee_amount)),
+            amount=FVal(fee_amount),
             location_label=user_address,
             notes=f'Spend {fee_amount} ETH as GMX fee',
             counterparty=CPT_GMX,
@@ -190,13 +186,12 @@ def test_decrease_short_in_gmx(database, arbitrum_one_inquirer, arbitrum_one_acc
     ]
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('arbitrum_one_accounts', [['0xB5E10681aA81cd65D74912015220999044b9520C']])
-def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
+def test_stake_gmx(arbitrum_one_inquirer, arbitrum_one_accounts):
     evmhash = deserialize_evm_tx_hash('0x682aa15cb8d49021ae5b12c89f6d0138387c4819b1a31b80f67b70aac55d199c')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=arbitrum_one_inquirer,
-        database=database,
         tx_hash=evmhash,
     )
     user_address = arbitrum_one_accounts[0]
@@ -213,9 +208,9 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(amount=FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
             tx_hash=evmhash,
@@ -225,7 +220,7 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.APPROVE,
             asset=A_GMX,
-            balance=Balance(FVal(approve_amount)),
+            amount=FVal(approve_amount),
             location_label=user_address,
             notes=f'Set GMX spending approval of {user_address} by {sgmx_address} to {approve_amount}',  # noqa: E501
             address=sgmx_address,
@@ -235,9 +230,9 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
             event_type=HistoryEventType.STAKING,
-            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+            event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
             asset=A_GMX,
-            balance=Balance(FVal(staked_amount)),
+            amount=FVal(staked_amount),
             location_label=user_address,
             notes=f'Stake {staked_amount} GMX in GMX',
             counterparty=CPT_GMX,
@@ -250,7 +245,7 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
             asset=Asset('eip155:42161/erc20:0x908C4D94D34924765f1eDc22A1DD098397c59dD4'),
-            balance=Balance(FVal(staked_amount)),
+            amount=FVal(staked_amount),
             location_label=user_address,
             notes='Receive 15.9 sGMX after staking in GMX',
             counterparty=CPT_GMX,
@@ -261,9 +256,9 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
             event_type=HistoryEventType.STAKING,
-            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+            event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
             asset=Asset('eip155:42161/erc20:0x908C4D94D34924765f1eDc22A1DD098397c59dD4'),
-            balance=Balance(FVal(staked_amount)),
+            amount=FVal(staked_amount),
             location_label=user_address,
             notes=f'Stake {staked_amount} sGMX in GMX',
             counterparty=CPT_GMX,
@@ -276,7 +271,7 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
             asset=Asset('eip155:42161/erc20:0x4d268a7d4C16ceB5a606c173Bd974984343fea13'),
-            balance=Balance(FVal(staked_amount)),
+            amount=FVal(staked_amount),
             location_label=user_address,
             notes=f'Receive {staked_amount} sbGMX after staking in GMX',
             counterparty=CPT_GMX,
@@ -287,9 +282,9 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
             event_type=HistoryEventType.STAKING,
-            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+            event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
             asset=Asset('eip155:42161/erc20:0x4d268a7d4C16ceB5a606c173Bd974984343fea13'),
-            balance=Balance(FVal(staked_amount)),
+            amount=FVal(staked_amount),
             location_label=user_address,
             notes=f'Stake {staked_amount} sbGMX in GMX',
             counterparty=CPT_GMX,
@@ -302,7 +297,7 @@ def test_stake_gmx(database, arbitrum_one_inquirer, arbitrum_one_accounts):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
             asset=Asset('eip155:42161/erc20:0xd2D1162512F927a7e282Ef43a362659E4F2a728F'),
-            balance=Balance(FVal(staked_amount)),
+            amount=FVal(staked_amount),
             location_label=user_address,
             notes=f'Receive {staked_amount} sbfGMX after staking in GMX',
             counterparty=CPT_GMX,
