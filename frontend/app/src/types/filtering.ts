@@ -1,7 +1,5 @@
 import { z } from 'zod';
 import { AssetInfoWithId, type AssetsWithId } from '@/types/asset';
-import type { AssetInfo } from '@rotki/common/lib/data';
-import type { DateFormat } from '@/types/date-format';
 
 export enum FilterBehaviour {
   INCLUDE = 'include',
@@ -25,8 +23,7 @@ interface BaseMatcher<K, KV = void> {
   readonly multiple?: boolean;
 }
 
-export interface StringSuggestionMatcher<K, KV = void>
-  extends BaseMatcher<K, KV> {
+export interface StringSuggestionMatcher<K, KV = void> extends BaseMatcher<K, KV> {
   readonly string: true;
   readonly suggestions: StringSuggestion;
   readonly validate: (value: string) => boolean;
@@ -56,65 +53,28 @@ export type MatchedKeyword<T extends string> = {
 };
 
 export type MatchedKeywordWithBehaviour<T extends string> = {
-  [key in T]?:
-    | string
-    | string[]
-    | boolean
-    | FilterObjectWithBehaviour<string | string[] | boolean>;
+  [key in T]?: string | string[] | boolean | FilterObjectWithBehaviour<string | string[] | boolean>;
 };
 
 export const BaseSuggestion = z.object({
+  exclude: z.boolean().optional(),
   key: z.string(),
   value: AssetInfoWithId.or(z.string()).or(z.boolean()),
-  exclude: z.boolean().optional(),
 });
 
 export type BaseSuggestion = z.infer<typeof BaseSuggestion>;
 
 export const Suggestion = BaseSuggestion.extend({
+  asset: z.boolean(),
   index: z.number(),
   total: z.number(),
-  asset: z.boolean(),
 });
 
 export type Suggestion = z.infer<typeof Suggestion>;
 
 export enum SavedFilterLocation {
   HISTORY_TRADES = 'historyTrades',
-  HISTORY_DEPOSITS_WITHDRAWALS = 'historyDepositsWithdrawals',
   HISTORY_EVENTS = 'historyEvents',
   BLOCKCHAIN_ACCOUNTS = 'blockchainAccounts',
-}
-
-export function assetSuggestions(assetSearch: (keyword: string, limit: number) => Promise<AssetsWithId>) {
-  return async (value: string) =>
-    await assetSearch(value, 5);
-}
-
-export function assetDeserializer(assetInfo: (identifier: string) => ComputedRef<AssetInfo | null>) {
-  return (identifier: string): AssetInfoWithId | null => {
-    const asset = get(assetInfo(identifier));
-    if (!asset)
-      return null;
-
-    return {
-      ...asset,
-      identifier,
-    };
-  };
-}
-
-export function dateValidator(dateInputFormat: Ref<DateFormat>) {
-  return (value: string) =>
-    value.length > 0 && !isNaN(convertToTimestamp(value, get(dateInputFormat)));
-}
-
-export function dateSerializer(dateInputFormat: Ref<DateFormat>) {
-  return (date: string) =>
-    convertToTimestamp(date, get(dateInputFormat)).toString();
-}
-
-export function dateDeserializer(dateInputFormat: Ref<DateFormat>) {
-  return (timestamp: string) =>
-    convertFromTimestamp(parseInt(timestamp), get(dateInputFormat));
+  ETH_VALIDATORS = 'ethValidators',
 }

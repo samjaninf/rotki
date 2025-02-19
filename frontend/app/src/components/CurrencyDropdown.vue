@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { type Currency, useCurrencies } from '@/types/currencies';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useSettingsStore } from '@/store/settings';
+import ListItem from '@/components/common/ListItem.vue';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+import { useCurrencyUpdate } from '@/composables/use-currency-update';
 
 const { update } = useSettingsStore();
 const { currency } = storeToRefs(useGeneralSettingsStore());
@@ -9,6 +14,7 @@ const visible = ref<boolean>(false);
 
 const { t } = useI18n();
 const { currencies } = useCurrencies();
+const { onCurrencyUpdate } = useCurrencyUpdate();
 
 const filteredCurrencies = computed<Currency[]>(() => {
   const filterValue = get(filter).toLocaleLowerCase();
@@ -29,9 +35,10 @@ async function onSelected(newCurrency: Currency) {
     return;
 
   await update({ mainCurrency: newCurrency.tickerSymbol });
+  await onCurrencyUpdate();
 }
 
-const { start, stop, isPending } = useTimeoutFn(
+const { isPending, start, stop } = useTimeoutFn(
   () => {
     set(filter, '');
   },
@@ -63,15 +70,16 @@ function calculateFontSize(symbol: string) {
     menu-class="w-[22rem]"
     :popper="{ placement: 'bottom' }"
   >
-    <template #activator="{ on }">
+    <template #activator="{ attrs }">
       <MenuTooltipButton
         :tooltip="
           t('currency_drop_down.profit_currency', {
             currency: currency.tickerSymbol,
           })
         "
-        class-name="currency-dropdown text-[1.375rem] font-bold"
-        v-on="on"
+        class-name="text-[1.375rem] font-bold"
+        data-cy="currency-dropdown"
+        v-bind="attrs"
       >
         {{ currency.unicodeSymbol }}
       </MenuTooltipButton>

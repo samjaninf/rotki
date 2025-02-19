@@ -1,47 +1,42 @@
 <script setup lang="ts">
+import { PrioritizedListData, type PrioritizedListItemData } from '@/types/settings/prioritized-list-data';
 import {
-  PrioritizedListData,
-  type PrioritizedListItemData,
-} from '@/types/settings/prioritized-list-data';
-import {
+  ALCHEMY_PRIO_LIST_ITEM,
   COINGECKO_PRIO_LIST_ITEM,
   CRYPTOCOMPARE_PRIO_LIST_ITEM,
   DEFILAMA_PRIO_LIST_ITEM,
-  MANUALCURRENT_PRIO_LIST_ITEM,
   MANUAL_PRIO_LIST_ITEM,
   type PrioritizedListId,
   UNISWAP2_PRIO_LIST_ITEM,
   UNISWAP3_PRIO_LIST_ITEM,
 } from '@/types/settings/prioritized-list-id';
+import { useHistoricCachePriceStore } from '@/store/prices/historic';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import PrioritizedList from '@/components/helper/PrioritizedList.vue';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+import PriceRefresh from '@/components/helper/PriceRefresh.vue';
+import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
 
 const currentOracles = ref<PrioritizedListId[]>([]);
 const historicOracles = ref<PrioritizedListId[]>([]);
 
-const { currentPriceOracles, historicalPriceOracles } = storeToRefs(
-  useGeneralSettingsStore(),
-);
+const { currentPriceOracles, historicalPriceOracles } = storeToRefs(useGeneralSettingsStore());
 
 function resetCurrentPriceOracles() {
   set(currentOracles, get(currentPriceOracles));
 }
 
-const baseAvailableOraclesTyped: Array<
-  PrioritizedListItemData<PrioritizedListId>
-> = [
+const baseAvailableOraclesTyped: Array<PrioritizedListItemData<PrioritizedListId>> = [
   CRYPTOCOMPARE_PRIO_LIST_ITEM,
   COINGECKO_PRIO_LIST_ITEM,
   DEFILAMA_PRIO_LIST_ITEM,
+  ALCHEMY_PRIO_LIST_ITEM,
+  UNISWAP2_PRIO_LIST_ITEM,
+  UNISWAP3_PRIO_LIST_ITEM,
 ];
 
 function availableCurrentOracles(): PrioritizedListData<PrioritizedListId> {
-  const itemData: Array<PrioritizedListItemData<PrioritizedListId>> = [
-    ...baseAvailableOraclesTyped,
-    UNISWAP2_PRIO_LIST_ITEM,
-    UNISWAP3_PRIO_LIST_ITEM,
-    MANUALCURRENT_PRIO_LIST_ITEM,
-  ];
-
-  return new PrioritizedListData(itemData);
+  return new PrioritizedListData([...baseAvailableOraclesTyped]);
 }
 
 function availableHistoricOracles(): PrioritizedListData<PrioritizedListId> {
@@ -71,15 +66,27 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <SettingCategory>
-    <template #title>
-      {{ t('price_oracle_settings.title') }}
-    </template>
-    <template #subtitle>
-      {{ t('price_oracle_settings.subtitle') }}
-    </template>
-
-    <div class="grid md:grid-cols-2 gap-4">
+  <div class="flex flex-col gap-5">
+    <div class="pb-5 flex flex-wrap gap-4 items-center justify-between border-b border-default">
+      <SettingCategoryHeader>
+        <template #title>
+          {{ t('price_oracle_settings.title') }}
+        </template>
+        <template #subtitle>
+          {{ t('price_oracle_settings.subtitle') }}
+        </template>
+      </SettingCategoryHeader>
+      <PriceRefresh
+        @click="resetCachedHistoricalPrices()"
+      />
+    </div>
+    <RuiAlert
+      v-if="currentOracles.length === 0 || historicOracles.length === 0"
+      type="warning"
+    >
+      {{ t('price_oracle_selection.hint') }}
+    </RuiAlert>
+    <div class="grid grid-flow-col gap-4 grid-rows-[repeat(4,auto)] lg:grid-rows-[repeat(2,auto)] lg:grid-cols-2">
       <SettingsOption
         #default="{ error, success, updateImmediate }"
         setting="currentPriceOracles"
@@ -87,11 +94,11 @@ const { t } = useI18n();
         @finished="resetCurrentPriceOracles()"
       >
         <PrioritizedList
-          :value="currentOracles"
+          :model-value="currentOracles"
           :all-items="availableCurrentOracles()"
           :status="{ error, success }"
           :item-data-name="t('price_oracle_settings.data_name')"
-          @input="updateImmediate($event)"
+          @update:model-value="updateImmediate($event)"
         >
           <template #title>
             {{ t('price_oracle_settings.latest_prices') }}
@@ -105,11 +112,11 @@ const { t } = useI18n();
         @finished="resetHistoricalPriceOracles(true)"
       >
         <PrioritizedList
-          :value="historicOracles"
+          :model-value="historicOracles"
           :all-items="availableHistoricOracles()"
           :status="{ error, success }"
           :item-data-name="t('price_oracle_settings.data_name')"
-          @input="updateImmediate($event)"
+          @update:model-value="updateImmediate($event)"
         >
           <template #title>
             {{ t('price_oracle_settings.historic_prices') }}
@@ -117,14 +124,5 @@ const { t } = useI18n();
         </PrioritizedList>
       </SettingsOption>
     </div>
-    <div class="text-caption mt-2">
-      {{ t('price_oracle_selection.hint') }}
-    </div>
-    <div class="mt-4">
-      <PriceRefresh
-        class="mt-6"
-        @click="resetCachedHistoricalPrices()"
-      />
-    </div>
-  </SettingCategory>
+  </div>
 </template>

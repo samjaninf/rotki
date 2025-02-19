@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import StatCardColumn from '@/components/display/StatCardColumn.vue';
+import PercentageDisplay from '@/components/display/PercentageDisplay.vue';
+import StatCardWide from '@/components/display/StatCardWide.vue';
 import type { BigNumber } from '@rotki/common';
 
 defineProps<{
@@ -29,7 +33,7 @@ const { t } = useI18n();
         {{ t('lending.effective_interest_rate') }}
         <RuiTooltip tooltip-class="max-w-[10rem]">
           <template #activator>
-            <RuiIcon name="information-line" />
+            <RuiIcon name="lu-info" />
           </template>
           {{ t('lending.effective_interest_rate_tooltip') }}
         </RuiTooltip>
@@ -37,11 +41,7 @@ const { t } = useI18n();
 
       <PercentageDisplay
         justify="start"
-        :value="
-          effectiveInterestRate.isNaN()
-            ? undefined
-            : effectiveInterestRate.toString()
-        "
+        :value="effectiveInterestRate.isNaN() ? undefined : effectiveInterestRate.toString()"
       />
     </StatCardColumn>
     <StatCardColumn premium-only>

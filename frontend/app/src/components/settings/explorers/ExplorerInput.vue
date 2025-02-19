@@ -7,18 +7,13 @@ defineOptions({
   inheritAttrs: false,
 });
 
-const props = defineProps<{
-  value: string;
-}>();
+const url = defineModel<string>({ required: true });
 
 const emit = defineEmits<{
-  (e: 'input', value: string): void;
   (e: 'save-data', value?: string): void;
 }>();
 
 const { t } = useI18n();
-
-const url = useSimpleVModel(props, emit);
 
 function saveData(value?: string) {
   emit('save-data', value);
@@ -28,11 +23,8 @@ const isHttps = (value: string) => !value || value.startsWith('https');
 
 const rules = {
   url: {
+    https: helpers.withMessage(t('explorer_input.validation.https'), isHttps),
     urlValidator,
-    https: helpers.withMessage(
-      t('explorer_input.validation.https'),
-      isHttps,
-    ),
   },
 };
 
@@ -55,10 +47,6 @@ const v$ = useVuelidate(
       clearable
       :error-messages="toMessages(v$.url)"
       v-bind="$attrs"
-      v-on="
-        // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-        $listeners
-      "
       @click:clear="saveData()"
     />
     <RuiButton
@@ -66,9 +54,9 @@ const v$ = useVuelidate(
       class="mt-1"
       icon
       :disabled="v$.$invalid"
-      @click="saveData(value)"
+      @click="saveData(modelValue)"
     >
-      <RuiIcon name="save-line" />
+      <RuiIcon name="lu-save" />
     </RuiButton>
   </div>
 </template>

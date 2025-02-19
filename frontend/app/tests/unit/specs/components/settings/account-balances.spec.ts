@@ -1,44 +1,59 @@
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { type Wrapper, mount } from '@vue/test-utils';
+import { Blockchain } from '@rotki/common';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type VueWrapper, mount } from '@vue/test-utils';
 import { setActivePinia } from 'pinia';
-import Vuetify from 'vuetify';
+import flushPromises from 'flush-promises';
 import AccountBalances from '@/components/accounts/AccountBalances.vue';
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
+import { useTaskStore } from '@/store/tasks';
+import { useStatusStore } from '@/store/status';
+import { useSessionStore } from '@/store/session';
+import { useMainStore } from '@/store/main';
+import { useSupportedChains } from '@/composables/info/chains';
 import { createCustomPinia } from '../../../utils/create-pinia';
 import { libraryDefaults } from '../../../utils/provide-defaults';
 
-vi.mock('vue-router/composables', () => ({
-  useRoute: vi.fn().mockReturnValue({
-    query: {
-      limit: '10',
-      offset: '0',
-    },
-  }),
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn().mockImplementation(() =>
+    ref({
+      query: {
+        limit: '10',
+        offset: '0',
+      },
+    })),
   useRouter: vi.fn(),
+  createRouter: vi.fn().mockImplementation(() => ({
+    beforeEach: vi.fn(),
+  })),
+  createWebHashHistory: vi.fn(),
 }));
 
 describe('accountBalances.vue', () => {
-  let wrapper: Wrapper<any>;
+  let wrapper: VueWrapper<InstanceType<typeof AccountBalances>>;
 
-  beforeEach(() => {
-    const vuetify = new Vuetify();
+  beforeEach(async () => {
     const pinia = createCustomPinia();
     setActivePinia(pinia);
+
+    const { connected } = storeToRefs(useMainStore());
+    set(connected, true);
+    useSupportedChains();
+    await flushPromises();
     wrapper = mount(AccountBalances, {
-      vuetify,
-      pinia,
-      propsData: {
-        blockchain: Blockchain.ETH,
-        balances: [],
-        title: 'ETH balances',
+      props: {
+        category: 'evm',
       },
-      provide: libraryDefaults,
+      global: {
+        provide: libraryDefaults,
+        plugins: [pinia],
+      },
     });
   });
 
   afterEach(() => {
     useSessionStore().$reset();
+    wrapper.unmount();
   });
 
   it('table enters into loading state when balances load', async () => {
@@ -60,13 +75,6 @@ describe('accountBalances.vue', () => {
 
     await nextTick();
 
-    expect(
-      wrapper
-        .find('[data-cy=account-balances-refresh-menu]')
-        .find('button')
-        .attributes('disabled'),
-    ).toBe('disabled');
-
     expect(wrapper.find('tbody td div[role=progressbar]').exists()).toBeTruthy();
 
     remove(1);
@@ -77,12 +85,6 @@ describe('accountBalances.vue', () => {
     });
     await nextTick();
 
-    expect(
-      wrapper
-        .find('[data-cy=account-balances-refresh-menu]')
-        .find('button')
-        .attributes('disabled'),
-    ).toBeUndefined();
     expect(wrapper.find('tbody td div[role=progressbar]').exists()).toBeFalsy();
     expect(wrapper.find('tbody tr td p').text()).toMatch('data_table.no_data');
   });

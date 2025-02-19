@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import type {
-  AssetPriceInfo,
-  ManualPriceFormPayload,
-} from '@/types/prices';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useConfirmStore } from '@/store/confirm';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useLatestPrices } from '@/composables/price-manager/latest';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
+import LatestPriceFormDialog from '@/components/price-manager/latest/LatestPriceFormDialog.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import type { AssetPriceInfo, ManualPriceFormPayload } from '@/types/prices';
 
 const props = withDefaults(
   defineProps<{
@@ -17,49 +23,49 @@ const { assetPriceInfo } = useAggregatedBalances();
 
 const { assetName } = useAssetInfoRetrieval();
 
-const info = computed<AssetPriceInfo>(() =>
-  get(assetPriceInfo(identifier, isCollectionParent)),
-);
+const info = computed<AssetPriceInfo>(() => get(assetPriceInfo(identifier, isCollectionParent)));
 
 const { isManualAssetPrice } = useBalancePricesStore();
 const isManualPrice = isManualAssetPrice(identifier);
 
 const { t } = useI18n();
 
-const customPrice: Ref<Partial<ManualPriceFormPayload> | null> = ref(null);
+const openPriceDialog = ref<boolean>(false);
+const customPrice = ref<ManualPriceFormPayload | null>(null);
 
-const { setPostSubmitFunc, setOpenDialog } = useLatestPriceForm();
 const { show } = useConfirmStore();
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
+const { exchangeRate } = useBalancePricesStore();
+
 function setPriceForm() {
-  setOpenDialog(true);
+  const toAsset = get(currencySymbol);
   set(customPrice, {
     fromAsset: get(identifier),
-    toAsset: get(currencySymbol),
-    price: get(info).usdPrice.toFixed(),
+    price: get(info)
+      .usdPrice
+      .multipliedBy(get(exchangeRate(toAsset)) ?? One)
+      .toFixed(),
+    toAsset,
   });
+  set(openPriceDialog, true);
 }
 
-const { refreshCurrentPrices, deletePrice, refreshing } = useLatestPrices(t);
+const { deletePrice, refreshCurrentPrices, refreshing } = useLatestPrices(t);
 
 function showDeleteConfirmation() {
   const identifierVal = get(identifier);
   show(
     {
-      title: t('assets.custom_price.delete.tooltip'),
       message: t('assets.custom_price.delete.message', {
         asset: get(assetName(identifierVal)) ?? identifierVal,
       }),
+      title: t('assets.custom_price.delete.tooltip'),
     },
     () => deletePrice({ fromAsset: identifierVal }),
   );
 }
-
-onMounted(() => {
-  setPostSubmitFunc(() => refreshCurrentPrices());
-});
 </script>
 
 <template>
@@ -80,6 +86,7 @@ onMounted(() => {
           :price-of-asset="info.usdPrice"
           fiat-currency="USD"
           :value="info.usdPrice"
+          no-scramble
         />
 
         <RowActions
@@ -119,9 +126,11 @@ onMounted(() => {
     </RuiCard>
 
     <LatestPriceFormDialog
-      :value="customPrice"
+      v-model:open="openPriceDialog"
+      :editable-item="customPrice"
       :edit-mode="isManualPrice"
       disable-from-asset
+      @refresh="refreshCurrentPrices()"
     />
   </div>
 </template>

@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import type { RawLocation } from 'vue-router';
+import type { RouteLocationRaw } from 'vue-router';
+
+defineOptions({
+  inheritAttrs: false,
+});
 
 const props = withDefaults(
   defineProps<{
     tag?: string;
     enabled?: boolean;
-    to: RawLocation;
+    to: RouteLocationRaw | undefined;
   }>(),
   {
-    tag: 'span',
     enabled: true,
+    tag: 'span',
   },
 );
 
@@ -17,18 +21,16 @@ const { enabled, to } = toRefs(props);
 const router = useRouter();
 
 async function navigate() {
-  if (get(enabled))
+  if (get(enabled) && isDefined(to))
     await router.push(get(to));
 }
-
-const attrs = useAttrs();
 </script>
 
 <template>
   <Component
     :is="tag"
     :class="{ 'cursor-pointer': enabled }"
-    v-bind="attrs"
+    v-bind="$attrs"
     @click="navigate()"
   >
     <slot />

@@ -1,28 +1,23 @@
-import { isEmpty } from 'lodash-es';
-import {
-  TaskNotFoundError,
-  type TaskResultResponse,
-  type TaskStatus,
-} from '@/types/task';
+import { isEmpty } from 'es-toolkit/compat';
+import { TaskNotFoundError, type TaskResultResponse, type TaskStatus } from '@/types/task';
 import { handleResponse, validTaskStatus } from '@/services/utils';
-import {
-  IncompleteUpgradeError,
-  SyncConflictError,
-  SyncConflictPayload,
-} from '@/types/login';
+import { IncompleteUpgradeError, SyncConflictError, SyncConflictPayload } from '@/types/login';
 import { api } from '@/services/rotkehlchen-api';
 import { ApiValidationError } from '@/types/api/errors';
 import type { AxiosRequestConfig, AxiosResponseTransformer } from 'axios';
-import type { ActionResult } from '@rotki/common/lib/data';
+import type { ActionResult } from '@rotki/common';
 
-export function useTaskApi() {
+interface UseTaskApiReturn {
+  queryTasks: () => Promise<TaskStatus>;
+  queryTaskResult: <T>(id: number, transformer?: AxiosResponseTransformer[]) => Promise<ActionResult<T>>;
+  cancelAsyncTask: (id: number) => Promise<boolean>;
+}
+
+export function useTaskApi(): UseTaskApiReturn {
   const queryTasks = async (): Promise<TaskStatus> => {
-    const response = await api.instance.get<ActionResult<TaskStatus>>(
-      `/tasks`,
-      {
-        validateStatus: validTaskStatus,
-      },
-    );
+    const response = await api.instance.get<ActionResult<TaskStatus>>(`/tasks`, {
+      validateStatus: validTaskStatus,
+    });
 
     return handleResponse(response);
   };
@@ -35,9 +30,7 @@ export function useTaskApi() {
     if (transformer)
       config.transformResponse = transformer;
 
-    const response = await api.instance.get<
-      ActionResult<TaskResultResponse<ActionResult<T>>>
-    >(`/tasks/${id}`, config);
+    const response = await api.instance.get<ActionResult<TaskResultResponse<ActionResult<T>>>>(`/tasks/${id}`, config);
 
     if (response.status === 404)
       throw new TaskNotFoundError(`Task with id ${id} not found`);
@@ -45,17 +38,14 @@ export function useTaskApi() {
     const { outcome, statusCode } = handleResponse(response);
 
     if (outcome) {
-      const { result, message } = outcome;
+      const { message, result } = outcome;
 
       if (statusCode === 300) {
         if (typeof result === 'object') {
           if (isEmpty(result))
             throw new IncompleteUpgradeError(message);
 
-          throw new SyncConflictError(
-            message,
-            SyncConflictPayload.parse(result),
-          );
+          throw new SyncConflictError(message, SyncConflictPayload.parse(result));
         }
       }
       else if (statusCode === 400) {
@@ -75,10 +65,7 @@ export function useTaskApi() {
       validateStatus: validTaskStatus,
     };
 
-    const response = await api.instance.delete<ActionResult<boolean>>(
-      `/tasks/${id}`,
-      config,
-    );
+    const response = await api.instance.delete<ActionResult<boolean>>(`/tasks/${id}`, config);
 
     if (response.status === 404)
       throw new TaskNotFoundError(`Task with id ${id} not found`);
@@ -87,8 +74,8 @@ export function useTaskApi() {
   };
 
   return {
-    queryTasks,
-    queryTaskResult,
     cancelAsyncTask,
+    queryTaskResult,
+    queryTasks,
   };
 }

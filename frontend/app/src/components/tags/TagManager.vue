@@ -1,140 +1,106 @@
 <script setup lang="ts">
 import { type Tag, defaultTag } from '@/types/tags';
-import type { DataTableColumn } from '@rotki/ui-library-compat';
-
-withDefaults(
-  defineProps<{
-    dialog?: boolean;
-  }>(),
-  {
-    dialog: false,
-  },
-);
-
-const emit = defineEmits<{
-  (e: 'close'): void;
-}>();
-
-const store = useTagStore();
-const { addTag, editTag, deleteTag } = store;
-const { tags } = storeToRefs(store);
-
-const tag = ref<Tag>(defaultTag());
-const editMode = ref<boolean>(false);
-const search = ref<string>('');
+import { useConfirmStore } from '@/store/confirm';
+import { useTagStore } from '@/store/session/tags';
+import TagFormDialog from '@/components/tags/TagFormDialog.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import TagIcon from '@/components/tags/TagIcon.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import type { DataTableColumn } from '@rotki/ui-library';
 
 const { t } = useI18n();
 
-const headers = computed<DataTableColumn[]>(() => [
+const tag = ref<Tag | undefined>(undefined);
+const editMode = ref<boolean>(false);
+const search = ref<string>('');
+
+const route = useRoute();
+const router = useRouter();
+
+const store = useTagStore();
+const { deleteTag } = store;
+const { tags } = storeToRefs(store);
+const { show } = useConfirmStore();
+
+const headers = computed<DataTableColumn<Tag>[]>(() => [
   {
-    label: t('common.name'),
     key: 'name',
+    label: t('common.name'),
   },
   {
-    label: t('common.description'),
+    cellClass: 'w-1/2 !text-sm !text-rui-text-secondary',
     key: 'description',
-    cellClass: 'w-full !text-sm !text-rui-text-secondary',
+    label: t('common.description'),
   },
   {
-    label: t('common.actions_text'),
+    key: 'tagView',
+    label: t('tag_creator.tag_view'),
+  },
+  {
+    cellClass: 'w-20',
     key: 'action',
+    label: t('common.actions_text'),
     sortable: false,
   },
 ]);
 
-const close = () => emit('close');
-
-async function save({ tag: newTag, close: closeModal }: { tag: Tag; close?: boolean }) {
-  const status = await (get(editMode) ? editTag(newTag) : addTag(newTag));
-
-  if (status.success) {
-    set(tag, defaultTag());
-    set(editMode, false);
-    closeModal && close();
-  }
-}
-
-function cancel() {
-  set(tag, defaultTag());
-  set(editMode, false);
-}
-
 function editItem(newTag: Tag) {
-  set(editMode, false);
+  set(editMode, true);
   set(tag, newTag);
-  nextTick(() => {
-    set(editMode, true);
-  });
 }
-
-const { show } = useConfirmStore();
 
 function showDeleteConfirmation(selectedTag: Tag) {
   show(
     {
-      title: t('tag_manager.confirmation.title'),
       message: t('tag_manager.confirmation.message', {
         tagToDelete: selectedTag.name,
       }),
+      title: t('tag_manager.confirmation.title'),
     },
     () => deleteTag(selectedTag.name),
   );
 }
+
+function handleCreateTagClick() {
+  set(editMode, false);
+  set(tag, defaultTag());
+}
+
+onMounted(async () => {
+  const { query } = get(route);
+  if (query.add) {
+    handleCreateTagClick();
+    await router.replace({ query: {} });
+  }
+});
 </script>
 
 <template>
-  <RuiCard>
-    <template #custom-header>
-      <div class="p-4">
-        <div class="flex items-center gap-4">
-          <div class="text-h6">
-            {{ t('tag_manager.title') }}
-          </div>
-          <template v-if="dialog">
-            <div class="grow" />
-            <RuiButton
-              data-cy="tag-manager__close"
-              icon
-              size="sm"
-              variant="text"
-              @click="close()"
-            >
-              <RuiIcon name="close-line" />
-            </RuiButton>
-          </template>
-        </div>
-        <div class="text-caption">
-          {{ t('tag_manager.subtitle') }}
-        </div>
-      </div>
+  <TablePageLayout :title="[t('tag_manager.title')]">
+    <template #buttons>
+      <RuiButton
+        color="primary"
+        data-cy="add-tags"
+        @click="handleCreateTagClick()"
+      >
+        <template #prepend>
+          <RuiIcon name="lu-plus" />
+        </template>
+        {{ t('tag_manager.create_tag.title') }}
+      </RuiButton>
     </template>
 
-    <TagCreator
-      :tag="tag"
-      :edit-mode="editMode"
-      @update:tag="tag = $event"
-      @cancel="cancel()"
-      @save="save($event)"
-    />
-
-    <RuiDivider class="my-6" />
-
-    <div class="flex flex-col gap-4">
-      <div class="text-h6">
-        {{ t('tag_manager.my_tags') }}
-      </div>
-      <div class="flex flex-row-reverse">
-        <RuiTextField
-          v-model="search"
-          variant="outlined"
-          color="primary"
-          dense
-          class="w-[22rem]"
-          prepend-icon="search-line"
-          :label="t('common.actions.search')"
-          hide-details
-        />
-      </div>
+    <RuiCard content-class="flex flex-col gap-4">
+      <RuiTextField
+        v-model="search"
+        variant="outlined"
+        color="primary"
+        dense
+        clearable
+        prepend-icon="lu-search"
+        :label="t('common.actions.search')"
+        hide-details
+      />
       <RuiDataTable
         dense
         :rows="tags"
@@ -143,7 +109,7 @@ function showDeleteConfirmation(selectedTag: Tag) {
         :search="search"
         outlined
       >
-        <template #item.name="{ row }">
+        <template #item.tagView="{ row }">
           <TagIcon
             :tag="row"
             small
@@ -151,12 +117,16 @@ function showDeleteConfirmation(selectedTag: Tag) {
         </template>
         <template #item.action="{ row }">
           <RowActions
-            v-if="!row.readOnly"
             @edit-click="editItem(row)"
             @delete-click="showDeleteConfirmation(row)"
           />
         </template>
       </RuiDataTable>
-    </div>
-  </RuiCard>
+    </RuiCard>
+
+    <TagFormDialog
+      v-model="tag"
+      :edit-mode="editMode"
+    />
+  </TablePageLayout>
 </template>

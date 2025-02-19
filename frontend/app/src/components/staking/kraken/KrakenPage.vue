@@ -1,36 +1,60 @@
 <script setup lang="ts">
 import { Section } from '@/types/status';
 import { Routes } from '@/router/routes';
+import { useExchangesStore } from '@/store/exchanges';
+import { useKrakenStakingStore } from '@/store/staking/kraken';
+import { useStatusStore } from '@/store/status';
+import KrakenStaking from '@/components/staking/kraken/KrakenStaking.vue';
+import ProgressScreen from '@/components/helper/ProgressScreen.vue';
+import InternalLink from '@/components/helper/InternalLink.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import FullSizeContent from '@/components/common/FullSizeContent.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import { useBalances } from '@/composables/balances';
+import type { RouteLocationRaw } from 'vue-router';
+import type { KrakenStakingDateFilter } from '@/types/staking';
 
-const { shouldShowLoadingScreen, isLoading } = useStatusStore();
-const { load, $reset } = useKrakenStakingStore();
+const filters = ref<KrakenStakingDateFilter>({});
 
+const { isLoading, shouldShowLoadingScreen } = useStatusStore();
+const store = useKrakenStakingStore();
+const { $reset, load } = store;
+const { events } = toRefs(store);
 const { connectedExchanges } = storeToRefs(useExchangesStore());
+const { refreshPrices } = useBalances();
+
+const { t } = useI18n();
+
+const addKrakenApiKeysLink: RouteLocationRaw = {
+  path: `${Routes.API_KEYS_EXCHANGES}`,
+  query: {
+    add: 'true',
+  },
+};
+
+const loading = shouldShowLoadingScreen(Section.STAKING_KRAKEN);
+const refreshing = isLoading(Section.STAKING_KRAKEN);
+
 const isKrakenConnected = computed(() => {
   const exchanges = get(connectedExchanges);
   return exchanges.some(({ location }) => location === 'kraken');
 });
 
-onMounted(async () => {
-  if (get(isKrakenConnected))
-    await load(false);
+async function refresh(ignoreCache: boolean = false) {
+  await load(ignoreCache, get(filters));
+  const assets = get(events).received.map(item => item.asset);
+  await refreshPrices(ignoreCache, assets);
+}
+
+watchImmediate([filters, isKrakenConnected], async ([_, isKrakenConnected]) => {
+  if (isKrakenConnected) {
+    await refresh();
+  }
 });
 
 onUnmounted(() => {
   $reset();
 });
-
-watch(isKrakenConnected, async (isKrakenConnected) => {
-  if (isKrakenConnected)
-    await load(false);
-});
-
-const loading = shouldShowLoadingScreen(Section.STAKING_KRAKEN);
-const refreshing = isLoading(Section.STAKING_KRAKEN);
-
-const { t } = useI18n();
-
-const refresh = () => load(true);
 </script>
 
 <template>
@@ -39,16 +63,19 @@ const refresh = () => load(true);
     child
   >
     <template #buttons>
-      <RuiTooltip :open-delay="400">
+      <RuiTooltip
+        v-if="isKrakenConnected"
+        :open-delay="400"
+      >
         <template #activator>
           <RuiButton
             variant="outlined"
             color="primary"
             :loading="refreshing || loading"
-            @click="refresh()"
+            @click="refresh(true)"
           >
             <template #prepend>
-              <RuiIcon name="refresh-line" />
+              <RuiIcon name="lu-refresh-ccw" />
             </template>
             {{ t('common.refresh') }}
           </RuiButton>
@@ -65,7 +92,7 @@ const refresh = () => load(true);
         {{ t('kraken_page.page.title') }}
       </span>
 
-      <InternalLink :to="Routes.API_KEYS_EXCHANGES">
+      <InternalLink :to="addKrakenApiKeysLink">
         <AppImage
           width="64px"
           contain
@@ -73,23 +100,26 @@ const refresh = () => load(true);
         />
       </InternalLink>
 
-      <i18n
+      <i18n-t
         tag="h6"
-        path="kraken_page.page.description"
+        keypath="kraken_page.page.description"
         class="font-light text-h6 text-rui-text-secondary"
       >
         <template #link>
-          <InternalLink :to="Routes.API_KEYS_EXCHANGES">
+          <InternalLink :to="addKrakenApiKeysLink">
             {{ t('kraken_page.page.api_key') }}
           </InternalLink>
         </template>
-      </i18n>
+      </i18n-t>
     </FullSizeContent>
     <ProgressScreen v-else-if="loading">
       <template #message>
         {{ t('kraken_page.loading') }}
       </template>
     </ProgressScreen>
-    <KrakenStaking v-else />
+    <KrakenStaking
+      v-else
+      v-model="filters"
+    />
   </TablePageLayout>
 </template>

@@ -1,101 +1,105 @@
-import {
-  type EvmTransactionQueryData,
-  EvmTransactionsQueryStatus,
-} from '@/types/websocket-messages';
-import type { Blockchain } from '@rotki/common/lib/blockchain';
+import { type EvmTransactionQueryData, EvmTransactionsQueryStatus } from '@/types/websocket-messages';
+import { useTxQueryStatusStore } from '@/store/history/query-status/tx-query-status';
+import { useSupportedChains } from '@/composables/info/chains';
+import { useQueryStatus } from '@/composables/history/events/query-status/index';
+import type { Blockchain } from '@rotki/common';
 import type { MaybeRef } from '@vueuse/core';
+import type { ComputedRef, Ref } from 'vue';
 
-export function useTransactionQueryStatus(onlyChains: MaybeRef<Blockchain[]> = []) {
+type TranslationKey = 'transactions.query_status.done_date_range'
+  | 'transactions.query_status.done_end_date'
+  | 'transactions.query_status.date_range'
+  | 'transactions.query_status.end_date';
+
+interface Status { index: number; label?: string }
+
+type Statuses = Record<EvmTransactionsQueryStatus, Status>;
+
+interface UseTransactionQueryStatusReturn {
+  getLabel: (data: EvmTransactionQueryData) => string;
+  getStatusData: (data: EvmTransactionQueryData) => Status;
+  getItemTranslationKey: (item: EvmTransactionQueryData) => TranslationKey;
+  isQueryFinished: (item: EvmTransactionQueryData) => boolean;
+  getKey: (item: EvmTransactionQueryData) => string;
+  resetQueryStatus: () => void;
+  isAllFinished: ComputedRef<boolean>;
+  sortedQueryStatus: Ref<EvmTransactionQueryData[]>;
+  filtered: ComputedRef<EvmTransactionQueryData[]>;
+  queryingLength: ComputedRef<number>;
+  length: ComputedRef<number>;
+}
+
+export function useTransactionQueryStatus(onlyChains: MaybeRef<Blockchain[]> = []): UseTransactionQueryStatusReturn {
   const { t } = useI18n();
   const store = useTxQueryStatusStore();
   const { isStatusFinished, resetQueryStatus } = store;
-  const { queryStatus, isAllFinished } = storeToRefs(store);
+  const { isAllFinished, queryStatus } = storeToRefs(store);
   const { getChain } = useSupportedChains();
 
-  const filtered: ComputedRef<EvmTransactionQueryData[]> = computed(() => {
+  const filtered = computed<EvmTransactionQueryData[]>(() => {
     const statuses = Object.values(get(queryStatus));
     const chains = get(onlyChains);
     if (chains.length === 0)
       return statuses;
 
-    return statuses.filter(({ evmChain }) =>
-      chains.includes(getChain(evmChain)),
-    );
+    return statuses.filter(({ evmChain }) => chains.includes(getChain(evmChain)));
   });
 
-  const { sortedQueryStatus, queryingLength, length, isQueryStatusRange }
-    = useQueryStatus(filtered, isStatusFinished);
+  const { isQueryStatusRange, length, queryingLength, sortedQueryStatus } = useQueryStatus(filtered, isStatusFinished);
 
-  const statusesData = computed(() => ({
-    [EvmTransactionsQueryStatus.QUERYING_TRANSACTIONS_STARTED]: {
-      index: -1,
-    },
+  const statusesData = computed<Statuses>(() => ({
     [EvmTransactionsQueryStatus.ACCOUNT_CHANGE]: {
       index: 0,
+      label: t('transactions.query_status.statuses.pending'),
+    },
+    [EvmTransactionsQueryStatus.QUERYING_EVM_TOKENS_TRANSACTIONS]: {
+      index: 3,
+      label: t('transactions.query_status.statuses.querying_evm_tokens_transactions'),
+    },
+    [EvmTransactionsQueryStatus.QUERYING_INTERNAL_TRANSACTIONS]: {
+      index: 2,
+      label: t('transactions.query_status.statuses.querying_internal_transactions'),
     },
     [EvmTransactionsQueryStatus.QUERYING_TRANSACTIONS]: {
       index: 1,
       label: t('transactions.query_status.statuses.querying_transactions'),
     },
-    [EvmTransactionsQueryStatus.QUERYING_INTERNAL_TRANSACTIONS]: {
-      index: 2,
-      label: t(
-        'transactions.query_status.statuses.querying_internal_transactions',
-      ),
-    },
-    [EvmTransactionsQueryStatus.QUERYING_EVM_TOKENS_TRANSACTIONS]: {
-      index: 3,
-      label: t(
-        'transactions.query_status.statuses.querying_evm_tokens_transactions',
-      ),
-    },
     [EvmTransactionsQueryStatus.QUERYING_TRANSACTIONS_FINISHED]: {
       index: 4,
     },
+    [EvmTransactionsQueryStatus.QUERYING_TRANSACTIONS_STARTED]: {
+      index: -1,
+    },
   }));
 
-  const getStatusData = (data: EvmTransactionQueryData) =>
-    get(statusesData)[data.status];
+  const getStatusData = (data: EvmTransactionQueryData): Status => get(statusesData)[data.status];
 
-  const getLabel = (data: EvmTransactionQueryData) => {
-    const statusData = getStatusData(data);
-    if ('label' in statusData)
-      return statusData.label;
+  const getLabel = (data: EvmTransactionQueryData): string => getStatusData(data)?.label ?? '';
 
-    return '';
-  };
-
-  const getItemTranslationKey = (item: EvmTransactionQueryData) => {
+  const getItemTranslationKey = (item: EvmTransactionQueryData): TranslationKey => {
     const isRange = isQueryStatusRange(item);
 
-    if (isStatusFinished(item)) {
-      return isRange
-        ? 'transactions.query_status.done_date_range'
-        : 'transactions.query_status.done_end_date';
-    }
+    if (isStatusFinished(item))
+      return isRange ? 'transactions.query_status.done_date_range' : 'transactions.query_status.done_end_date';
 
-    return isRange
-      ? 'transactions.query_status.date_range'
-      : 'transactions.query_status.end_date';
+    return isRange ? 'transactions.query_status.date_range' : 'transactions.query_status.end_date';
   };
 
-  const getKey = (item: EvmTransactionQueryData) =>
-    item.address + item.evmChain;
+  const getKey = (item: EvmTransactionQueryData): string => item.address + item.evmChain;
 
-  const isQueryFinished = (item: EvmTransactionQueryData) =>
-    isStatusFinished(item);
+  const isQueryFinished = (item: EvmTransactionQueryData): boolean => isStatusFinished(item);
 
   return {
+    filtered,
+    getItemTranslationKey,
+    getKey,
     getLabel,
     getStatusData,
-    getItemTranslationKey,
-    isQueryFinished,
-    getKey,
-    resetQueryStatus,
     isAllFinished,
-    sortedQueryStatus,
-    filtered,
-    queryingLength,
+    isQueryFinished,
     length,
+    queryingLength,
+    resetQueryStatus,
+    sortedQueryStatus,
   };
 }

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { displayDateFormatter } from '@/data/date-formatter';
 import { size } from '@/utils/data';
-import type {
-  DataTableColumn,
-  DataTableSortData,
-} from '@rotki/ui-library-compat';
+import { getFilepath } from '@/utils/backups';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useConfirmStore } from '@/store/confirm';
+import { useBackupApi } from '@/composables/api/backup';
+import RowAppend from '@/components/helper/RowAppend.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
 import type { UserDbBackup, UserDbBackupWithId } from '@/types/backup';
 
 const props = withDefaults(
@@ -26,7 +29,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const sort = ref<DataTableSortData>({
+const sort = ref<DataTableSortData<UserDbBackupWithId>>({
   column: 'size',
   direction: 'desc',
 });
@@ -44,9 +47,9 @@ const selection = computed({
       props.items.filter(x => value.includes(x.id)),
     );
   },
-}) as unknown as WritableComputedRef<string[]>; // TODO: remove after upgrading to vue 3
+});
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const tableHeaders = computed<DataTableColumn<UserDbBackupWithId>[]>(() => [
   {
     key: 'version',
     label: t('database_backups.column.version'),
@@ -58,25 +61,23 @@ const tableHeaders = computed<DataTableColumn[]>(() => [
     sortable: true,
   },
   {
-    key: 'size',
     align: 'end',
+    key: 'size',
     label: t('database_backups.column.size'),
     sortable: true,
   },
   {
-    key: 'actions',
     align: 'end',
-    sortable: false,
+    key: 'actions',
     label: '',
+    sortable: false,
   },
 ]);
 
-const { items, directory } = toRefs(props);
+const { directory, items } = toRefs(props);
 const { dateDisplayFormat } = storeToRefs(useGeneralSettingsStore());
 
-const totalSize = computed(() =>
-  size(get(items).reduce((sum, db) => sum + db.size, 0)),
-);
+const totalSize = computed(() => size(get(items).reduce((sum, db) => sum + db.size, 0)));
 
 const { fileUrl } = useBackupApi();
 const getLink = (db: UserDbBackup) => fileUrl(getFilepath(db, directory));
@@ -87,24 +88,21 @@ function showDeleteConfirmation(item: UserDbBackupWithId) {
   const messageInfo = () => {
     if (item) {
       return {
+        date: displayDateFormatter.format(new Date(item.time * 1000), get(dateDisplayFormat)),
         size: size(item.size),
-        date: displayDateFormatter.format(
-          new Date(item.time * 1000),
-          get(dateDisplayFormat),
-        ),
       };
     }
 
     return {
-      size: 0,
       date: 0,
+      size: 0,
     };
   };
 
   show(
     {
-      title: t('database_backups.confirm.title'),
       message: t('database_backups.confirm.message', { ...messageInfo() }),
+      title: t('database_backups.confirm.title'),
     },
     () => emit('remove', item),
   );
@@ -114,11 +112,12 @@ function showDeleteConfirmation(item: UserDbBackupWithId) {
 <template>
   <RuiDataTable
     v-model="selection"
+    v-model:sort="sort"
     :rows="items"
     row-attr="id"
     outlined
+    class="bg-white dark:bg-transparent"
     dense
-    :sort.sync="sort"
     :cols="tableHeaders"
     :loading="loading"
   >
@@ -144,7 +143,7 @@ function showDeleteConfirmation(item: UserDbBackupWithId) {
           >
             <RuiIcon
               size="16"
-              name="delete-bin-line"
+              name="lu-trash-2"
             />
           </RuiButton>
         </template>
@@ -166,7 +165,7 @@ function showDeleteConfirmation(item: UserDbBackupWithId) {
           >
             <RuiIcon
               size="16"
-              name="file-download-line"
+              name="lu-file-down"
             />
           </RuiButton>
         </template>

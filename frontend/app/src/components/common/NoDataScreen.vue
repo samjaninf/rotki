@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { useBreakpoint } from '@rotki/ui-library-compat';
+import RotkiLogo from '@/components/common/RotkiLogo.vue';
+import FullSizeContent from '@/components/common/FullSizeContent.vue';
 
 withDefaults(defineProps<{ full?: boolean }>(), { full: false });
 
-const slots = useSlots();
 const { isMdAndUp } = useBreakpoint();
 </script>
 
@@ -14,7 +14,7 @@ const { isMdAndUp } = useBreakpoint();
   >
     <div class="flex items-center justify-center">
       <div
-        class="bg-rui-grey-200 rounded-full mb-8"
+        class="bg-rui-grey-200 dark:bg-rui-grey-900 rounded-full mb-8"
         :class="[isMdAndUp ? 'w-64 h-64 p-16' : 'w-32 h-32 p-8']"
       >
         <slot name="logo">
@@ -27,13 +27,13 @@ const { isMdAndUp } = useBreakpoint();
       </div>
     </div>
     <div
-      v-if="slots.title"
+      v-if="$slots.title"
       class="text-h5"
     >
       <slot name="title" />
     </div>
     <div
-      v-if="slots.default"
+      v-if="$slots.default"
       class="text-subtitle-2 text-rui-text-secondary"
     >
       <slot />

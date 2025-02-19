@@ -5,13 +5,16 @@ import pytest
 
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_ADA, A_BEST, A_ETH, A_EUR, A_LTC, A_USDT
-from rotkehlchen.exchanges.data_structures import AssetMovement, Trade, TradeType
+from rotkehlchen.db.filtering import HistoryEventFilterQuery
+from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.exchanges.data_structures import Trade, TradeType
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.tests.utils.constants import A_AXS, A_TRY
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.types import AssetMovementCategory, Location
+from rotkehlchen.types import Location, TimestampMS
 from rotkehlchen.utils.misc import ts_now
-
 
 WALLETS_RESPONSE = """{"data":[
 {"type":"wallet","attributes":{"cryptocoin_id":"1","cryptocoin_symbol":"BTC","balance":"0.00000000","is_default":true,"name":"BTC Wallet","pending_transactions_count":0,"deleted":false,"is_index":false},"id":"b52800aa-61f6-4251-a970-e53a864ebeaa"},
@@ -192,7 +195,7 @@ WALLET_TX_RESPONSE = """{"data":[{"type":"wallet_transaction","attributes":{"amo
 "meta":{"total_count":2,"page":1,"page_size":10},"links":{"next":"?page=2&page_size=10","last":"?page=20&page_size=10","self":"?page=1&page_size=10"}}"""  # noqa: E501
 
 
-def test_asset_movements(mock_bitpanda):
+def test_asset_movements(database, mock_bitpanda):
     """Test that deposits/withdrawals are correctly queried"""
 
     def mock_bitpanda_query(url: str, **kwargs):  # pylint: disable=unused-argument
@@ -209,10 +212,13 @@ def test_asset_movements(mock_bitpanda):
         raise AssertionError(f'Unexpected url {url} in bitpanda test')
 
     with patch.object(mock_bitpanda.session, 'get', side_effect=mock_bitpanda_query):
-        movements = mock_bitpanda.query_deposits_withdrawals(
-            start_ts=0,
-            end_ts=ts_now(),
-            only_cache=False,
+        mock_bitpanda.query_history_events()
+
+    with database.conn.read_ctx() as cursor:
+        movements = DBHistoryEvents(database).get_history_events(
+            cursor,
+            filter_query=HistoryEventFilterQuery.make(location=Location.BITPANDA),
+            has_premium=True,
         )
 
     warnings = mock_bitpanda.msg_aggregator.consume_warnings()
@@ -221,48 +227,68 @@ def test_asset_movements(mock_bitpanda):
     assert len(errors) == 0
 
     expected_movements = [AssetMovement(
+        identifier=5,
+        event_identifier='bc9ae2697f378ed91ce77120c3a29e635c435ecb752865760e5e9304aed35759',
         location=Location.BITPANDA,
-        category=AssetMovementCategory.WITHDRAWAL,
-        address='0x54dca71a34f498e3053cba240895e51da5f89d24',
-        transaction_id='0xe45c1befc0968d2dab0374bc8d1aa3e193136dc769596d42e4d3274475bc7c60',
-        timestamp=1597072246,
+        location_label=mock_bitpanda.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1597072246000),
         asset=A_ETH,
         amount=FVal('1.55165264'),
-        fee_asset=A_ETH,
-        fee=FVal('0.00762000'),
-        link='XXX',
+        extra_data={
+            'address': '0x54dca71a34f498e3053cba240895e51da5f89d24',
+            'transaction_id': '0xe45c1befc0968d2dab0374bc8d1aa3e193136dc769596d42e4d3274475bc7c60',
+        },
     ), AssetMovement(
+        identifier=6,
+        event_identifier='bc9ae2697f378ed91ce77120c3a29e635c435ecb752865760e5e9304aed35759',
         location=Location.BITPANDA,
-        category=AssetMovementCategory.DEPOSIT,
-        address=None,
-        transaction_id=None,
-        timestamp=1631088548,
+        location_label=mock_bitpanda.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1597072246000),
+        asset=A_ETH,
+        amount=FVal('0.00762000'),
+        is_fee=True,
+    ), AssetMovement(
+        identifier=1,
+        event_identifier='417fa4b6bcb5ff3b9050d84ddff00e3e423333512bca8f36a430bccf72634c20',
+        location=Location.BITPANDA,
+        location_label=mock_bitpanda.name,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1631088548000),
         asset=A_EUR,
-        amount=FVal('25'),
-        fee_asset=A_EUR,
-        fee=ZERO,
-        link='movementid1',
+        amount=FVal('25.00'),
     ), AssetMovement(
+        identifier=2,
+        event_identifier='7db139d1cf52facb8f9043e2fe73e924c3b58d54b27f38574d9a73e74a1c5bd1',
         location=Location.BITPANDA,
-        category=AssetMovementCategory.WITHDRAWAL,
-        address=None,
-        transaction_id=None,
-        timestamp=1631888548,
+        location_label=mock_bitpanda.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1631888548000),
         asset=A_EUR,
-        amount=FVal('50'),
-        fee_asset=A_EUR,
-        fee=FVal('0.01'),
-        link='movementid2',
+        amount=FVal('50.00'),
     ), AssetMovement(
+        identifier=3,
+        event_identifier='7db139d1cf52facb8f9043e2fe73e924c3b58d54b27f38574d9a73e74a1c5bd1',
         location=Location.BITPANDA,
-        category=AssetMovementCategory.DEPOSIT,
-        address='0x54dca71a34f498e3053cba240895e51da5f89d24',
-        transaction_id='0x28cb2ba8ac14bdedb0ad021662b631952ce2514f1e3ff7870882ebe8a8c1b03f',
-        timestamp=1633849272,
+        location_label=mock_bitpanda.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1631888548000),
+        asset=A_EUR,
+        amount=FVal('0.01'),
+        is_fee=True,
+    ), AssetMovement(
+        identifier=4,
+        event_identifier='eedabacb4b72276581975459254fcb3d603dc46900335d40055adcc32cbd69ed',
+        location=Location.BITPANDA,
+        location_label=mock_bitpanda.name,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1633849272000),
         asset=A_USDT,
         amount=FVal('6608.34105600'),
-        fee_asset=A_USDT,
-        fee=ZERO,
-        link='XXX',
+        extra_data={
+            'address': '0x54dca71a34f498e3053cba240895e51da5f89d24',
+            'transaction_id': '0x28cb2ba8ac14bdedb0ad021662b631952ce2514f1e3ff7870882ebe8a8c1b03f',
+        },
     )]
     assert expected_movements == movements

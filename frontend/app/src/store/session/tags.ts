@@ -1,5 +1,8 @@
-import logger from 'loglevel';
-import { READ_ONLY_TAGS, type Tag, type Tags } from '@/types/tags';
+import { logger } from '@/utils/logging';
+import { useMessageStore } from '@/store/message';
+import { useTagsApi } from '@/composables/api/tags';
+import { useBlockchainAccounts } from '@/composables/blockchain/accounts';
+import type { Tag, Tags } from '@/types/tags';
 import type { ActionStatus } from '@/types/action';
 
 export const useTagStore = defineStore('session/tags', () => {
@@ -7,15 +10,10 @@ export const useTagStore = defineStore('session/tags', () => {
 
   const tags = computed(() => Object.values(get(allTags)));
 
-  const availableTags: ComputedRef<Record<string, Tag>> = computed(() => ({
-    ...get(allTags),
-    ...READ_ONLY_TAGS,
-  }));
-
   const { removeTag } = useBlockchainAccounts();
   const { setMessage } = useMessageStore();
   const { t } = useI18n();
-  const { queryAddTag, queryTags, queryEditTag, queryDeleteTag } = useTagsApi();
+  const { queryAddTag, queryDeleteTag, queryEditTag, queryTags } = useTagsApi();
 
   const addTag = async (tag: Tag): Promise<ActionStatus> => {
     try {
@@ -24,12 +22,12 @@ export const useTagStore = defineStore('session/tags', () => {
     }
     catch (error: any) {
       setMessage({
-        title: t('actions.session.tag_add.error.title'),
         description: error.message,
+        title: t('actions.session.tag_add.error.title'),
       });
       return {
-        success: false,
         message: error.message,
+        success: false,
       };
     }
   };
@@ -41,12 +39,12 @@ export const useTagStore = defineStore('session/tags', () => {
     }
     catch (error: any) {
       setMessage({
-        title: t('actions.session.tag_edit.error.title'),
         description: error.message,
+        title: t('actions.session.tag_edit.error.title'),
       });
       return {
-        success: false,
         message: error.message,
+        success: false,
       };
     }
   };
@@ -58,8 +56,8 @@ export const useTagStore = defineStore('session/tags', () => {
     }
     catch (error: any) {
       setMessage({
-        title: t('actions.session.tag_delete.error.title'),
         description: error.message,
+        title: t('actions.session.tag_delete.error.title'),
       });
     }
   };
@@ -73,14 +71,44 @@ export const useTagStore = defineStore('session/tags', () => {
     }
   };
 
+  function tagExists(tagName: string): boolean {
+    return get(tags)
+      .map(({ name }) => name)
+      .includes(tagName);
+  }
+
+  async function attemptTagCreation(tag: string, backgroundColor?: string): Promise<boolean> {
+    if (tagExists(tag))
+      return true;
+
+    const bgColor = backgroundColor || randomColor();
+    const fgColor = invertColor(bgColor);
+
+    const newTag: Tag = {
+      backgroundColor: bgColor,
+      description: '',
+      foregroundColor: fgColor,
+      name: tag,
+    };
+
+    try {
+      const { success } = await addTag(newTag);
+      return success;
+    }
+    catch (error) {
+      logger.error(error);
+      return false;
+    }
+  };
+
   return {
-    allTags,
-    tags,
-    availableTags,
-    fetchTags,
     addTag,
-    editTag,
+    allTags,
+    attemptTagCreation,
     deleteTag,
+    editTag,
+    fetchTags,
+    tags,
   };
 });
 

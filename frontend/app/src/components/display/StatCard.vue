@@ -1,18 +1,19 @@
 <script setup lang="ts">
+import CardTitle from '@/components/typography/CardTitle.vue';
+import AppImage from '@/components/common/AppImage.vue';
+
 withDefaults(
   defineProps<{
     title?: string;
-    locked?: boolean;
     loading?: boolean;
     protocolIcon?: string;
     bordered?: boolean;
   }>(),
   {
-    title: '',
-    locked: false,
+    bordered: false,
     loading: false,
     protocolIcon: '',
-    bordered: false,
+    title: '',
   },
 );
 </script>
@@ -20,7 +21,8 @@ withDefaults(
 <template>
   <RuiCard
     no-padding
-    class="overflow-hidden [&>div:last-child]:h-full"
+    class="overflow-hidden"
+    content-class="h-full"
   >
     <div class="flex p-0 h-full min-h-[130px]">
       <div
@@ -30,9 +32,10 @@ withDefaults(
         <AppImage
           v-if="protocolIcon"
           contain
-          alt="Protocol Logo"
+          :alt="title"
           class="icon-bg"
           size="36px"
+          :loading="loading"
           :src="protocolIcon"
         />
       </div>
@@ -41,18 +44,8 @@ withDefaults(
           <CardTitle v-if="title">
             {{ title }}
           </CardTitle>
-          <PremiumLock
-            v-if="locked"
-            class="mx-auto"
-          />
         </div>
-        <span v-if="!locked && loading">
-          <RuiProgress
-            variant="indeterminate"
-            color="primary"
-          />
-        </span>
-        <slot v-else-if="!locked" />
+        <slot />
       </div>
     </div>
   </RuiCard>

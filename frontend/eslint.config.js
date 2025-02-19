@@ -1,22 +1,28 @@
-const path = require('node:path');
-const rotki = require('@rotki/eslint-config').default;
+import path from 'node:path';
+import rotki from '@rotki/eslint-config';
 
-module.exports = rotki({
-  vue: {
-    vueVersion: 2,
-  },
+export default rotki({
+  vue: true,
   typescript: {
     tsconfigPath: 'tsconfig.json',
   },
   stylistic: true,
-  vuetify: true,
   rotki: {
     overrides: {
-      '@rotki/no-deprecated-components': ['warn', { legacy: true }],
+      '@rotki/consistent-ref-type-annotation': ['error', {
+        allowInference: true,
+      }],
+      '@rotki/no-dot-ts-imports': 'error',
     },
   },
   cypress: {
     testDirectory: path.join('app', 'tests', 'e2e'),
+  },
+  imports: {
+    overrides: {
+      'import/no-cycle': 'off',
+      'import/max-dependencies': ['warn', { max: 20 }],
+    },
   },
   vueI18n: {
     src: path.join('app', 'src'),
@@ -28,5 +34,24 @@ module.exports = rotki({
       '/transactions.query_status_events.*/',
       '/transactions.events.headers.*/',
     ],
+    overrides: {
+      '@intlify/vue-i18n/no-i18n-t-path-prop': 'error',
+      '@intlify/vue-i18n/no-deprecated-i18n-component': 'error',
+    },
+  },
+}, {
+  files: ['**/src/**/*.@(ts|vue|js)'],
+  rules: {
+    'perfectionist/sort-objects': 'error',
+  },
+}, {
+  files: ['**/src/**/*.ts'],
+  rules: {
+    '@typescript-eslint/explicit-function-return-type': 'error',
+  },
+}, {
+  files: ['**/*'],
+  rules: {
+    'import/no-cycle': 'off',
   },
 });

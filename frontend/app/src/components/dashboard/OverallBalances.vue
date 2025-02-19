@@ -1,37 +1,41 @@
 <script setup lang="ts">
-import { TimeUnit } from '@rotki/common/lib/settings';
-import {
-  TimeFramePeriod,
-  TimeFramePersist,
-  type TimeFrameSetting,
-  timeframes,
-} from '@rotki/common/lib/settings/graphs';
+import { TimeFramePeriod, TimeFramePersist, type TimeFrameSetting, TimeUnit, timeframes } from '@rotki/common';
 import dayjs from 'dayjs';
 import { Section } from '@/types/status';
+import { isPeriodAllowed } from '@/utils/settings';
+import { useStatusStore } from '@/store/status';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useStatisticsStore } from '@/store/statistics';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { usePremium } from '@/composables/premium';
+import NetWorthChart from '@/components/dashboard/NetWorthChart.vue';
+import TimeframeSelector from '@/components/helper/TimeframeSelector.vue';
+import PercentageDisplay from '@/components/display/PercentageDisplay.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 
 const { t } = useI18n();
-const { currencySymbol, floatingPrecision } = storeToRefs(
-  useGeneralSettingsStore(),
-);
+const { currencySymbol, floatingPrecision } = storeToRefs(useGeneralSettingsStore());
 const sessionStore = useSessionSettingsStore();
 const { update } = sessionStore;
 const { timeframe } = storeToRefs(sessionStore);
-const { premium } = storeToRefs(usePremiumStore());
+const premium = usePremium();
 const statistics = useStatisticsStore();
 const { fetchNetValue, getNetValue } = statistics;
 const { totalNetWorth } = storeToRefs(statistics);
 const frontendStore = useFrontendSettingsStore();
 const { visibleTimeframes } = storeToRefs(frontendStore);
 
-const { isLoading: isSectionLoading } = useStatusStore();
+const { isLoading: isSectionLoading, shouldShowLoadingScreen } = useStatusStore();
 
-const isLoading = isSectionLoading(Section.BLOCKCHAIN);
+const isLoading = logicOr(
+  shouldShowLoadingScreen(Section.BLOCKCHAIN),
+  isSectionLoading(Section.BLOCKCHAIN),
+);
 
 const adjustedTotalNetWorthFontSize = computed(() => {
-  const digits = get(totalNetWorth)
-    .toFormat(get(floatingPrecision))
-    .replace(/\./g, '')
-    .replace(/,/g, '').length;
+  const digits = get(totalNetWorth).toFormat(get(floatingPrecision)).replace(/\./g, '').replace(/,/g, '').length;
 
   // this number adjusted visually
   // when we use max floating precision (8), it won't overlap
@@ -39,9 +43,7 @@ const adjustedTotalNetWorthFontSize = computed(() => {
 });
 
 const allTimeframes = computed(() =>
-  timeframes((unit, amount) =>
-    dayjs().subtract(amount, unit).startOf(TimeUnit.DAY).unix(),
-  ),
+  timeframes((unit, amount) => dayjs().subtract(amount, unit).startOf(TimeUnit.DAY).unix()),
 );
 
 const timeframeData = computed(() => {
@@ -65,9 +67,7 @@ const startingValue = computed(() => {
   return start;
 });
 
-const balanceDelta = computed(() =>
-  get(totalNetWorth).minus(get(startingValue)),
-);
+const balanceDelta = computed(() => get(totalNetWorth).minus(get(startingValue)));
 
 const percentage = computed(() => {
   const bigNumber = get(balanceDelta).div(get(startingValue)).multipliedBy(100);
@@ -77,12 +77,12 @@ const percentage = computed(() => {
 const indicator = computed(() => {
   const delta = get(balanceDelta);
   if (delta.isNegative())
-    return 'arrow-down-line';
+    return 'lu-arrow-down';
 
   if (delta.isZero())
-    return 'git-commit-line';
+    return 'lu-git-commit-horizontal';
 
-  return 'arrow-up-line';
+  return 'lu-arrow-up';
 });
 
 const balanceClass = computed(() => {
@@ -124,78 +124,77 @@ const chartSectionHeight = computed<string>(() => {
 </script>
 
 <template>
-  <RuiCard class="overall-balances">
-    <div class="grid md:grid-cols-2 lg:grid-cols-12 p-2 gap-4 overflow-hidden">
-      <div class="lg:col-span-5 flex flex-col items-center justify-center">
-        <div
-          class="text-center font-medium mb-2 flex"
-          data-cy="overall-balances__net-worth"
-          :style="`font-size: ${adjustedTotalNetWorthFontSize}em`"
-        >
-          <AmountDisplay
-            class="ps-4"
-            xl
-            show-currency="symbol"
-            :fiat-currency="currencySymbol"
-            :value="totalNetWorth"
-          />
-        </div>
-        <div class="flex justify-center items-center">
-          <RuiSkeletonLoader
-            v-if="isLoading"
-            class="w-[10.625rem] h-8"
-            rounded="full"
-          />
-          <span
-            v-else
-            :class="balanceClass"
-            class="py-1 px-3 flex flex-row rounded-full min-h-[2rem] min-w-[170px] text-white dark:text-rui-light-text"
-          >
-            <span>
-              <RuiIcon :name="indicator" />
-            </span>
-            <AmountDisplay
-              v-if="!isLoading"
-              class="px-3"
-              show-currency="symbol"
-              :fiat-currency="currencySymbol"
-              :value="balanceDelta"
-            />
-            <PercentageDisplay
-              v-if="!isLoading"
-              class="pr-2 opacity-80"
-              :value="percentage"
-            />
-          </span>
-        </div>
-        <TimeframeSelector
-          class="pt-6"
-          :value="timeframe"
-          :visible-timeframes="visibleTimeframes"
-          @input="setTimeframe($event)"
+  <RuiCard
+    class="overall-balances"
+    content-class="grid md:grid-cols-2 lg:grid-cols-12 p-2 gap-4 overflow-hidden"
+  >
+    <div class="lg:col-span-5 flex flex-col items-center justify-center">
+      <div
+        class="text-center font-medium mb-2 flex"
+        data-cy="overall-balances__net-worth"
+        :style="`font-size: ${adjustedTotalNetWorthFontSize}em`"
+      >
+        <AmountDisplay
+          class="ps-4"
+          xl
+          show-currency="symbol"
+          :fiat-currency="currencySymbol"
+          :value="totalNetWorth"
         />
       </div>
-      <div
-        class="lg:col-span-7 flex justify-center items-center overall-balances__net-worth-chart"
-      >
-        <NetWorthChart
-          v-if="!isLoading"
-          :chart-data="timeframeData"
-          :timeframe="timeframe"
-          :timeframes="allTimeframes"
+      <div class="flex justify-center items-center">
+        <RuiSkeletonLoader
+          v-if="isLoading"
+          class="w-[10.625rem] h-8"
+          rounded="full"
         />
-        <div
+        <span
           v-else
-          class="overall-balances__net-worth-chart__loader flex h-full flex flex-col text-center justify-center items-center"
+          :class="balanceClass"
+          class="py-1 px-3 flex flex-row rounded-full min-h-[2rem] min-w-[170px] text-white dark:text-rui-light-text"
         >
-          <RuiProgress
-            circular
-            variant="indeterminate"
-            color="primary"
+          <span>
+            <RuiIcon :name="indicator" />
+          </span>
+          <AmountDisplay
+            v-if="!isLoading"
+            class="px-3"
+            show-currency="symbol"
+            :fiat-currency="currencySymbol"
+            :value="balanceDelta"
           />
-          <div class="pt-5 text-caption">
-            {{ t('overall_balances.loading') }}
-          </div>
+          <PercentageDisplay
+            v-if="!isLoading"
+            class="pr-2 opacity-80"
+            :value="percentage"
+          />
+        </span>
+      </div>
+      <TimeframeSelector
+        class="pt-6"
+        :model-value="timeframe"
+        :visible-timeframes="visibleTimeframes"
+        @update:model-value="setTimeframe($event)"
+      />
+    </div>
+    <div class="lg:col-span-7 flex justify-center items-center overall-balances__net-worth-chart">
+      <NetWorthChart
+        v-if="!isLoading"
+        :chart-data="timeframeData"
+        :timeframe="timeframe"
+        :timeframes="allTimeframes"
+      />
+      <div
+        v-else
+        class="overall-balances__net-worth-chart__loader flex h-full flex flex-col text-center justify-center items-center"
+      >
+        <RuiProgress
+          circular
+          variant="indeterminate"
+          color="primary"
+        />
+        <div class="pt-5 text-caption">
+          {{ t('overall_balances.loading') }}
         </div>
       </div>
     </div>

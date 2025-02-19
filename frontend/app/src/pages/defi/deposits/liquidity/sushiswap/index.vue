@@ -2,6 +2,15 @@
 import { Sushi } from '@/premium/premium';
 import { Module } from '@/types/modules';
 import { Section } from '@/types/status';
+import { useSushiswapStore } from '@/store/defi/sushiswap';
+import { useStatusStore } from '@/store/status';
+import { useModules } from '@/composables/session/modules';
+import { usePremium } from '@/composables/premium';
+import ActiveModules from '@/components/defi/ActiveModules.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import ProgressScreen from '@/components/helper/ProgressScreen.vue';
+import ModuleNotActive from '@/components/defi/ModuleNotActive.vue';
+import NoPremiumPlaceholder from '@/components/premium/NoPremiumPlaceholder.vue';
 
 const section = Section.DEFI_SUSHISWAP_BALANCES;
 const secondSection = Section.DEFI_SUSHISWAP_EVENTS;
@@ -9,7 +18,7 @@ const modules: Module[] = [Module.SUSHISWAP];
 
 const { fetchBalances, fetchEvents } = useSushiswapStore();
 const { isModuleEnabled } = useModules();
-const { shouldShowLoadingScreen, isLoading } = useStatusStore();
+const { isLoading, shouldShowLoadingScreen } = useStatusStore();
 const premium = usePremium();
 const { t } = useI18n();
 
@@ -26,11 +35,9 @@ onMounted(async () => {
   await refresh();
 });
 
-const refreshTooltip: ComputedRef<string> = computed(() =>
+const refreshTooltip = computed<string>(() =>
   t('helpers.refresh_header.tooltip', {
-    title: t(
-      'navigation_menu.defi_sub.deposits_sub.liquidity_sub.sushiswap',
-    ).toLocaleLowerCase(),
+    title: t('navigation_menu.defi_sub.deposits_sub.liquidity_sub.sushiswap').toLocaleLowerCase(),
   }),
 );
 </script>
@@ -51,6 +58,7 @@ const refreshTooltip: ComputedRef<string> = computed(() =>
   </ProgressScreen>
   <TablePageLayout
     v-else
+    child
     :title="[
       t('navigation_menu.defi'),
       t('navigation_menu.defi_sub.deposits_sub.liquidity'),
@@ -70,7 +78,7 @@ const refreshTooltip: ComputedRef<string> = computed(() =>
               @click="refresh(true)"
             >
               <template #prepend>
-                <RuiIcon name="refresh-line" />
+                <RuiIcon name="lu-refresh-ccw" />
               </template>
               {{ t('common.refresh') }}
             </RuiButton>

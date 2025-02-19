@@ -1,201 +1,156 @@
 <script setup lang="ts">
-import type { Tag } from '@/types/tags';
+import { type Tag, defaultTag } from '@/types/tags';
+import { useTagStore } from '@/store/session/tags';
+import TagFormDialog from '@/components/tags/TagFormDialog.vue';
+import TagIcon from '@/components/tags/TagIcon.vue';
+import ListItem from '@/components/common/ListItem.vue';
 
-const props = withDefaults(
+const modelValue = defineModel<string[]>({ required: true });
+
+withDefaults(
   defineProps<{
-    value: string[];
     disabled?: boolean;
     label?: string;
-    outlined?: boolean;
   }>(),
   {
     label: 'Tags',
-    outlined: false,
   },
 );
 
-const emit = defineEmits<{
-  (e: 'input', tags: string[]): void;
-}>();
-
 const { t } = useI18n();
-const { value } = toRefs(props);
 const store = useTagStore();
 const { tags } = storeToRefs(store);
 
-const manageTags = ref<boolean>(false);
-
 const search = ref<string>('');
 
-function randomScheme() {
-  const backgroundColor = randomColor();
-  return {
-    backgroundColor,
-    foregroundColor: invertColor(backgroundColor),
-  };
-}
+const newTag = ref<Tag | undefined>(undefined);
 
-const colorScheme = ref(randomScheme());
-
-function tagExists(tagName: string): boolean {
-  return get(tags)
-    .map(({ name }) => name)
-    .includes(tagName);
-}
-
-async function createTag(name: string) {
-  const { backgroundColor, foregroundColor } = get(colorScheme);
-  const tag: Tag = {
-    name,
-    description: '',
-    backgroundColor,
-    foregroundColor,
-  };
-  return await store.addTag(tag);
-}
+const newTagBackground = ref(randomColor());
 
 function remove(tag: string) {
-  const tags = get(value);
+  const tags = get(modelValue);
   const index = tags.indexOf(tag);
-  input([...tags.slice(0, index), ...tags.slice(index + 1)]);
+  onUpdateModelValue([...tags.slice(0, index), ...tags.slice(index + 1)]);
 }
 
 function attemptTagCreation(element: string) {
-  if (tagExists(element))
-    return;
-
-  createTag(element)
-    .then(({ success }) => {
+  store.attemptTagCreation(element, get(newTagBackground))
+    .then((success) => {
       if (!success)
         remove(element);
-    })
-    .catch(error => logger.error(error));
+    });
 }
 
-function input(_value: (string | Tag)[]) {
+function onUpdateModelValue(_value: ({ name: string } | string | Tag)[]) {
   const tags: string[] = [];
   for (const element of _value) {
     if (typeof element === 'string') {
       attemptTagCreation(element);
       tags.push(element);
     }
+    else if (!('description' in element)) {
+      attemptTagCreation(element.name);
+      tags.push(element.name);
+    }
     else {
       tags.push(element.name);
     }
   }
 
-  emit('input', tags);
+  set(modelValue, tags);
+}
+
+function handleCreateNewTag() {
+  set(newTag, defaultTag());
 }
 
 watch(search, (keyword: string | null, previous: string | null) => {
   if (keyword && !previous)
-    set(colorScheme, randomScheme());
+    set(newTagBackground, randomColor());
 });
 
-const newTagBackground = computed<string>(
-  () => `#${get(colorScheme).backgroundColor}`,
-);
+const newTagForeground = computed<string>(() => invertColor(get(newTagBackground)));
 
-const newTagForeground = computed<string>(
-  () => `#${get(colorScheme).foregroundColor}`,
-);
-
-const filteredValue = computed<Tag[]>(() =>
-  get(tags).filter(({ name }) => get(value).includes(name)),
-);
+const filteredValue = computed<Tag[]>(() => get(tags).filter(({ name }) => get(modelValue).includes(name)));
 
 watch(tags, () => {
   const filtered = get(filteredValue);
-  if (get(value).length > filtered.length)
-    input(filtered);
+  if (get(modelValue).length > filtered.length)
+    onUpdateModelValue(filtered);
 });
 </script>
 
 <template>
-  <div>
-    <VCombobox
-      :value="filteredValue"
+  <div class="flex items-start gap-2">
+    <RuiAutoComplete
+      v-model:search-input="search"
+      :model-value="filteredValue"
       :disabled="disabled"
-      :items="tags"
-      class="tag-input"
-      small-chips
+      :options="tags"
+      class="tag-input flex-1"
       :hide-no-data="!search"
-      hide-selected
       :label="label"
-      :outlined="outlined"
-      :search-input.sync="search"
-      item-text="name"
-      item-value="name"
-      multiple
-      @input="input($event)"
+      variant="outlined"
+      text-attr="name"
+      return-object
+      custom-value
+      clearable
+      :item-height="54"
+      @update:model-value="onUpdateModelValue($event)"
     >
       <template #no-data>
-        <ListItem class="p-2">
+        <ListItem
+          class="p-2 py-4"
+          @click="onUpdateModelValue([...filteredValue, search])"
+        >
           <template #title>
-            <span>{{ t('common.actions.create') }}</span>
-            <RuiChip
-              class="ml-3"
-              :bg-color="newTagBackground"
-              :text-color="newTagForeground"
-              tile
-              size="sm"
-            >
-              {{ search }}
-            </RuiChip>
+            <div class="flex items-center gap-4">
+              <span>{{ t('common.actions.create') }}</span>
+
+              <TagIcon
+                small
+                :tag="{
+                  name: search,
+                  backgroundColor: newTagBackground,
+                  foregroundColor: newTagForeground,
+                  description: '',
+                }"
+              />
+            </div>
           </template>
         </ListItem>
       </template>
-      <template #selection="{ item, select }">
-        <RuiChip
-          tile
-          class="font-medium m-0.5"
-          :bg-color="`#${item.backgroundColor}`"
-          :text-color="`#${item.foregroundColor}`"
+      <template #selection="{ item, chipAttrs }">
+        <TagIcon
+          small
+          :tag="item"
+          v-bind="chipAttrs"
           closeable
           :disabled="disabled"
-          size="sm"
-          @click:close="remove(item.name)"
-          @click="select($event)"
-        >
-          {{ item.name }}
-        </RuiChip>
+          clickable
+        />
       </template>
       <template #item="{ item }">
-        <template v-if="typeof item !== 'object'">
-          {{ item }}
-        </template>
-        <template v-else>
-          <TagIcon
-            :tag="item"
-            show-description
-          />
-        </template>
-      </template>
-      <template #append-outer>
-        <RuiButton
-          class="tag-input__manage-tags -mt-4"
-          icon
-          variant="text"
-          color="primary"
-          type="button"
-          :disabled="disabled"
-          @click="manageTags = true"
-        >
-          <RuiIcon name="pencil-line" />
-        </RuiButton>
-      </template>
-    </VCombobox>
-    <RuiDialog
-      v-model="manageTags"
-      max-width="800"
-      class="tag-input__tag-manager"
-    >
-      <AppBridge>
-        <TagManager
-          dialog
-          @close="manageTags = false"
+        <TagIcon
+          :tag="item"
+          show-description
+          small
         />
-      </AppBridge>
-    </RuiDialog>
+      </template>
+    </RuiAutoComplete>
+    <RuiButton
+      class="mt-1"
+      data-cy="add-tag-button"
+      icon
+      variant="text"
+      color="primary"
+      type="button"
+      :disabled="disabled"
+      @click="handleCreateNewTag()"
+    >
+      <RuiIcon name="lu-plus" />
+    </RuiButton>
+
+    <TagFormDialog v-model="newTag" />
   </div>
 </template>

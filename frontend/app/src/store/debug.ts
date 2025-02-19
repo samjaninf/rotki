@@ -1,4 +1,5 @@
 import { BigNumber } from '@rotki/common';
+import { logger } from '@/utils/logging';
 import type { PiniaPluginContext } from 'pinia';
 
 const PREFIX = 'pinia.store.';
@@ -24,16 +25,18 @@ function convert(data: any): any {
 }
 
 function isObject(data: any): boolean {
-  return typeof data === 'object'
+  return (
+    typeof data === 'object'
     && data !== null
     && !(data instanceof RegExp)
     && !(data instanceof Error)
-    && !(data instanceof Date);
+    && !(data instanceof Date)
+  );
 }
 
 const storage = sessionStorage;
 
-function getState(key: string) {
+function getState(key: string): any {
   const items = storage.getItem(PREFIX + key);
   if (!items)
     return null;
@@ -58,7 +61,7 @@ function shouldPersistStore(): any {
   return (menuEnabled || envEnabled) && !isTest;
 }
 
-export function storePiniaPlugins(context: PiniaPluginContext) {
+export function StoreStatePersistsPlugin(context: PiniaPluginContext): void {
   const persistStore = shouldPersistStore();
 
   const { store } = context;
@@ -84,15 +87,12 @@ export function storePiniaPlugins(context: PiniaPluginContext) {
     logger.error(error);
   }
 
-  store.$subscribe(
-    (_, state) => {
-      try {
-        setState(storeId, state);
-      }
-      catch (error) {
-        logger.error(error);
-      }
-    },
-    { detached: true },
-  );
+  store.$subscribe((_, state) => {
+    try {
+      setState(storeId, state);
+    }
+    catch (error) {
+      logger.error(error);
+    }
+  }, { detached: true });
 }

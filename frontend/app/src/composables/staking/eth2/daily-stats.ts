@@ -1,19 +1,38 @@
-import { type MaybeRef, objectOmit } from '@vueuse/core';
+import { omit } from 'es-toolkit';
 import { TaskType } from '@/types/task-type';
 import { Section, Status } from '@/types/status';
-import type { Eth2DailyStats, Eth2DailyStatsPayload, EthStakingDailyStatData } from '@rotki/common/lib/staking/eth2';
+import { isTaskCancelled } from '@/utils';
+import { useNotificationsStore } from '@/store/notifications';
+import { useBlockchainValidatorsStore } from '@/store/blockchain/validators';
+import { useTaskStore } from '@/store/tasks';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useEth2Api } from '@/composables/api/staking/eth2';
+import { useStatusUpdater } from '@/composables/status';
+import { usePremium } from '@/composables/premium';
+import type { MaybeRef } from '@vueuse/core';
+import type { Eth2DailyStats, Eth2DailyStatsPayload, EthStakingDailyStatData } from '@rotki/common';
 import type { TaskMeta } from '@/types/task';
+import type { ComputedRef, Ref } from 'vue';
 
-export function useEth2DailyStats() {
+interface UseEthStakingDailyStatsReturn {
+  pagination: Ref<Eth2DailyStatsPayload>;
+  dailyStats: ComputedRef<EthStakingDailyStatData>;
+  dailyStatsLoading: Ref<boolean>;
+  refresh: () => Promise<void>;
+  refreshStats: (userInitiated: boolean) => Promise<void>;
+  syncStakingStats: (userInitiated?: boolean) => Promise<boolean>;
+}
+
+export function useEth2DailyStats(): UseEthStakingDailyStatsReturn {
   const { itemsPerPage } = storeToRefs(useFrontendSettingsStore());
   const defaultPagination = (): Eth2DailyStatsPayload => ({
+    ascending: [false],
     limit: get(itemsPerPage),
     offset: 0,
     orderByAttributes: ['timestamp'],
-    ascending: [false],
   });
 
-  const pagination: Ref<Eth2DailyStatsPayload> = ref(defaultPagination());
+  const pagination = ref<Eth2DailyStatsPayload>(defaultPagination());
 
   const premium = usePremium();
   const { awaitTask } = useTaskStore();
@@ -22,7 +41,7 @@ export function useEth2DailyStats() {
 
   const api = useEth2Api();
 
-  const { ethStakingValidators } = storeToRefs(useBlockchainStore());
+  const { ethStakingValidators } = storeToRefs(useBlockchainValidatorsStore());
 
   const syncStakingStats = async (userInitiated = false): Promise<boolean> => {
     if (!get(premium))
@@ -36,11 +55,11 @@ export function useEth2DailyStats() {
       return false;
 
     const defaults: Eth2DailyStatsPayload = {
+      ascending: [false],
       limit: 0,
       offset: 0,
-      ascending: [false],
-      orderByAttributes: ['timestamp'],
       onlyCache: false,
+      orderByAttributes: ['timestamp'],
     };
 
     try {
@@ -48,16 +67,11 @@ export function useEth2DailyStats() {
       const { taskId } = await api.refreshStakingStats(defaults);
 
       const taskMeta: TaskMeta = {
-        title: t('actions.eth2_staking_stats.task.title'),
         description: t('actions.eth2_staking_stats.task.description'),
+        title: t('actions.eth2_staking_stats.task.title'),
       };
 
-      await awaitTask<Eth2DailyStats, TaskMeta>(
-        taskId,
-        taskType,
-        taskMeta,
-        true,
-      );
+      await awaitTask<Eth2DailyStats, TaskMeta>(taskId, taskType, taskMeta, true);
       setStatus(Status.LOADED);
       return true;
     }
@@ -66,11 +80,11 @@ export function useEth2DailyStats() {
 
       if (!isTaskCancelled(error)) {
         notify({
-          title: t('actions.eth2_staking_stats.error.title'),
+          display: true,
           message: t('actions.eth2_staking_stats.error.message', {
             message: error.message,
           }),
-          display: true,
+          title: t('actions.eth2_staking_stats.error.title'),
         });
       }
     }
@@ -78,21 +92,19 @@ export function useEth2DailyStats() {
     return false;
   };
 
-  const fetchStakingStats = async (
-    payload: MaybeRef<Eth2DailyStatsPayload>,
-  ): Promise<Eth2DailyStats> => {
+  const fetchStakingStats = async (payload: MaybeRef<Eth2DailyStatsPayload>): Promise<Eth2DailyStats> => {
     assert(get(premium));
 
-    return await api.fetchStakingStats({
+    return api.fetchStakingStats({
       ...get(payload),
       onlyCache: true,
     });
   };
 
   const {
-    state,
     execute,
     isLoading: dailyStatsLoading,
+    state,
   } = useAsyncState<Eth2DailyStats, MaybeRef<Eth2DailyStatsPayload>[]>(
     fetchStakingStats,
     {
@@ -102,9 +114,9 @@ export function useEth2DailyStats() {
       sumPnl: Zero,
     },
     {
+      delay: 0,
       immediate: false,
       resetOnExecute: false,
-      delay: 0,
     },
   );
 
@@ -112,22 +124,19 @@ export function useEth2DailyStats() {
     const dailyStats = get(state);
     const validators = get(ethStakingValidators);
     return {
-      ...objectOmit(dailyStats, ['entries']),
+      ...omit(dailyStats, ['entries']),
       entries: dailyStats.entries.map((stat) => {
-        const ownershipPercentage = validators.find(
-          ({ data }) => data.index === stat.validatorIndex,
-        )?.data?.ownershipPercentage;
-        return ({
+        const ownershipPercentage = validators.find(({ index }) => index === stat.validatorIndex)
+          ?.ownershipPercentage;
+        return {
           ...stat,
           ownershipPercentage,
-        });
+        };
       }),
     };
   });
 
-  const fetchDailyStats = async (
-    payload: Eth2DailyStatsPayload,
-  ): Promise<void> => {
+  const fetchDailyStats = async (payload: Eth2DailyStatsPayload): Promise<void> => {
     await execute(0, payload);
   };
 
@@ -143,12 +152,12 @@ export function useEth2DailyStats() {
       await refresh();
   }
 
-  watch(pagination, pagination => fetchDailyStats(pagination));
+  watch(pagination, async pagination => fetchDailyStats(pagination));
 
   return {
-    pagination,
     dailyStats,
     dailyStatsLoading,
+    pagination,
     refresh,
     refreshStats,
     syncStakingStats,

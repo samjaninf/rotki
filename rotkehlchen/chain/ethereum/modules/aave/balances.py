@@ -17,8 +17,8 @@ from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.ethereum.decoding.decoder import EthereumTransactionDecoder
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -27,12 +27,12 @@ log = RotkehlchenLogsAdapter(logger)
 class AaveBalances(ProtocolWithBalance):
     def __init__(
             self,
-            database: 'DBHandler',
             evm_inquirer: 'EthereumInquirer',
+            tx_decoder: 'EthereumTransactionDecoder',
     ):
         super().__init__(
-            database=database,
             evm_inquirer=evm_inquirer,
+            tx_decoder=tx_decoder,
             counterparty=CPT_AAVE,
             deposit_event_types={(HistoryEventType.STAKING, HistoryEventSubType.DEPOSIT_ASSET)},
         )
@@ -40,7 +40,10 @@ class AaveBalances(ProtocolWithBalance):
     def query_balances(self) -> 'BalancesSheetType':
         """Queries and returns the balances sheet for staking events.
 
-        Retrieves deposit events and calls staking contract to get the total rewards balance."""
+        Retrieves deposit events and calls staking contract to get the total rewards balance.
+        That is how much AAVE is ready to be claimed as staking rewards. For how
+        much AAVE is staked, that is the stkAAVE balance which should appear as
+        part of balance queries and is 1-1 to AAVE."""
         balances: BalancesSheetType = defaultdict(BalanceSheet)
         if len(addresses_with_deposits := list(self.addresses_with_deposits(products=[EvmProduct.STAKING]))) == 0:  # noqa: E501
             return balances

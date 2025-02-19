@@ -1,21 +1,41 @@
 <script setup lang="ts">
-import Fragment from '@/components/helper/Fragment';
+import { useSessionStore } from '@/store/session';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useUpdateMessage } from '@/composables/update-message';
+import { useDynamicMessages } from '@/composables/dynamic-messages';
+import { useAccountManagement } from '@/composables/user/account';
+import { useBackendManagement } from '@/composables/backend';
+import { useAppNavigation } from '@/composables/navigation';
+import WelcomeMessageDisplay from '@/components/account-management/login/WelcomeMessageDisplay.vue';
+import NewReleaseChangelog from '@/components/account-management/login/NewReleaseChangelog.vue';
+import RotkiLogo from '@/components/common/RotkiLogo.vue';
+import AccountManagementAside from '@/components/account-management/AccountManagementAside.vue';
+import AdaptiveFooterButton from '@/components/account-management/AdaptiveFooterButton.vue';
+import AccountManagementFooterText from '@/components/account-management/AccountManagementFooterText.vue';
+import LoginForm from '@/components/account-management/login/LoginForm.vue';
+import UpgradeProgressDisplay from '@/components/account-management/upgrade/UpgradeProgressDisplay.vue';
+import AssetUpdate from '@/components/status/update/AssetUpdate.vue';
+import UserHost from '@/components/account-management/UserHost.vue';
 import type { LoginCredentials } from '@/types/login';
 
+definePage({
+  meta: {
+    layout: 'auth',
+  },
+});
+
 const { t } = useI18n();
-const { navigateToUserCreation, navigateToDashboard } = useAppNavigation();
-const { upgradeVisible, canRequestData } = storeToRefs(useSessionAuthStore());
+const { navigateToDashboard, navigateToUserCreation } = useAppNavigation();
+const { canRequestData, upgradeVisible } = storeToRefs(useSessionAuthStore());
 const { backendChanged } = useBackendManagement();
-const { userLogin, errors, loading } = useAccountManagement();
+const { errors, loading, userLogin } = useAccountManagement();
 const { checkForAssetUpdate } = storeToRefs(useSessionStore());
 
-const showUpgradeProgress: ComputedRef<boolean> = computed(
-  () => get(upgradeVisible) && get(errors).length === 0,
-);
+const showUpgradeProgress = computed<boolean>(() => get(upgradeVisible) && get(errors).length === 0);
 
 const isDocker = import.meta.env.VITE_DOCKER;
 
-const { fetchMessages, welcomeHeader, welcomeMessage, activeWelcomeMessages } = useDynamicMessages();
+const { activeWelcomeMessages, fetchMessages, welcomeHeader, welcomeMessage } = useDynamicMessages();
 const { showReleaseNotes } = useUpdateMessage();
 
 const header = computed(() => {
@@ -38,78 +58,74 @@ async function navigate() {
   set(showReleaseNotes, false);
 }
 
-const css = useCssModule();
-
 onMounted(() => fetchMessages());
 </script>
 
 <template>
-  <Fragment>
-    <section :class="css.section">
-      <div :class="css.container">
+  <section :class="$style.section">
+    <div :class="$style.container">
+      <RotkiLogo
+        :class="$style.logo__mobile"
+        unique-key="0"
+      />
+      <div :class="$style.wrapper">
+        <div data-cy="account-management">
+          <UserHost>
+            <div v-if="checkForAssetUpdate">
+              <AssetUpdate
+                headless
+                @skip="navigate()"
+              />
+            </div>
+            <UpgradeProgressDisplay v-else-if="showUpgradeProgress" />
+            <LoginForm
+              v-else
+              :loading="loading"
+              :is-docker="isDocker"
+              :errors="errors"
+              @touched="errors = []"
+              @login="handleLogin($event)"
+              @backend-changed="backendChanged($event)"
+              @new-account="navigateToUserCreation()"
+            />
+          </UserHost>
+        </div>
+      </div>
+      <footer :class="$style.container__footer">
+        <AccountManagementFooterText #default="{ copyright }">
+          {{ copyright }}
+        </AccountManagementFooterText>
+        <div class="ml-4">
+          <AdaptiveFooterButton />
+        </div>
+      </footer>
+    </div>
+  </section>
+  <AccountManagementAside class="p-6 hidden lg:flex lg:p-12">
+    <div>
+      <span :class="$style.logo">
         <RotkiLogo
-          :class="css.logo__mobile"
+          size="2"
           unique-key="0"
         />
-        <div :class="css.wrapper">
-          <div data-cy="account-management">
-            <UserHost>
-              <div v-if="checkForAssetUpdate">
-                <AssetUpdate
-                  headless
-                  @skip="navigate()"
-                />
-              </div>
-              <UpgradeProgressDisplay v-else-if="showUpgradeProgress" />
-              <LoginForm
-                v-else
-                :loading="loading"
-                :is-docker="isDocker"
-                :errors="errors"
-                @touched="errors = []"
-                @login="handleLogin($event)"
-                @backend-changed="backendChanged($event)"
-                @new-account="navigateToUserCreation()"
-              />
-            </UserHost>
-          </div>
-        </div>
-        <footer :class="css.container__footer">
-          <AccountManagementFooterText #default="{ copyright }">
-            {{ copyright }}
-          </AccountManagementFooterText>
-          <div class="ml-4">
-            <AdaptiveFooterButton />
-          </div>
-        </footer>
-      </div>
-    </section>
-    <AccountManagementAside class="p-6 hidden lg:flex lg:p-12">
-      <div>
-        <span :class="css.logo">
-          <RotkiLogo
-            size="2"
-            unique-key="0"
-          />
-        </span>
-        <h2 class="text-h3 font-light xl:text-h2 mb-6">
-          {{ header.header }}
-        </h2>
-        <p class="text-body-2">
-          {{ header.text }}
-        </p>
-        <NewReleaseChangelog
-          v-if="showReleaseNotes"
-          class="mt-4"
-        />
-        <WelcomeMessageDisplay
-          v-else-if="welcomeMessage"
-          class="mt-6"
-          :messages="activeWelcomeMessages"
-        />
-      </div>
-    </AccountManagementAside>
-  </Fragment>
+      </span>
+      <h2 class="text-h3 font-light xl:text-h2 mb-6">
+        {{ header.header }}
+      </h2>
+      <p class="text-body-2">
+        {{ header.text }}
+      </p>
+      <NewReleaseChangelog
+        v-if="showReleaseNotes"
+        class="mt-4"
+      />
+      <WelcomeMessageDisplay
+        v-else-if="welcomeMessage"
+        class="mt-6"
+        :messages="activeWelcomeMessages"
+      />
+    </div>
+  </AccountManagementAside>
 </template>
 
 <style module lang="scss">

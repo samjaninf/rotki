@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { useConfirmStore } from '@/store/confirm';
+import { useTaskStore } from '@/store/tasks';
+import NoTasksRunning from '@/components/status/notifications/NoTasksRunning.vue';
+import PendingTask from '@/components/status/notifications/PendingTask.vue';
+import CollapsedPendingTasks from '@/components/status/notifications/CollapsedPendingTasks.vue';
 import type { Task, TaskMeta } from '@/types/task';
 
 const expanded = ref(false);
@@ -7,23 +12,20 @@ const { t } = useI18n();
 const store = useTaskStore();
 const { hasRunningTasks, tasks } = storeToRefs(store);
 const { cancelTask, isTaskRunning } = store;
-const { show, dismiss } = useConfirmStore();
+const { dismiss, show } = useConfirmStore();
 
-const debounceDismiss = useDebounceFn(
-  (running: boolean) => !running && dismiss(),
-  1000,
-);
+const debounceDismiss = useDebounceFn((running: boolean) => !running && dismiss(), 1000);
 
 function showConfirmation(task: Task<TaskMeta>) {
   const taskRef = isTaskRunning(task.type, task.meta);
   const unwatch = watch(taskRef, debounceDismiss);
 
-  return show(
+  show(
     {
-      title: t('collapsed_pending_tasks.cancel_task'),
       message: t('collapsed_pending_tasks.cancel_task_info', {
         title: task.meta.title,
       }),
+      title: t('collapsed_pending_tasks.cancel_task'),
       type: 'warning',
     },
     () => {

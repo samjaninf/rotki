@@ -1,6 +1,6 @@
 
 import bech32
-from base58 import b58decode_check, b58encode_check
+from base58 import b58encode_check
 from eth_typing import ChecksumAddress
 from marshmallow import ValidationError
 
@@ -67,23 +67,11 @@ def _b32decode(inputs: str) -> list:
     return [_CHARSET.find(letter) for letter in inputs]
 
 
-def _b32encode(inputs: list) -> str:
-    out = ''
-    for char_code in inputs:
-        out += _CHARSET[char_code]
-    return out
-
-
 def _address_type(address_type: str, version: str | int) -> tuple[str, int, bool]:
     for mapping in _VERSION_MAP[address_type]:
         if version in (mapping[0], mapping[1]):
             return mapping
     raise ValueError('Invalid Address')
-
-
-def _calculate_checksum(prefix: str, payload: list[int]) -> list:
-    poly = _polymod(_prefix_expand(prefix) + payload + [0, 0, 0, 0, 0, 0, 0, 0])
-    return [(poly >> 5 * (7 - x)) & 0x1f for x in range(8)]
 
 
 def _code_list_to_string(code_list: list[int]) -> bytes:
@@ -93,36 +81,13 @@ def _code_list_to_string(code_list: list[int]) -> bytes:
     return output
 
 
-def legacy_to_cash_address(address: str) -> BTCAddress | None:
-    """
-    Converts a legacy BCH address to CashAddr format.
-    Code is taken from:
-    https://github.com/oskyk/cashaddress/blob/master/cashaddress/convert.py#L46
-
-    Returns None if an error occured during conversion.
-    """
-    try:
-        decoded = bytearray(b58decode_check(address))
-        version = _address_type('legacy', decoded[0])[0]
-        payload = list(decoded[1:])
-        version_int = _address_type('cash', version)[1]
-        new_payload = [version_int] + payload
-        converted_bits = bech32.convertbits(new_payload, 8, 5)
-        if converted_bits is None:
-            return None
-        checksum = _calculate_checksum(_PREFIX, converted_bits)
-        return BTCAddress(_PREFIX + ':' + _b32encode(converted_bits + checksum))
-    except ValueError:
-        return None
-
-
 def cash_to_legacy_address(address: str) -> BTCAddress | None:
     """
     Converts a legacy BCH address to CashAddr format.
     Code is taken from:
     https://github.com/oskyk/cashaddress/blob/master/cashaddress/convert.py#L46
 
-    Returns None if an error occured during conversion.
+    Returns None if an error occurred during conversion.
     """
     try:
         is_valid = is_valid_bitcoin_cash_address(address)

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useEventsQueryStatus } from '@/composables/history/events/query-status/events-query-status';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import HashLink from '@/components/helper/HashLink.vue';
 import type { HistoryEventsQueryData } from '@/types/websocket-messages';
 
 defineProps<{ item: HistoryEventsQueryData }>();
@@ -7,10 +10,10 @@ const { getItemTranslationKey } = useEventsQueryStatus();
 </script>
 
 <template>
-  <i18n
-    :path="getItemTranslationKey(item)"
+  <i18n-t
+    :keypath="getItemTranslationKey(item)"
     tag="div"
-    class="flex py-2 text-no-wrap flex-wrap text-body-2"
+    class="flex items-center py-2 text-no-wrap flex-wrap text-body-2"
   >
     <template #name>
       <div class="font-bold px-2 text-no-wrap">
@@ -39,5 +42,5 @@ const { getItemTranslationKey } = useEventsQueryStatus();
         <DateDisplay :timestamp="item.period[1]" />
       </div>
     </template>
-  </i18n>
+  </i18n-t>
 </template>

@@ -32,6 +32,7 @@ from rotkehlchen.serialization.deserialize import (
 )
 from rotkehlchen.types import ChainID, ChecksumEvmAddress, EvmTokenKind, ExternalService
 from rotkehlchen.user_messages import MessagesAggregator
+from rotkehlchen.utils.network import create_session
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -138,9 +139,8 @@ class Opensea(ExternalServiceWithApiKey):
             ethereum_inquirer: EthereumInquirer,
     ) -> None:
         super().__init__(database=database, service_name=ExternalService.OPENSEA)
-        self.db: DBHandler
         self.msg_aggregator = msg_aggregator
-        self.session = requests.session()
+        self.session = create_session()
         self.session.headers.update({
             'Content-Type': 'application/json',
         })
@@ -173,6 +173,7 @@ class Opensea(ExternalServiceWithApiKey):
         backoff = 1
         backoff_limit = 33
         timeout = timeout or CachedSettings().get_timeout_tuple()
+        response = None
         while backoff < backoff_limit:
             log.debug(f'Querying opensea: {query_str}')
             try:
@@ -188,7 +189,7 @@ class Opensea(ExternalServiceWithApiKey):
 
             if response.status_code != 200:
                 if api_key is None and self.backup_key is None:
-                    self.backup_key = 'f6bc0f7f7a5944f9bd63366130edd306'
+                    self.backup_key = '04ea654d84cd4b2b8da25ec41ca1a9a4'
                     self.session.headers.update({'X-API-KEY': self.backup_key})
 
                 log.debug(
@@ -205,6 +206,7 @@ class Opensea(ExternalServiceWithApiKey):
 
             break  # else we found response so let's break off the loop
 
+        assert response is not None  # if we get here response is populated
         if response.status_code != 200:
             raise RemoteError(
                 f'Opensea API request {response.url} failed '
@@ -303,9 +305,16 @@ class Opensea(ExternalServiceWithApiKey):
                 price_asset = A_ETH
                 price_in_usd = last_price_in_usd
 
-            token_id = entry['contract'] + '_' + entry['identifier']
+            try:
+                token_id = f'{to_checksum_address(entry["contract"])}_{entry["identifier"]}'
+            except (ValueError, TypeError) as e:
+                raise DeserializationError(
+                    f'Failed to checksum NFT contract address for {entry}',
+                ) from e
+
             if entry['token_standard'] == 'erc1155':
                 token_id += f'_{owner_address!s}'
+
             return NFT(  # can raise KeyError due to arg init
                 token_identifier=NFT_DIRECTIVE + token_id,
                 background_color=None,
@@ -364,11 +373,11 @@ class Opensea(ExternalServiceWithApiKey):
                     endpoint='collectionstats', options={'name': entry['collection']},
                 )
                 log.debug(stats_result)
-                _floor_price = (
+                raw_floor_price = (
                     stats_result['total']['floor_price'] or stats_result['total']['average_price']
                 )
                 floor_price = deserialize_optional_to_optional_fval(
-                    value=_floor_price,
+                    value=raw_floor_price,
                     name='floor price',
                     location='opensea',
                 )

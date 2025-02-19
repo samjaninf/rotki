@@ -1,17 +1,8 @@
 <script setup lang="ts">
-const props = defineProps<{
-  value: boolean;
+const model = defineModel<boolean>({ required: true });
+defineProps<{
   count: number;
 }>();
-
-const emit = defineEmits(['input']);
-
-const { value } = toRefs(props);
-
-function input() {
-  emit('input', !get(value));
-}
-
 const { t } = useI18n();
 </script>
 
@@ -35,15 +26,15 @@ const { t } = useI18n();
       variant="text"
       icon
       size="sm"
-      @click="input()"
+      @click="model = !model"
     >
       <RuiIcon
-        v-if="value"
-        name="arrow-up-s-line"
+        v-if="model"
+        name="lu-chevron-up"
       />
       <RuiIcon
         v-else
-        name="arrow-down-s-line"
+        name="lu-chevron-down"
       />
     </RuiButton>
   </div>

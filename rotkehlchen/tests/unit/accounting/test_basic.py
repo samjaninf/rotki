@@ -4,7 +4,6 @@ import pytest
 
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.pnl import PNL, PnlTotals
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.accounting.types import MissingPrice
 from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.ethereum.modules.eth2.structures import ValidatorDailyStats
@@ -17,6 +16,8 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.price import PriceHistorian
+from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.tests.utils.accounting import (
     accounting_history_process,
     check_pnls_and_csv,
@@ -293,7 +294,7 @@ def test_direct_profit_currency_fiat_trades(accountant, google_service):
             base_asset=A_ETH,
             quote_asset=A_EUR,
             trade_type=TradeType.BUY,
-            amount=AssetAmount(FVal(1)),
+            amount=AssetAmount(ONE),
             rate=buy_price,  # But we bought in discount
             fee=Fee(ZERO),
             fee_currency=A_EUR,
@@ -304,7 +305,7 @@ def test_direct_profit_currency_fiat_trades(accountant, google_service):
             base_asset=A_ETH,
             quote_asset=A_EUR,
             trade_type=TradeType.SELL,
-            amount=AssetAmount(FVal(1)),
+            amount=AssetAmount(ONE),
             rate=sell_price,  # But we sold for more than oracle
             fee=Fee(ZERO),
             fee_currency=A_EUR,
@@ -340,7 +341,7 @@ def test_other_currency_fiat_trades(accountant, google_service):
             base_asset=A_ETH,
             quote_asset=A_USD,
             trade_type=TradeType.BUY,
-            amount=AssetAmount(FVal(1)),
+            amount=AssetAmount(ONE),
             rate=buy_price,  # But we bought in discount
             fee=Fee(ZERO),
             fee_currency=A_USD,
@@ -351,7 +352,7 @@ def test_other_currency_fiat_trades(accountant, google_service):
             base_asset=A_ETH,
             quote_asset=A_USD,  # USD/EUR -> 0.8878
             trade_type=TradeType.SELL,
-            amount=AssetAmount(FVal(1)),
+            amount=AssetAmount(ONE),
             rate=sell_price,  # But we sold for more than oracle
             fee=Fee(ZERO),
             fee_currency=A_USD,
@@ -372,6 +373,7 @@ def test_other_currency_fiat_trades(accountant, google_service):
     check_pnls_and_csv(accountant, expected_pnls, google_service)
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('should_mock_price_queries', [False])
 def test_asset_and_price_not_found_in_history_processing(accountant):
     """
@@ -381,6 +383,7 @@ def test_asset_and_price_not_found_in_history_processing(accountant):
     Regression for https://github.com/rotki/rotki/issues/432
     Updated with https://github.com/rotki/rotki/pull/4196
     """
+    PriceHistorian().set_oracles_order([HistoricalPriceOracle.CRYPTOCOMPARE])  # enforce single oracle for VCR  # noqa: E501
     fgp = EvmToken('eip155:1/erc20:0xd9A8cfe21C232D485065cb62a96866799d4645f7')
     time = Timestamp(1492685761)
     trade = Trade(
@@ -427,7 +430,7 @@ def test_acquisition_price_not_found(accountant, google_service):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_COMP,
-            balance=Balance(amount=ONE),
+            amount=ONE,
         ), Trade(
             timestamp=Timestamp(1635314397),  # cryptocompare hourly COMP/EUR price: 261.39
             location=Location.POLONIEX,
@@ -507,7 +510,7 @@ def test_non_history_event_in_history_iterator(accountant):
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_WBTC,
-        balance=Balance(amount=ONE),
+        amount=ONE,
     ), EvmEvent(
         tx_hash=tx_hash,
         sequence_index=1,
@@ -516,7 +519,7 @@ def test_non_history_event_in_history_iterator(accountant):
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_WBTC,
-        balance=Balance(amount=FVal(swap_amount_str)),
+        amount=FVal(swap_amount_str),
         location_label=user_address,
         notes=f'Swap {swap_amount_str} WBTC in cowswap',
         counterparty=CPT_COWSWAP,
@@ -529,7 +532,7 @@ def test_non_history_event_in_history_iterator(accountant):
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_USDC,
-        balance=Balance(amount=FVal(receive_amount_str)),
+        amount=FVal(receive_amount_str),
         location_label=user_address,
         notes=f'Receive {receive_amount_str} USDC as the result of a swap in cowswap',
         counterparty=CPT_COWSWAP,

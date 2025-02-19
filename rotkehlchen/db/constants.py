@@ -7,9 +7,13 @@ KRAKEN_ACCOUNT_TYPE_KEY = 'kraken_account_type'
 BINANCE_MARKETS_KEY = 'binance_selected_trade_pairs'
 USER_CREDENTIAL_MAPPING_KEYS = (KRAKEN_ACCOUNT_TYPE_KEY, BINANCE_MARKETS_KEY)
 
+
+# -- EVM transactions attributes values -- used in evm_tx_mappings
+EVMTX_DECODED = 0
+EVMTX_SPAM = 1
+
 # -- history_events_mappings values --
 HISTORY_MAPPING_KEY_STATE = 'state'
-HISTORY_MAPPING_STATE_DECODED = 0
 HISTORY_MAPPING_STATE_CUSTOMIZED = 1
 
 
@@ -54,11 +58,11 @@ class UpdateType(Enum):
 
 
 # Giving a name for history_events.identifier since without it in the free version case https://github.com/rotki/rotki/issues/7362 we were hitting a no such column: history_events.identifier  # noqa: E501
-HISTORY_BASE_ENTRY_FIELDS = 'entry_type, history_events.identifier AS history_events_identifier, event_identifier, sequence_index, timestamp, location, location_label, asset, amount, usd_value, notes, type, subtype '  # noqa: E501
+HISTORY_BASE_ENTRY_FIELDS = 'entry_type, history_events.identifier AS history_events_identifier, event_identifier, sequence_index, timestamp, location, location_label, asset, amount, notes, type, subtype, extra_data '  # noqa: E501
 HISTORY_BASE_ENTRY_LENGTH = 12
 
-EVM_EVENT_FIELDS = 'tx_hash, counterparty, product, address, extra_data'
-EVM_FIELD_LENGTH = 5
+EVM_EVENT_FIELDS = 'tx_hash, counterparty, product, address'
+EVM_FIELD_LENGTH = 4
 
 ETH_STAKING_EVENT_FIELDS = 'validator_index, is_exit_or_blocknumber'
 ETH_STAKING_FIELD_LENGTH = 2

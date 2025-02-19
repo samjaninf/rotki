@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import { useRefMap } from '@/composables/utils/useRefMap';
+import { useDefiMetadata } from '@/composables/defi/metadata';
+import DefiAsset from '@/components/defi/DefiAsset.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import InfoRow from '@/components/defi/display/InfoRow.vue';
+import StatCard from '@/components/display/StatCard.vue';
 import type { DefiProtocolSummary } from '@/types/defi/overview';
 
 const props = defineProps<{
@@ -11,31 +17,19 @@ const { t } = useI18n();
 
 const assets = computed(() => {
   const { assets } = get(summary);
-  return assets.sort(
-    ({ balance: { usdValue } }, { balance: { usdValue: otherUsdValue } }) => {
-      if (usdValue.eq(otherUsdValue))
-        return 0;
+  return assets.sort(({ balance: { usdValue } }, { balance: { usdValue: otherUsdValue } }) => {
+    if (usdValue.eq(otherUsdValue))
+      return 0;
 
-      return usdValue.gt(otherUsdValue) ? -1 : 1;
-    },
-  );
+    return usdValue.gt(otherUsdValue) ? -1 : 1;
+  });
 });
 
-const { getDefiName, getDefiImage } = useDefiMetadata();
+const { getDefiImage, getDefiName, loading } = useDefiMetadata();
 
 const protocol = useRefMap(summary, i => i.protocol);
-const reactiveDecoder = reactify(decodeHtmlEntities);
-
-const name = reactiveDecoder(getDefiName(protocol));
-const image = getDefiImage(protocol);
-
-const imageUrl = computed(() => {
-  const imageVal = get(image);
-  if (!imageVal)
-    return '';
-
-  return `./assets/images/protocols/${imageVal}`;
-});
+const name = getDefiName(protocol);
+const imageUrl = getDefiImage(protocol);
 </script>
 
 <template>
@@ -44,6 +38,7 @@ const imageUrl = computed(() => {
     :title="name"
     :protocol-icon="imageUrl"
     bordered
+    :loading="loading"
   >
     <div v-if="summary.liabilities">
       <div class="text-subtitle-1 font-bold pb-2 flex flex-row justify-between">
@@ -62,7 +57,7 @@ const imageUrl = computed(() => {
             <RuiIcon
               size="16"
               color="primary"
-              name="external-link-line"
+              name="lu-external-link"
             />
           </RuiButton>
         </RouterLink>
@@ -81,9 +76,7 @@ const imageUrl = computed(() => {
       <RuiDivider class="my-4" />
     </div>
     <div v-if="summary.deposits">
-      <div
-        class="pb-2 flex flex-row justify-between text-subtitle-1 font-medium"
-      >
+      <div class="pb-2 flex flex-row justify-between text-subtitle-1 font-medium">
         {{ t('common.deposits') }}
         <RouterLink
           v-if="summary.depositsUrl"
@@ -99,7 +92,7 @@ const imageUrl = computed(() => {
             <RuiIcon
               size="16"
               color="primary"
-              name="external-link-line"
+              name="lu-external-link"
             />
           </RuiButton>
         </RouterLink>
@@ -116,6 +109,7 @@ const imageUrl = computed(() => {
     bordered
     :title="name"
     :protocol-icon="imageUrl"
+    :loading="loading"
   >
     <span
       v-if="summary.tokenInfo"
@@ -136,27 +130,31 @@ const imageUrl = computed(() => {
         v-model="details"
         max-width="450px"
       >
-        <template #activator="{ on }">
+        <template #activator="{ attrs }">
           <RuiButton
             size="sm"
             variant="text"
             color="primary"
-            v-on="on"
+            v-bind="attrs"
           >
             {{ t('common.details') }}
             <template #append>
               <RuiIcon
                 size="16"
                 color="primary"
-                name="external-link-line"
+                name="lu-external-link"
               />
             </template>
           </RuiButton>
         </template>
-        <RuiCard divide>
+        <RuiCard
+          divide
+          content-class="h-[300px] flex flex-col gap-2"
+        >
           <template #custom-header>
             <div class="flex items-center p-4 gap-4">
               <AppImage
+                :loading="loading"
                 :src="imageUrl"
                 size="32px"
                 contain
@@ -172,13 +170,11 @@ const imageUrl = computed(() => {
               </RuiCardHeader>
             </div>
           </template>
-          <div class="h-[300px] flex flex-col gap-2">
-            <DefiAsset
-              v-for="(asset, index) in assets"
-              :key="index"
-              :asset="asset"
-            />
-          </div>
+          <DefiAsset
+            v-for="(asset, index) in assets"
+            :key="index"
+            :asset="asset"
+          />
         </RuiCard>
       </RuiDialog>
     </div>

@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { type Currency, useCurrencies } from '@/types/currencies';
+import { type SupportedCurrency, useCurrencies } from '@/types/currencies';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import ListItem from '@/components/common/ListItem.vue';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+import { useCurrencyUpdate } from '@/composables/use-currency-update';
 
 const { currencies } = useCurrencies();
-const selectedCurrency = ref<Currency>(get(currencies)[0]);
+const selectedCurrency = ref<SupportedCurrency>(get(currencies)[0].tickerSymbol);
+
 const { currency } = storeToRefs(useGeneralSettingsStore());
 const { t } = useI18n();
-
-const currenciesWithKeys = computed(() => get(currencies).map(c => ({ ...c, key: c.tickerSymbol })));
+const { onCurrencyUpdate } = useCurrencyUpdate();
 
 function successMessage(symbol: string) {
   return t('general_settings.validation.currency.success', {
@@ -15,7 +19,7 @@ function successMessage(symbol: string) {
 }
 
 onMounted(() => {
-  set(selectedCurrency, get(currency));
+  set(selectedCurrency, get(currency).tickerSymbol);
 });
 
 function calculateFontSize(symbol: string) {
@@ -30,18 +34,21 @@ function calculateFontSize(symbol: string) {
     setting="mainCurrency"
     :error-message="t('general_settings.validation.currency.error')"
     :success-message="successMessage"
+    @finish="onCurrencyUpdate()"
   >
     <RuiMenuSelect
       v-model="selectedCurrency"
-      class="general-settings__fields__currency-selector"
+      class="mb-4"
+      data-cy="currency-selector"
       :label="t('general_settings.amount.labels.main_currency')"
-      :options="currenciesWithKeys"
+      :options="currencies"
       text-attr="tickerSymbol"
+      key-attr="tickerSymbol"
       :item-height="68"
       variant="outlined"
       :success-messages="success"
       :error-messages="error"
-      @input="updateImmediate($event?.tickerSymbol)"
+      @update:model-value="updateImmediate($event)"
     >
       <template #item="{ item }">
         <ListItem

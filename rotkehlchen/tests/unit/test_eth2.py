@@ -7,26 +7,24 @@ from unittest.mock import patch
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.accounts import BlockchainAccountData
 from rotkehlchen.chain.ethereum.modules.eth2.constants import CPT_ETH2, UNKNOWN_VALIDATOR_INDEX
 from rotkehlchen.chain.ethereum.modules.eth2.structures import (
     ValidatorDailyStats,
     ValidatorDetails,
 )
-from rotkehlchen.chain.ethereum.modules.eth2.utils import (
-    DAY_AFTER_ETH2_GENESIS,
-    scrape_validator_daily_stats,
-)
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, HOUR_IN_SECONDS
+from rotkehlchen.db.cache import DBCacheDynamic
+from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import Eth2DailyStatsFilterQuery, HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.externalapis.beaconchain.service import BeaconChain
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.eth2 import (
     EthBlockEvent,
@@ -47,11 +45,13 @@ from rotkehlchen.types import (
     TimestampMS,
     deserialize_evm_tx_hash,
 )
+from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import ts_now, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.modules.eth2.eth2 import Eth2
     from rotkehlchen.history.price import PriceHistorian
+    from rotkehlchen.types import ChecksumEvmAddress
 
 ADDR1 = string_to_evm_address('0xfeF0E7635281eF8E3B705e9C5B86e1d3B0eAb397')
 ADDR2 = string_to_evm_address('0x00F8a0D8EE1c21151BCcB416bCa1C152f9952D19')
@@ -125,7 +125,7 @@ def test_get_validators_to_query_for_stats(database):
             event=EthWithdrawalEvent(
                 validator_index=3,
                 timestamp=ts_sec_to_ms(Timestamp(1617512800 + DAY_IN_SECONDS)),
-                balance=Balance(amount=ONE),
+                amount=ONE,
                 withdrawal_address=make_evm_address(),
                 is_exit=True,
             ),
@@ -140,7 +140,7 @@ def test_get_validators_to_query_for_stats(database):
             event=EthWithdrawalEvent(
                 validator_index=3,
                 timestamp=ts_sec_to_ms(Timestamp(1617512800)),
-                balance=Balance(amount=ONE),
+                amount=ONE,
                 withdrawal_address=make_evm_address(),
                 is_exit=True,
             ),
@@ -148,33 +148,39 @@ def test_get_validators_to_query_for_stats(database):
     assert db.get_validators_to_query_for_stats(now) == [(2, 0, None)]
 
 
-DAILY_STATS_RE = re.compile(r'https://beaconcha.in/validator/(\d+)/stats')
+DAILY_STATS_RE = re.compile(r'https://beaconcha.in/api/v1/validator/stats/(\d+)')
 
 
-def mock_scrape_validator_daily_stats(network_mocking: bool):
+def mock_query_validator_daily_stats(beaconchain: 'BeaconChain', network_mocking: bool):
 
-    def mock_scrape(url, **kwargs):  # pylint: disable=unused-argument
+    def mock_query(url, **kwargs):  # pylint: disable=unused-argument
         match = DAILY_STATS_RE.search(url)
         if match is None:
             raise AssertionError(f'Unexpected validator stats query in test: {url}')
 
         validator_index = int(match.group(1))
         root_path = Path(__file__).resolve().parent.parent.parent
-        file_path = root_path / 'tests' / 'data' / 'mocks' / 'test_eth2' / 'validator_daily_stats' / f'{validator_index}.html'  # noqa: E501
+        file_path = root_path / 'tests' / 'data' / 'mocks' / 'test_eth2' / 'validator_daily_stats' / f'{validator_index}.json'  # noqa: E501
         return MockResponse(200, file_path.read_text(encoding='utf8'))
 
-    return patch(
-        'rotkehlchen.chain.ethereum.modules.eth2.utils.requests.get',
-        side_effect=mock_scrape if network_mocking else requests.get,
+    return patch.object(
+        beaconchain.session,
+        'request',
+        new=mock_query if network_mocking else requests.get,
     )
 
 
 @pytest.mark.parametrize('default_mock_price_value', [FVal(1.55)])
-def test_validator_daily_stats(network_mocking, price_historian):  # pylint: disable=unused-argument
+def test_validator_daily_stats(
+        network_mocking,
+        price_historian,
+        database,
+        messages_aggregator,
+):  # pylint: disable=unused-argument
     validator_index = 33710
-
-    with mock_scrape_validator_daily_stats(network_mocking):
-        stats = scrape_validator_daily_stats(
+    beaconchain = BeaconChain(database, messages_aggregator)
+    with mock_query_validator_daily_stats(beaconchain, network_mocking):
+        stats = beaconchain.query_validator_daily_stats(
             validator_index=validator_index,
             last_known_timestamp=0,
             exit_ts=None,
@@ -183,88 +189,84 @@ def test_validator_daily_stats(network_mocking, price_historian):  # pylint: dis
     assert len(stats) >= 81
     expected_stats = [ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607126400,    # 2020/12/05
+        timestamp=1607212823,    # 2020/12/06
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607212800,    # 2020/12/06
+        timestamp=1607299223,    # 2020/12/07
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607299200,    # 2020/12/07
+        timestamp=1607385623,  # 2020/12/08
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607385600,  # 2020/12/08
+        timestamp=1607472023,  # 2020/12/09
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607472000,  # 2020/12/09
+        timestamp=1607558423,  # 2020/12/10
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607558400,  # 2020/12/10
+        timestamp=1607644823,  # 2020/12/11
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607644800,  # 2020/12/11
+        timestamp=1607731223,  # 2020/12/12
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607731200,  # 2020/12/12
+        timestamp=1607817623,  # 2020/12/13
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607817600,  # 2020/12/13
+        timestamp=1607904023,  # 2020/12/14
         pnl=ZERO,
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607904000,  # 2020/12/14
-        pnl=ZERO,
+        timestamp=1607990423,  # 2020/12/15
+        pnl=FVal('0.011901184'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1607990400,  # 2020/12/15
-        pnl=FVal('0.0119'),
+        timestamp=1608076823,  # 2020/12/16
+        pnl=FVal('0.013122458'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608076800,  # 2020/12/16
-        pnl=FVal('0.01318'),
+        timestamp=1608163223,  # 2020/12/17
+        pnl=FVal('-0.000114942'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608163200,  # 2020/12/17
-        pnl=FVal('-0.00006'),
+        timestamp=1608249623,  # 2020/12/18
+        pnl=FVal('0.01280657'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608249600,  # 2020/12/18
-        pnl=FVal('0.01286'),
+        timestamp=1608336023,  # 2020/12/19
+        pnl=FVal('0.01261697'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608336000,  # 2020/12/19
-        pnl=FVal('0.01267'),
+        timestamp=1608422423,  # 2020/12/20
+        pnl=FVal('0.014366383'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608422400,  # 2020/12/20
-        pnl=FVal('0.01442'),
+        timestamp=1608508823,  # 2020/12/21
+        pnl=FVal('0.012315232'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608508800,  # 2020/12/21
-        pnl=FVal('0.01237'),
+        timestamp=1608595223,  # 2020/12/22
+        pnl=FVal('0.012076577'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608595200,  # 2020/12/22
-        pnl=FVal('0.01213'),
+        timestamp=1608681623,  # 2020/12/23
+        pnl=FVal('0.011941107'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608681600,  # 2020/12/23
-        pnl=FVal('0.012'),
+        timestamp=1608768023,  # 2020/12/24
+        pnl=FVal('0.011885565'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1608768000,  # 2020/12/24
-        pnl=FVal('0.01194'),
-    ), ValidatorDailyStats(
-        validator_index=validator_index,
-        timestamp=1608854400,  # 2020/12/25
-        pnl=FVal('0.01174'),
+        timestamp=1608854423,  # 2020/12/25
+        pnl=FVal('0.011691997'),
     )]
     stats.reverse()
     assert stats[:len(expected_stats)] == expected_stats
@@ -277,10 +279,16 @@ def test_validator_daily_stats(network_mocking, price_historian):  # pylint: dis
 
 
 @pytest.mark.parametrize('default_mock_price_value', [FVal(1.55)])
-def test_validator_daily_stats_with_last_known_timestamp(network_mocking, price_historian):  # pylint: disable=unused-argument
+def test_validator_daily_stats_with_last_known_timestamp(
+        network_mocking,
+        price_historian,
+        database,
+        messages_aggregator,
+):  # pylint: disable=unused-argument
     validator_index = 33710
-    with mock_scrape_validator_daily_stats(network_mocking):
-        stats = scrape_validator_daily_stats(
+    beaconchain = BeaconChain(database, messages_aggregator)
+    with mock_query_validator_daily_stats(beaconchain, network_mocking):
+        stats = beaconchain.query_validator_daily_stats(
             validator_index=validator_index,
             last_known_timestamp=1613520000,
             exit_ts=None,
@@ -289,28 +297,32 @@ def test_validator_daily_stats_with_last_known_timestamp(network_mocking, price_
     assert len(stats) >= 6
     expected_stats = [ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1613606400,    # 2021/02/18
-        pnl=FVal('0.00784'),
+        timestamp=1613520023,    # 2021/02/17
+        pnl=FVal('0.007824513'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1613692800,    # 2021/02/19
-        pnl=FVal('0.00683'),
+        timestamp=1613606423,    # 2021/02/18
+        pnl=FVal('0.007801811'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1613779200,    # 2021/02/20
-        pnl=FVal('0.00798'),
+        timestamp=1613692823,    # 2021/02/19
+        pnl=FVal('0.006798106'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1613865600,    # 2021/02/21
-        pnl=FVal('0.01114'),
+        timestamp=1613779223,    # 2021/02/20
+        pnl=FVal('0.007945406'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1613952000,    # 2021/02/22
-        pnl=FVal('0.00782'),
+        timestamp=1613865623,    # 2021/02/21
+        pnl=FVal('0.011105614'),
     ), ValidatorDailyStats(
         validator_index=validator_index,
-        timestamp=1614038400,    # 2021/02/23
-        pnl=FVal('0.00772'),
+        timestamp=1613952023,    # 2021/02/22
+        pnl=FVal('0.007780681'),
+    ), ValidatorDailyStats(
+        validator_index=validator_index,
+        timestamp=1614038423,    # 2021/02/23
+        pnl=FVal('0.007687101'),
     )]
 
     stats.reverse()
@@ -335,7 +347,10 @@ def test_validator_daily_stats_with_db_interaction(  # pylint: disable=unused-ar
             ),
         ])
 
-    with mock_scrape_validator_daily_stats(network_mocking) as stats_call:
+    with (
+        mock_query_validator_daily_stats(eth2.beacon_inquirer.beaconchain, network_mocking),
+        patch('rotkehlchen.chain.ethereum.modules.eth2.beacon.BeaconInquirer.query_validator_daily_stats', wraps=eth2.beacon_inquirer.query_validator_daily_stats) as stats_call,  # noqa: E501
+    ):
         filter_query = Eth2DailyStatsFilterQuery.make(
             validator_indices=[validator_index],
             from_ts=Timestamp(1613606300),
@@ -353,28 +368,28 @@ def test_validator_daily_stats_with_db_interaction(  # pylint: disable=unused-ar
         assert filter_total_found == 6
         expected_stats = [ValidatorDailyStats(
             validator_index=validator_index,
-            timestamp=1613606400,    # 2021/02/18
-            pnl=FVal('0.00784'),
+            timestamp=1613606423,    # 2021/02/18
+            pnl=FVal('0.007801811'),
         ), ValidatorDailyStats(
             validator_index=validator_index,
-            timestamp=1613692800,    # 2021/02/19
-            pnl=FVal('0.00683'),
+            timestamp=1613692823,    # 2021/02/19
+            pnl=FVal('0.006798106'),
         ), ValidatorDailyStats(
             validator_index=validator_index,
-            timestamp=1613779200,    # 2021/02/20
-            pnl=FVal('0.00798'),
+            timestamp=1613779223,    # 2021/02/20
+            pnl=FVal('0.007945406'),
         ), ValidatorDailyStats(
             validator_index=validator_index,
-            timestamp=1613865600,    # 2021/02/21
-            pnl=FVal('0.01114'),
+            timestamp=1613865623,    # 2021/02/21
+            pnl=FVal('0.011105614'),
         ), ValidatorDailyStats(
             validator_index=validator_index,
-            timestamp=1613952000,    # 2021/02/22
-            pnl=FVal('0.00782'),
+            timestamp=1613952023,    # 2021/02/22
+            pnl=FVal('0.007780681'),
         ), ValidatorDailyStats(
             validator_index=validator_index,
-            timestamp=1614038400,    # 2021/02/23
-            pnl=FVal('0.00772'),
+            timestamp=1614038423,    # 2021/02/23
+            pnl=FVal('0.007687101'),
         )]
         assert stats == expected_stats
         assert sum_pnl == sum(x.pnl for x in expected_stats)
@@ -412,15 +427,17 @@ def test_validator_daily_stats_with_db_interaction(  # pylint: disable=unused-ar
 def test_validator_daily_stats_with_genesis_event(
         network_mocking: bool,
         price_historian: 'PriceHistorian',  # pylint: disable=unused-argument
+        database: DBHandler,
+        messages_aggregator: MessagesAggregator,
 ) -> None:
     """
     Test that if profit returned by beaconchain on genesis is > 32 ETH the app
     handles it correctly.
     """
     validator_index = 999
-
-    with mock_scrape_validator_daily_stats(network_mocking):
-        stats = scrape_validator_daily_stats(
+    beaconchain = BeaconChain(database, messages_aggregator)
+    with mock_query_validator_daily_stats(beaconchain, network_mocking):
+        stats = beaconchain.query_validator_daily_stats(
             validator_index=validator_index,
             last_known_timestamp=Timestamp(0),
             exit_ts=None,
@@ -428,12 +445,12 @@ def test_validator_daily_stats_with_genesis_event(
     assert stats == [
         ValidatorDailyStats(
             validator_index=999,
-            timestamp=DAY_AFTER_ETH2_GENESIS,
-            pnl=FVal('0.01201'),
+            timestamp=Timestamp(1606780823),  # day after eth2 genesis
+            pnl=FVal('0.012007402'),
             ownership_percentage=ONE,
         ), ValidatorDailyStats(
             validator_index=999,
-            timestamp=Timestamp(1606694400),
+            timestamp=Timestamp(1606694423),
             pnl=ZERO,
             ownership_percentage=ONE,
         ),
@@ -442,16 +459,53 @@ def test_validator_daily_stats_with_genesis_event(
 
 @pytest.mark.skipif('CI' in os.environ, reason='do not run this in CI as it spams')
 @pytest.mark.parametrize('default_mock_price_value', [FVal(1.55)])
-def test_scrape_genesis_validator_stats_all(price_historian):  # pylint: disable=unused-argument
+def test_query_genesis_validator_stats_all(
+        database: DBHandler,
+        messages_aggregator: MessagesAggregator,
+        price_historian,
+):  # pylint: disable=unused-argument
     """A test to see that the scraper of daily stats goes to the very first day of
     genesis for old validators despite UI actually showing pages"""
-    stats = scrape_validator_daily_stats(
+    beaconchain = BeaconChain(database, messages_aggregator)
+    stats = beaconchain.query_validator_daily_stats(
         validator_index=1,
         last_known_timestamp=Timestamp(0),
         exit_ts=None,
     )
     assert len(stats) >= 861
-    assert stats[-1].timestamp == 1606694400
+    assert stats[-1].timestamp == 1606694423
+
+
+@pytest.mark.freeze_time('2024-06-20 19:55:00 GMT')
+@pytest.mark.parametrize('network_mocking', [False])
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+def test_querying_daily_stats_twice(
+        database: DBHandler,
+        messages_aggregator: MessagesAggregator,
+        price_historian: 'PriceHistorian',
+        eth2: 'Eth2',
+):  # pylint: disable=unused-argument
+    """Test that querying the daily stats twice doesn't trigger a network
+    request the second time"""
+    eth2.add_validator(validator_index=1118010, public_key=None, ownership_proportion=ONE)
+    with eth2.database.conn.cursor() as cursor:
+        stats = eth2.get_validator_daily_stats(
+            cursor=cursor,
+            filter_query=Eth2DailyStatsFilterQuery.make(),
+            only_cache=False,
+        )
+        assert len(stats) > 100
+
+        with patch(
+            'rotkehlchen.chain.ethereum.modules.eth2.beacon.BeaconInquirer.query_validator_daily_stats',
+            wraps=eth2.beacon_inquirer.query_validator_daily_stats,
+        ) as patched_query:
+            stats = eth2.get_validator_daily_stats(
+                cursor=cursor,
+                filter_query=Eth2DailyStatsFilterQuery.make(),
+                only_cache=False,
+            )
+            assert patched_query.call_count == 0
 
 
 @pytest.mark.parametrize('eth2_mock_data', [{
@@ -580,7 +634,7 @@ def test_deposits_pubkey_re(eth2: 'Eth2', database):
                 event_type=HistoryEventType.STAKING,
                 event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
                 asset=A_ETH,
-                balance=Balance(amount=FVal(32)),
+                amount=FVal(32),
                 notes=f'Deposit 32 ETH to validator with pubkey {pubkey1}. Deposit index: 519464. Withdrawal credentials: 0x00c5af874f28011e2f559e1214131da5f11b12845921b0d8e436f0cd37d683a8',  # noqa: E501
                 counterparty=CPT_ETH2,
             ), EvmEvent(
@@ -591,7 +645,7 @@ def test_deposits_pubkey_re(eth2: 'Eth2', database):
                 event_type=HistoryEventType.SPEND,
                 event_subtype=HistoryEventSubType.FEE,
                 asset=A_ETH,
-                balance=Balance(amount=FVal('0.01')),
+                amount=FVal('0.01'),
                 notes='Some fees',
                 counterparty=CPT_GAS,
             ), EvmEvent(
@@ -603,7 +657,7 @@ def test_deposits_pubkey_re(eth2: 'Eth2', database):
                 event_type=HistoryEventType.STAKING,
                 event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
                 asset=A_ETH,
-                balance=Balance(amount=FVal(32)),
+                amount=FVal(32),
                 notes=f'Deposit 32 ETH to validator with pubkey {pubkey2}. Deposit index: 529464. Withdrawal credentials: 0x00a5a0074f28011e2f559e1214131da5f11b12845921b0d8e436f0cd37d683a8',  # noqa: E501
                 counterparty=CPT_ETH2,
             )],
@@ -653,29 +707,33 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
             EthBlockEvent(
                 validator_index=vindex1,
                 timestamp=timestampms,
-                balance=Balance(block_reward_1),
+                amount=block_reward_1,
                 fee_recipient=vindex1_address,
+                fee_recipient_tracked=True,
                 block_number=block_number,
                 is_mev_reward=False,
             ), EthBlockEvent(
                 validator_index=vindex1,
                 timestamp=TimestampMS(timestampms + (1 * (HOUR_IN_SECONDS * 1000))),
-                balance=Balance(mev_reward_1),
+                amount=mev_reward_1,
                 fee_recipient=vindex1_address,
+                fee_recipient_tracked=True,
                 block_number=block_number,
                 is_mev_reward=True,
             ), EthBlockEvent(
                 validator_index=vindex2,
                 timestamp=TimestampMS(timestampms + (2 * (HOUR_IN_SECONDS * 1000))),
-                balance=Balance(block_reward_2),  # since mev builder gets it we shouldn't count it
+                amount=block_reward_2,  # since mev builder gets it we shouldn't count it
                 fee_recipient=mev_builder_address,
+                fee_recipient_tracked=False,
                 block_number=block_number + 1,
                 is_mev_reward=False,
             ), EthBlockEvent(
                 validator_index=vindex2,
                 timestamp=TimestampMS(timestampms + (3 * (HOUR_IN_SECONDS * 1000))),
-                balance=Balance(mev_reward_2),
+                amount=mev_reward_2,
                 fee_recipient=vindex2_address,
+                fee_recipient_tracked=True,
                 block_number=block_number + 1,
                 is_mev_reward=True,
             ), EvmEvent(
@@ -683,42 +741,45 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
                 sequence_index=0,
                 timestamp=TimestampMS(timestampms + (4 * (HOUR_IN_SECONDS * 1000))),
                 location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.NONE,
+                event_type=HistoryEventType.STAKING,
+                event_subtype=HistoryEventSubType.MEV_REWARD,
                 asset=A_ETH,
-                balance=Balance(mev_reward_1),
+                amount=mev_reward_1,
                 location_label=vindex1_address,
                 notes=f'Received {mev_reward_1} ETH from {mev_builder_address}',
+                extra_data={'validator_index': vindex1},
             ), EvmEvent(
                 tx_hash=tx_hash_2,
                 sequence_index=0,
                 timestamp=TimestampMS(timestampms + (5 * (HOUR_IN_SECONDS * 1000))),
                 location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.NONE,
+                event_type=HistoryEventType.STAKING,
+                event_subtype=HistoryEventSubType.MEV_REWARD,
                 asset=A_ETH,
-                balance=Balance(mev_reward_2),
+                amount=mev_reward_2,
                 location_label=vindex2_address,
                 notes=f'Received {mev_reward_2} ETH from {mev_builder_address}',
+                extra_data={'validator_index': vindex2},
             ), EthWithdrawalEvent(
                 validator_index=vindex1,
                 timestamp=TimestampMS(timestampms + (6 * (HOUR_IN_SECONDS * 1000))),
-                balance=Balance(withdrawal_1),
+                amount=withdrawal_1,
                 withdrawal_address=vindex1_address,
                 is_exit=False,
             ), EthBlockEvent(
                 identifier=8,
                 validator_index=vindex2,
                 timestamp=TimestampMS(timestampms + (7 * (HOUR_IN_SECONDS * 1000))),
-                balance=Balance(no_mev_block_reward_2),
+                amount=no_mev_block_reward_2,
                 fee_recipient=vindex2_address,
+                fee_recipient_tracked=True,
                 block_number=16212625,
                 is_mev_reward=False,
             ), EthWithdrawalEvent(
                 identifier=9,
                 validator_index=vindex1,
                 timestamp=TimestampMS(timestampms + (36 * (HOUR_IN_SECONDS * 1000))),
-                balance=Balance(exit_1),
+                amount=exit_1,
                 withdrawal_address=vindex1_address,
                 is_exit=True,
             ),
@@ -733,36 +794,39 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
 
     assert set(performance.keys()) == {'sums', 'validators', 'entries_found', 'entries_total'}
     expected_sums = {
-        'execution': block_reward_1 + mev_reward_1 + mev_reward_2 + no_mev_block_reward_2,
+        'execution_blocks': block_reward_1 + no_mev_block_reward_2,
+        'execution_mev': mev_reward_1 + mev_reward_2,
         'exits': exit_1 - 32,
         'sum': block_reward_1 + mev_reward_1 + withdrawal_1 + (exit_1 - 32) + mev_reward_2 + no_mev_block_reward_2,   # noqa: E501
         'withdrawals': withdrawal_1,
     }
-    for check_key in ('execution', 'exits', 'sum', 'withdrawals'):
-        assert performance['sums'][check_key] == expected_sums[check_key]
+    for check_key, check_value in expected_sums.items():
+        assert performance['sums'][check_key] == check_value
     assert performance['sums']['apr'].is_close(FVal('0.00404161581589250586388450985171054082159224751613839429006282479554837399160762'))  # noqa: E501
 
     assert set(performance['validators'].keys()) == {vindex1, vindex2}
     expected_vindex1 = {
-        'execution': block_reward_1 + mev_reward_1,
+        'execution_blocks': block_reward_1,
+        'execution_mev': mev_reward_1,
         'exits': exit_1 - 32,
         'sum': block_reward_1 + mev_reward_1 + withdrawal_1 + (exit_1 - 32),
     }
-    check_performance_validator(performance, vindex1, ('execution', 'exits', 'sum'), expected_vindex1, FVal('0.00588921161744336568737457149820678805432013209494451739409154470208477353062825'))  # noqa: E501
+    check_performance_validator(performance, vindex1, ('execution_blocks', 'execution_mev', 'exits', 'sum'), expected_vindex1, FVal('0.00588921161744336568737457149820678805432013209494451739409154470208477353062825'))  # noqa: E501
     expected_vindex2 = {
-        'execution': mev_reward_2 + no_mev_block_reward_2,
+        'execution_blocks': no_mev_block_reward_2,
+        'execution_mev': mev_reward_2,
         'sum': mev_reward_2 + no_mev_block_reward_2,
     }
-    check_performance_validator(performance, vindex2, ('execution', 'sum'), expected_vindex2, FVal('0.00219402001434164604039444820521429358886436293733227118603410488901197445258700'))  # noqa: E501
+    check_performance_validator(performance, vindex2, ('execution_blocks', 'execution_mev', 'sum'), expected_vindex2, FVal('0.00219402001434164604039444820521429358886436293733227118603410488901197445258700'))  # noqa: E501
 
     # Check pagination and that cache works
     performance = eth2.get_performance(from_ts=Timestamp(0), to_ts=Timestamp(1706866836), limit=1, offset=0, ignore_cache=False)  # noqa: E501
     assert set(performance['validators'].keys()) == {vindex1}
-    check_performance_validator(performance, vindex1, ('execution', 'exits', 'sum'), expected_vindex1, FVal('0.00588921161744336568737457149820678805432013209494451739409154470208477353062825'))  # noqa: E501
+    check_performance_validator(performance, vindex1, ('execution_blocks', 'execution_mev', 'exits', 'sum'), expected_vindex1, FVal('0.00588921161744336568737457149820678805432013209494451739409154470208477353062825'))  # noqa: E501
 
     performance = eth2.get_performance(from_ts=Timestamp(0), to_ts=Timestamp(1706866836), limit=2, offset=1, ignore_cache=False)  # noqa: E501
     assert set(performance['validators'].keys()) == {vindex2}
-    check_performance_validator(performance, vindex2, ('execution', 'sum'), expected_vindex2, FVal('0.00219402001434164604039444820521429358886436293733227118603410488901197445258700'))  # noqa: E501
+    check_performance_validator(performance, vindex2, ('execution_blocks', 'execution_mev', 'sum'), expected_vindex2, FVal('0.00219402001434164604039444820521429358886436293733227118603410488901197445258700'))  # noqa: E501
 
     # check that filtering by an unknown address returns nothing
     performance = eth2.get_performance(from_ts=Timestamp(0), to_ts=Timestamp(1706866836), limit=10, offset=0, addresses=[make_evm_address()], ignore_cache=True)  # noqa: E501
@@ -772,7 +836,7 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
     assert performance['validators'] == {}
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.freeze_time('2024-02-02 13:34:45 GMT')
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.parametrize('ethereum_accounts', [['0x0fdAe061cAE1Ad4Af83b27A96ba5496ca992139b', '0xF4fEae08C1Fa864B64024238E33Bfb4A3Ea7741d']])  # noqa: E501
@@ -798,8 +862,9 @@ def test_eth_validators_performance_recent(eth2, database, ethereum_accounts):
             EthBlockEvent(  # to see combining with other fields works
                 validator_index=vindex1,
                 timestamp=TimestampMS(1666693607000),
-                balance=Balance(block_reward_1),
+                amount=block_reward_1,
                 fee_recipient=ethereum_accounts[0],
+                fee_recipient_tracked=True,
                 block_number=15824493,
                 is_mev_reward=False,
             ),
@@ -813,13 +878,13 @@ def test_eth_validators_performance_recent(eth2, database, ethereum_accounts):
         'entries_total': 2,
         'sums': {
             'apr': FVal('0.0000776903705156613784446944579849811839682064281831828001284342697410897538992595'),  # noqa: E501
-            'execution': block_reward_1,
+            'execution_blocks': block_reward_1,
             'outstanding_consensus_pnl': outstanding_pnl_v1 + outstanding_pnl_v2,
             'sum': block_reward_1 + outstanding_pnl_v1 + outstanding_pnl_v2,
         }, 'validators': {
             vindex1: {
                 'apr': FVal('0.000147758740130539337547271202817412768671318268351221239436400390645888567672372'),  # noqa: E501
-                'execution': block_reward_1,
+                'execution_blocks': block_reward_1,
                 'outstanding_consensus_pnl': outstanding_pnl_v1,
                 'sum': block_reward_1 + outstanding_pnl_v1,
             }, vindex2: {
@@ -877,15 +942,17 @@ def test_combine_block_with_tx_events(eth2, database):
             EthBlockEvent(
                 validator_index=vindex1,
                 timestamp=timestampms,
-                balance=Balance(FVal('0.126419309459217215')),
+                amount=FVal('0.126419309459217215'),
                 fee_recipient=mev_builder_address,
+                fee_recipient_tracked=True,
                 block_number=block_number,
                 is_mev_reward=False,
             ), EthBlockEvent(
                 validator_index=vindex1,
                 timestamp=timestampms,
-                balance=Balance(mev_reward),
+                amount=mev_reward,
                 fee_recipient=vindex1_address,
+                fee_recipient_tracked=True,
                 block_number=block_number,
                 is_mev_reward=True,
             ), EvmEvent(
@@ -896,7 +963,7 @@ def test_combine_block_with_tx_events(eth2, database):
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.NONE,
                 asset=A_ETH,
-                balance=Balance(mev_reward),
+                amount=mev_reward,
                 location_label=vindex1_address,
                 notes=f'Received {mev_reward} ETH from {mev_builder_address}',
             ),
@@ -921,10 +988,11 @@ def test_combine_block_with_tx_events(eth2, database):
         event_type=HistoryEventType.STAKING,
         event_subtype=HistoryEventSubType.MEV_REWARD,
         asset=A_ETH,
-        balance=Balance(mev_reward),
+        amount=mev_reward,
         location_label=vindex1_address,
-        notes=f'Received {mev_reward} ETH from {mev_builder_address} as mev reward for block {block_number}',  # noqa: E501
+        notes=f'Received {mev_reward} ETH from {mev_builder_address} as mev reward for block {block_number} in {tx_hash.hex()}',  # pylint: disable=no-member  # noqa: E501
         event_identifier=EthBlockEvent.form_event_identifier(block_number),
+        extra_data={'validator_index': vindex1},
     )
     assert modified_event == events[2]
 
@@ -933,7 +1001,7 @@ def test_combine_block_with_tx_events(eth2, database):
         assert hidden_ids == [2]
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.freeze_time('2023-04-30 21:52:55 GMT')
 def test_refresh_activated_validators_deposits(eth2, database):
@@ -961,7 +1029,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
         validator_index=validator1.validator_index,
         sequence_index=1,
         timestamp=TimestampMS(360000),
-        balance=Balance(FVal(32)),
+        amount=FVal(32),
         depositor=string_to_evm_address('0xA3E5ff1230a38243BB64Dc1423Df40B63a4CA0c3'),
     ), EthDepositEvent(
         identifier=2,
@@ -969,7 +1037,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
         validator_index=UNKNOWN_VALIDATOR_INDEX,  # actual value should be 207003
         sequence_index=2,
         timestamp=TimestampMS(460000),
-        balance=Balance(FVal(32)),
+        amount=FVal(32),
         depositor=string_to_evm_address('0xf879704602696cD6a567eA569F5D95b4dd51b5FD'),
         extra_data={'public_key': validator2.public_key},
     ), EthDepositEvent(
@@ -978,7 +1046,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
         validator_index=UNKNOWN_VALIDATOR_INDEX,  # actual value should be 4523
         sequence_index=3,
         timestamp=TimestampMS(660000),
-        balance=Balance(FVal(32)),
+        amount=FVal(32),
         depositor=string_to_evm_address('0xFCD50905214325355A57aE9df084C5dd40D5D478'),
         extra_data={'public_key': validator3.public_key},
     )]
@@ -1011,7 +1079,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
         assert set(dbeth2.get_validators(cursor)) == {validator3, validator1, validator2}
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.freeze_time('2024-02-04 09:00:00 GMT')
 def test_query_chunked_endpoint_with_offset_pagination(eth2):
@@ -1021,7 +1089,7 @@ def test_query_chunked_endpoint_with_offset_pagination(eth2):
     """
     validator_indices = range(450000, 450000 + 194)
     result = eth2.beacon_inquirer.beaconchain._query_chunked_endpoint_with_pagination(
-        indices_or_pubkeys=validator_indices,
+        indices=validator_indices,
         module='execution',
         endpoint='produced',
         limit=50,
@@ -1038,11 +1106,8 @@ def test_validator_daily_stats_empty(database):
 
 
 def test_get_active_validator_indices(database):
-    dbevents = DBHistoryEvents(database)
-    dbeth2 = DBEth2(database)
     active_index, exited_index, noevents_index = 1, 575645, 4242
-    active_address, exited_address = string_to_evm_address('0x15F4B914A0cCd14333D850ff311d6DafbFbAa32b'), string_to_evm_address('0x08DeB6278D671E2a1aDc7b00839b402B9cF3375d')  # noqa: E501
-
+    dbeth2 = DBEth2(database)
     with database.user_write() as write_cursor:
         dbeth2.add_or_update_validators(write_cursor, [
             ValidatorDetails(
@@ -1051,37 +1116,11 @@ def test_get_active_validator_indices(database):
             ), ValidatorDetails(
                 validator_index=exited_index,
                 public_key=Eth2PubKey('0x800041b1eff8af7a583caa402426ffe8e5da001615f5ce00ba30ea8e3e627491e0aa7f8c0417071d5c1c7eb908962d8e'),
+                withdrawable_timestamp=Timestamp(1699801559),
+                exited_timestamp=Timestamp(1699976207000),
             ), ValidatorDetails(
                 validator_index=noevents_index,
                 public_key=Eth2PubKey('0xb02c42a2cda10f06441597ba87e87a47c187cd70e2b415bef8dc890669efe223f551a2c91c3d63a5779857d3073bf288'),
-            ),
-        ])
-
-        dbevents.add_history_events(write_cursor, history=[
-            EthWithdrawalEvent(
-                validator_index=active_index,
-                timestamp=TimestampMS(1699319051000),
-                balance=Balance(FVal('0.017197')),
-                withdrawal_address=active_address,
-                is_exit=False,
-            ), EthWithdrawalEvent(
-                validator_index=active_index,
-                timestamp=TimestampMS(1699976207000),
-                balance=Balance(FVal('0.017250')),
-                withdrawal_address=active_address,
-                is_exit=False,
-            ), EthWithdrawalEvent(
-                validator_index=exited_index,
-                timestamp=TimestampMS(1699648427000),
-                balance=Balance(FVal('0.017073')),
-                withdrawal_address=exited_address,
-                is_exit=False,
-            ), EthWithdrawalEvent(
-                validator_index=exited_index,
-                timestamp=TimestampMS(1699976207000),
-                balance=Balance(FVal('32.007250')),
-                withdrawal_address=exited_address,
-                is_exit=True,
             ),
         ])
 
@@ -1096,7 +1135,7 @@ def test_get_active_validator_indices(database):
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.freeze_time('2024-02-15 13:00:00 GMT')
 def test_refresh_validator_data_after_v40_v41_upgrade(eth2):
-    """In v40->v41 upgrade the validator table changed, and more columns were addedd.
+    """In v40->v41 upgrade the validator table changed, and more columns were added.
     Most of them were optional but in normal operation they would be detected.
     Adding this test to make sure this happens.
 
@@ -1127,8 +1166,33 @@ def test_refresh_validator_data_after_v40_v41_upgrade(eth2):
 
     with eth2.database.conn.read_ctx() as cursor:
         assert cursor.execute('SELECT * from eth2_validators').fetchall() == [
-            (1, 42, '0xb0fee189ffa7ddb3326ef685c911f3416e15664ff1825f3b8e542ba237bd3900f960cd6316ef5f8a5adbaf4903944013', '1.0', '0x42751916BD8e4ef1966ca033D4EA1FA2a8563f88', 1606824023, None),  # noqa: E501
-            (2, 1232, '0xa15f29dd50327bc53b02d34d7db28f175ffc21d7ffbb2646c8b1b82bb6bca553333a19fd4b9890174937d434cc115ace', '0.35', '0x009Ec7D76feBECAbd5c73CB13f6d0FB83e45D450', 1606824023, None),  # noqa: E501
-            (3, 5231, '0xb052a2b421770b99c2348b652fbdc770b2a27a87bf56993dff212d839556d70e7b68f5d953133624e11774b8cb81129d', '1.0', '0x5675801e9346eA8165e7Eb80dcCD01dCa65c0f3A', 1606824023, None),  # noqa: E501
+            (1, 42, '0xb0fee189ffa7ddb3326ef685c911f3416e15664ff1825f3b8e542ba237bd3900f960cd6316ef5f8a5adbaf4903944013', '1.0', '0x42751916BD8e4ef1966ca033D4EA1FA2a8563f88', 1606824023, None, None),  # noqa: E501
+            (2, 1232, '0xa15f29dd50327bc53b02d34d7db28f175ffc21d7ffbb2646c8b1b82bb6bca553333a19fd4b9890174937d434cc115ace', '0.35', '0x009Ec7D76feBECAbd5c73CB13f6d0FB83e45D450', 1606824023, None, None),  # noqa: E501
+            (3, 5231, '0xb052a2b421770b99c2348b652fbdc770b2a27a87bf56993dff212d839556d70e7b68f5d953133624e11774b8cb81129d', '1.0', '0x5675801e9346eA8165e7Eb80dcCD01dCa65c0f3A', 1606824023, None, None),  # noqa: E501
         ]
         assert cursor.execute('SELECT COUNT(*) from eth2_daily_staking_details').fetchone()[0] == 3
+
+
+@pytest.mark.parametrize('ethereum_accounts', [['0x0fdAe061cAE1Ad4Af83b27A96ba5496ca992139b']])
+def test_clean_cache_on_account_removal(
+        ethereum_accounts: list['ChecksumEvmAddress'],
+        database: 'DBHandler',
+) -> None:
+    """Test that last withdrawal query timestamps are removed from the cache when """
+    with database.conn.write_ctx() as write_cursor:
+        database.set_dynamic_cache(
+            write_cursor=write_cursor,
+            name=DBCacheDynamic.WITHDRAWALS_TS,
+            address=ethereum_accounts[0],
+            value=Timestamp(1739807677),
+        )
+        database.remove_single_blockchain_accounts(
+            write_cursor=write_cursor,
+            blockchain=SupportedBlockchain.ETHEREUM,
+            accounts=ethereum_accounts,
+        )
+        assert database.get_dynamic_cache(
+            cursor=write_cursor,
+            name=DBCacheDynamic.WITHDRAWALS_TS,
+            address=ethereum_accounts[0],
+        ) is None

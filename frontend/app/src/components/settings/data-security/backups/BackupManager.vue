@@ -1,23 +1,25 @@
 <script setup lang="ts">
-import { Severity } from '@rotki/common/lib/messages';
-import Fragment from '@/components/helper/Fragment';
-import type {
-  DatabaseInfo,
-  UserDbBackup,
-  UserDbBackupWithId,
-} from '@/types/backup';
+import { Severity } from '@rotki/common';
+import { getFilepath } from '@/utils/backups';
+import { logger } from '@/utils/logging';
+import { useNotificationsStore } from '@/store/notifications';
+import { useConfirmStore } from '@/store/confirm';
+import { useRefMap } from '@/composables/utils/useRefMap';
+import { useBackupApi } from '@/composables/api/backup';
+import DatabaseBackups from '@/components/settings/data-security/backups/DatabaseBackups.vue';
+import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
+import type { DatabaseInfo, UserDbBackup, UserDbBackupWithId } from '@/types/backup';
 
 const { t } = useI18n();
 
-const backupInfo = ref<DatabaseInfo | null>();
+const backupInfo = ref<DatabaseInfo>();
 const selected = ref<UserDbBackupWithId[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 
 const backups = useRefMap(
   backupInfo,
-  info =>
-    info?.userdb?.backups.map((x, index) => ({ ...x, id: index + 1 })) ?? [],
+  info => info?.userdb?.backups.map((x, index) => ({ ...x, id: index + 1 })) ?? [],
 );
 
 const { notify } = useNotificationsStore();
@@ -36,23 +38,7 @@ const directory = computed(() => {
   return filepath.slice(0, index + 1);
 });
 
-const userDb = computed(() => {
-  const info = get(backupInfo);
-  return {
-    size: info ? size(info.userdb.info.size) : '0',
-    version: info ? info.userdb.info.version.toString() : '0',
-  };
-});
-
-const globalDb = computed(() => {
-  const info = get(backupInfo);
-  return {
-    schema: info ? info.globaldb.globaldbSchemaVersion.toString() : '0',
-    assets: info ? info.globaldb.globaldbAssetsVersion.toString() : '0',
-  };
-});
-
-const { info, createBackup, deleteBackup } = useBackupApi();
+const { createBackup, deleteBackup, info } = useBackupApi();
 
 async function loadInfo() {
   try {
@@ -63,10 +49,10 @@ async function loadInfo() {
     logger.error(error);
     notify({
       display: true,
-      title: t('database_backups.load_error.title'),
       message: t('database_backups.load_error.message', {
         message: error.message,
       }),
+      title: t('database_backups.load_error.title'),
     });
   }
   finally {
@@ -75,9 +61,7 @@ async function loadInfo() {
 }
 
 function isSameEntry(firstDb: UserDbBackup, secondDb: UserDbBackup) {
-  return firstDb.version === secondDb.version
-    && firstDb.time === secondDb.time
-    && firstDb.size === secondDb.size;
+  return firstDb.version === secondDb.version && firstDb.time === secondDb.time && firstDb.size === secondDb.size;
 }
 
 async function massRemove() {
@@ -89,9 +73,7 @@ async function massRemove() {
     if (backups) {
       const info: DatabaseInfo = { ...backups };
       currentSelection.forEach((db: UserDbBackup) => {
-        const index = info.userdb.backups.findIndex(backup =>
-          isSameEntry(backup, db),
-        );
+        const index = info.userdb.backups.findIndex(backup => isSameEntry(backup, db));
         info.userdb.backups.splice(index, 1);
       });
       set(backupInfo, info);
@@ -102,10 +84,10 @@ async function massRemove() {
     logger.error(error);
     notify({
       display: true,
-      title: t('database_backups.delete_error.title'),
       message: t('database_backups.delete_error.mass_message', {
         message: error.message,
       }),
+      title: t('database_backups.delete_error.title'),
     });
   }
 }
@@ -117,9 +99,7 @@ async function remove(db: UserDbBackup) {
     const backups = get(backupInfo);
     if (backups) {
       const info: DatabaseInfo = { ...backups };
-      const index = info.userdb.backups.findIndex(backup =>
-        isSameEntry(backup, db),
-      );
+      const index = info.userdb.backups.findIndex(backup => isSameEntry(backup, db));
       info.userdb.backups.splice(index, 1);
       set(backupInfo, info);
 
@@ -136,11 +116,11 @@ async function remove(db: UserDbBackup) {
     logger.error(error);
     notify({
       display: true,
-      title: t('database_backups.delete_error.title'),
       message: t('database_backups.delete_error.message', {
         file: filepath,
         message: error.message,
       }),
+      title: t('database_backups.delete_error.title'),
     });
   }
 }
@@ -151,11 +131,11 @@ async function backup() {
     const filepath = await createBackup();
     notify({
       display: true,
-      severity: Severity.INFO,
-      title: t('database_backups.backup.title'),
       message: t('database_backups.backup.message', {
         filepath,
       }),
+      severity: Severity.INFO,
+      title: t('database_backups.backup.title'),
     });
 
     await loadInfo();
@@ -164,10 +144,10 @@ async function backup() {
     logger.error(error);
     notify({
       display: true,
-      title: t('database_backups.backup_error.title'),
       message: t('database_backups.backup_error.message', {
         message: error.message,
       }),
+      title: t('database_backups.backup_error.title'),
     });
   }
   finally {
@@ -180,10 +160,10 @@ const { show } = useConfirmStore();
 function showMassDeleteConfirmation() {
   show(
     {
-      title: t('database_backups.confirm.title'),
       message: t('database_backups.confirm.mass_message', {
         length: get(selected).length,
       }),
+      title: t('database_backups.confirm.title'),
     },
     massRemove,
   );
@@ -193,50 +173,54 @@ onMounted(loadInfo);
 </script>
 
 <template>
-  <Fragment>
-    <DatabaseInfoDisplay
-      class="mt-8"
+  <div>
+    <div class="pb-5 flex flex-wrap gap-4 items-center justify-between">
+      <SettingCategoryHeader>
+        <template #title>
+          {{ t('database_settings.user_backups.title') }}
+        </template>
+        <template #subtitle>
+          {{ t('database_settings.user_backups.subtitle') }}
+        </template>
+      </SettingCategoryHeader>
+      <div class="flex flex-wrap gap-2">
+        <RuiButton
+          v-if="selected.length > 0"
+          color="error"
+          @click="showMassDeleteConfirmation()"
+        >
+          {{ t('database_settings.user_backups.delete_selected') }}
+        </RuiButton>
+        <RuiButton
+          variant="outlined"
+          color="primary"
+          :loading="loading"
+          @click="loadInfo()"
+        >
+          <template #prepend>
+            <RuiIcon
+              name="lu-refresh-ccw"
+              size="16"
+            />
+          </template>
+          {{ t('common.refresh') }}
+        </RuiButton>
+        <RuiButton
+          color="primary"
+          :disabled="saving"
+          :loading="saving"
+          @click="backup()"
+        >
+          {{ t('database_settings.user_backups.backup_button') }}
+        </RuiButton>
+      </div>
+    </div>
+    <DatabaseBackups
+      v-model:selected="selected"
+      :loading="loading"
+      :items="backups"
       :directory="directory"
-      :global-db="globalDb"
-      :user-db="userDb"
+      @remove="remove($event)"
     />
-    <RuiCard class="mt-8">
-      <template #header>
-        <CardTitle>
-          <RefreshButton
-            :loading="loading"
-            :tooltip="t('database_manager.refresh_tooltip')"
-            @refresh="loadInfo()"
-          />
-          {{ t('backup_manager.title') }}
-        </CardTitle>
-      </template>
-      <DatabaseBackups
-        :loading="loading"
-        :items="backups"
-        :directory="directory"
-        :selected.sync="selected"
-        @remove="remove($event)"
-      />
-      <template #footer>
-        <div class="flex gap-3">
-          <RuiButton
-            color="primary"
-            :disabled="saving"
-            :loading="saving"
-            @click="backup()"
-          >
-            {{ t('backup_manager.backup_button') }}
-          </RuiButton>
-          <RuiButton
-            v-if="selected.length > 0"
-            color="error"
-            @click="showMassDeleteConfirmation()"
-          >
-            {{ t('backup_manager.delete_selected') }}
-          </RuiButton>
-        </div>
-      </template>
-    </RuiCard>
-  </Fragment>
+  </div>
 </template>

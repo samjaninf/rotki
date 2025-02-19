@@ -1,17 +1,14 @@
-import {
-  handleResponse,
-  validAuthorizedStatus,
-  validStatus,
-} from '@/services/utils';
+import { handleResponse, validAuthorizedStatus, validStatus } from '@/services/utils';
 import { api } from '@/services/rotkehlchen-api';
-import type { ActionResult } from '@rotki/common/lib/data';
+import type { ActionResult } from '@rotki/common';
 
-export function usePremiumCredentialsApi() {
-  const setPremiumCredentials = async (
-    username: string,
-    apiKey: string,
-    apiSecret: string,
-  ): Promise<true> => {
+interface UsePremiumCredentialsApiReturn {
+  setPremiumCredentials: (username: string, apiKey: string, apiSecret: string) => Promise<true>;
+  deletePremiumCredentials: () => Promise<true>;
+}
+
+export function usePremiumCredentialsApi(): UsePremiumCredentialsApiReturn {
+  const setPremiumCredentials = async (username: string, apiKey: string, apiSecret: string): Promise<true> => {
     const response = await api.instance.patch<ActionResult<true>>(
       `/users/${username}`,
       {
@@ -33,7 +30,7 @@ export function usePremiumCredentialsApi() {
   };
 
   return {
-    setPremiumCredentials,
     deletePremiumCredentials,
+    setPremiumCredentials,
   };
 }

@@ -1,129 +1,132 @@
 <script setup lang="ts">
 import { helpers, required } from '@vuelidate/validators';
-import { convertToTimestamp } from '@/utils/date';
+import useVuelidate from '@vuelidate/core';
+import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
 import { toMessages } from '@/utils/validation';
+import { useRefPropVModel } from '@/utils/model';
+import { bigNumberifyFromRef } from '@/utils/bignumbers';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
+import { useFormStateWatcher } from '@/composables/form';
 import type { HistoricalPriceFormPayload } from '@/types/prices';
+import type { ValidationErrors } from '@/types/api/errors';
 
-const props = defineProps<{
-  value: HistoricalPriceFormPayload;
-  edit: boolean;
-}>();
+const modelValue = defineModel<HistoricalPriceFormPayload>({ required: true });
+const errors = defineModel<ValidationErrors>('errorMessages', { required: true });
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
 
-const emit = defineEmits<{
-  (e: 'input', price: Partial<HistoricalPriceFormPayload>): void;
-}>();
+withDefaults(
+  defineProps<{
+    editMode?: boolean;
+  }>(),
+  {
+    editMode: false,
+  },
+);
 
-const { value } = toRefs(props);
 const { assetSymbol } = useAssetInfoRetrieval();
 
-const date = computed(({ value }) =>
-  value.timestamp ? convertFromTimestamp(value.timestamp) : '',
-);
-const fromAsset = computed(({ value }) => get(assetSymbol(value.fromAsset)));
-const toAsset = computed(({ value }) => get(assetSymbol(value.toAsset)));
+const fromAsset = useRefPropVModel(modelValue, 'fromAsset');
+const toAsset = useRefPropVModel(modelValue, 'toAsset');
+const price = useRefPropVModel(modelValue, 'price');
+const timestamp = useRefPropVModel(modelValue, 'timestamp');
 
-const price = ref<string>('');
+const datetime = computed({
+  get: () => convertFromTimestamp(get(timestamp)),
+  set: (value: string) => {
+    set(timestamp, convertToTimestamp(value));
+  },
+});
+
+const fromAssetSymbol = assetSymbol(fromAsset);
+const toAssetSymbol = assetSymbol(toAsset);
+
 const numericPrice = bigNumberifyFromRef(price);
-
-function input(price: Partial<HistoricalPriceFormPayload>) {
-  emit('input', { ...get(value), ...price });
-}
-
-watch(value, (val) => {
-  set(price, val.price);
-});
-
-watch(price, (val) => {
-  input({ price: val });
-});
-
-onMounted(() => {
-  set(price, get(value).price);
-});
 
 const { t } = useI18n();
 
 const rules = {
   fromAsset: {
-    required: helpers.withMessage(
-      t('price_form.from_non_empty').toString(),
-      required,
-    ),
-  },
-  toAsset: {
-    required: helpers.withMessage(
-      t('price_form.to_non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('price_form.from_non_empty'), required),
   },
   price: {
-    required: helpers.withMessage(
-      t('price_form.price_non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('price_form.price_non_empty'), required),
   },
-  date: {
-    required: helpers.withMessage(
-      t('price_form.date_non_empty').toString(),
-      required,
-    ),
+  timestamp: {
+    required: helpers.withMessage(t('price_form.date_non_empty'), required),
+  },
+  toAsset: {
+    required: helpers.withMessage(t('price_form.to_non_empty'), required),
   },
 };
 
-const { setValidation } = useHistoricPriceForm();
+const states = {
+  fromAsset,
+  price,
+  timestamp: datetime,
+  toAsset,
+};
 
-const v$ = setValidation(
+const v$ = useVuelidate(
   rules,
-  {
-    fromAsset: computed(() => get(value).fromAsset),
-    toAsset: computed(() => get(value).toAsset),
-    price,
-    date,
-  },
-  { $autoDirty: true },
+  states,
+  { $autoDirty: true, $externalResults: errors },
 );
+
+useFormStateWatcher(states, stateUpdated);
+
+defineExpose({
+  validate: () => get(v$).$validate(),
+});
 </script>
 
 <template>
-  <form class="flex flex-col gap-4">
+  <div class="flex flex-col gap-4">
     <div class="grid md:grid-cols-2 gap-x-4 gap-y-2">
       <AssetSelect
-        :value="value.fromAsset"
+        v-model="fromAsset"
         :label="t('price_form.from_asset')"
         outlined
-        :disabled="edit"
+        :disabled="editMode"
         :error-messages="toMessages(v$.fromAsset)"
-        @input="input({ fromAsset: $event })"
       />
       <AssetSelect
-        :value="value.toAsset"
+        v-model="toAsset"
         :label="t('price_form.to_asset')"
-        :disabled="edit"
+        :disabled="editMode"
         outlined
         :error-messages="toMessages(v$.toAsset)"
-        @input="input({ toAsset: $event })"
       />
     </div>
+    <DateTimePicker
+      v-model="datetime"
+      :label="t('common.datetime')"
+      :disabled="editMode"
+      :error-messages="toMessages(v$.timestamp)"
+    />
     <AmountInput
       v-model="price"
       variant="outlined"
       :error-messages="toMessages(v$.price)"
       :label="t('common.price')"
     />
-    <i18n
-      v-if="price && fromAsset && toAsset"
+    <i18n-t
+      v-if="price && fromAssetSymbol && toAssetSymbol"
       tag="div"
-      path="price_form.historic.hint"
+      keypath="price_form.historic.hint"
       class="text-caption text-rui-success -mt-9 pl-3"
     >
       <template #fromAsset>
         <strong>
-          {{ fromAsset }}
+          {{ fromAssetSymbol }}
         </strong>
       </template>
       <template #toAsset>
         <strong>
-          {{ toAsset }}
+          {{ toAssetSymbol }}
         </strong>
       </template>
       <template #price>
@@ -134,13 +137,6 @@ const v$ = setValidation(
           />
         </strong>
       </template>
-    </i18n>
-    <DateTimePicker
-      :value="date"
-      :label="t('common.datetime')"
-      :disabled="edit"
-      :error-messages="toMessages(v$.date)"
-      @input="input({ timestamp: convertToTimestamp($event) })"
-    />
-  </form>
+    </i18n-t>
+  </div>
 </template>

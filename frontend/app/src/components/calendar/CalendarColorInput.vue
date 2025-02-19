@@ -1,36 +1,25 @@
 <script setup lang="ts">
-import { contextColors } from '@rotki/ui-library-compat';
+const model = defineModel<string | undefined>({ required: true });
 
-const props = withDefaults(
-  defineProps<{
-    value?: string;
-  }>(),
-  {
-    value: '',
-  },
-);
+const contextColorsInHex: string[] = contextColors
+  .map((item) => {
+    const name = `--rui-light-${item}-main`;
+    const points = getComputedStyle(document.documentElement).getPropertyValue(name).split(', ');
+    if (points && points.length === 3)
+      return rgbPointsToHex(+points[0], +points[1], +points[2]);
 
-const emit = defineEmits<{
-  (e: 'input', value: string): void;
-}>();
+    return '';
+  })
+  .filter(item => !!item);
 
-const vModel = useSimpleVModel(props, emit);
-
-const { value } = toRefs(props);
-
-const contextColorsInHex: string[] = contextColors.map((item) => {
-  const name = `--rui-light-${item}-main`;
-  const points = getComputedStyle(document.documentElement).getPropertyValue(name).split(', ');
-  if (points && points.length === 3)
-    return rgbPointsToHex(+points[0], +points[1], +points[2]);
-
-  return '';
-}).filter(item => !!item);
-
-watchImmediate(value, (value) => {
+watchImmediate(model, (value) => {
   if (!value && contextColorsInHex.length > 0)
-    emit('input', contextColorsInHex[0]);
+    updateModel(contextColorsInHex[0]);
 });
+
+function updateModel(newValue: string) {
+  set(model, newValue);
+}
 </script>
 
 <template>
@@ -39,13 +28,13 @@ watchImmediate(value, (value) => {
       :popper="{ placement: 'left' }"
       menu-class="max-w-[18rem]"
     >
-      <template #activator="{ on }">
+      <template #activator="{ attrs }">
         <div
           class="rounded-full w-8 h-8 border-2 border-rui-grey-100 cursor-pointer"
           :style="{
-            backgroundColor: `#${value}`,
+            backgroundColor: `#${modelValue}`,
           }"
-          v-on="on"
+          v-bind="attrs"
         />
       </template>
       <div class="p-2 flex gap-2">
@@ -56,10 +45,10 @@ watchImmediate(value, (value) => {
           :style="{
             backgroundColor: `#${color}`,
           }"
-          @click="emit('input', color)"
+          @click="updateModel(color)"
         />
       </div>
-      <RuiColorPicker v-model="vModel" />
+      <RuiColorPicker v-model="model" />
     </RuiMenu>
   </div>
 </template>

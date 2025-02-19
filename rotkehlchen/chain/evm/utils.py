@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from web3.types import BlockIdentifier
 
+from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.constants import ZERO
@@ -13,11 +14,21 @@ from rotkehlchen.errors.misc import BlockchainQueryError, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
-from rotkehlchen.types import UNISWAP_PROTOCOL, VELODROME_POOL_PROTOCOL, EvmTokenKind, Price
+from rotkehlchen.types import (
+    AERODROME_POOL_PROTOCOL,
+    UNISWAP_PROTOCOL,
+    VELODROME_POOL_PROTOCOL,
+    ChainID,
+    EvmTokenKind,
+    Price,
+    Timestamp,
+)
+from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.types import LP_TOKEN_AS_POOL_CONTRACT_ABIS
+    from rotkehlchen.user_messages import MessagesAggregator
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +37,7 @@ log = RotkehlchenLogsAdapter(logger)
 
 LP_TOKEN_AS_POOL_PROTOCOL_TO_ABI_NAME: Final[dict[str, 'LP_TOKEN_AS_POOL_CONTRACT_ABIS']] = {
     VELODROME_POOL_PROTOCOL: 'VELO_V2_LP',
+    AERODROME_POOL_PROTOCOL: 'VELO_V2_LP',
     UNISWAP_PROTOCOL: 'UNISWAP_V2_LP',
 }
 FVAL_ERROR_NAME: Final = 'token supply'
@@ -107,6 +119,11 @@ def lp_price_from_uniswaplike_pool_contract(
             )
             return None
 
+    # TODO: Perhaps think of a better way for type checking of expected function return than this?
+    assert isinstance(decoded[0], str), 'token0 should return a string'
+    assert isinstance(decoded[1], str), 'token1 should return a string'
+    assert isinstance(decoded[2], int), 'totalSupply should return an int'
+    assert isinstance(decoded[4], int), 'decimals should return an int'
     if len(decoded) < 4:
         log.debug(
             f'Unexpected number of decoded values ({len(decoded)}) while querying price from '
@@ -171,3 +188,48 @@ def lp_price_from_uniswaplike_pool_contract(
     numerator = token0_supply * token0_price + token1_supply * token1_price
     share_value = numerator / total_supply
     return Price(share_value)
+
+
+def maybe_notify_cache_query_status(
+        msg_aggregator: 'MessagesAggregator',
+        last_notified_ts: Timestamp,
+        protocol: str,
+        chain: ChainID,
+        processed: int,
+        total: int,
+) -> Timestamp:
+    """Helper function to notify the cache query status if it's been more than 5 seconds since the
+    last notification, and returns the last notified timestamp."""
+    if (current_time := ts_now()) - last_notified_ts > 5:
+        msg_aggregator.add_message(
+            message_type=WSMessageType.PROGRESS_UPDATES,
+            data={
+                'protocol': protocol,
+                'chain': chain,
+                'subtype': str(ProgressUpdateSubType.PROTOCOL_CACHE_UPDATES),
+                'processed': processed,
+                'total': total,
+            },
+        )
+        return current_time
+
+    return last_notified_ts
+
+
+def maybe_notify_new_pools_status(
+        msg_aggregator: 'MessagesAggregator',
+        last_notified_ts: Timestamp,
+        protocol: str,
+        chain: ChainID,
+        get_new_pools_count: Callable[[], int],
+) -> Timestamp:
+    """Helper function to notify the new pools status if it's been more than 5 seconds since the
+    last notification, and returns the last notified timestamp."""
+    return maybe_notify_cache_query_status(
+        msg_aggregator=msg_aggregator,
+        last_notified_ts=last_notified_ts,
+        protocol=protocol,
+        chain=chain,
+        processed=0,  # 0 because here we only query pools to find their total number. It will be incremented while processing the pools later  # noqa: E501
+        total=get_new_pools_count(),  # notifying the increase in pool count every 5 seconds as we query them  # noqa: E501
+    )

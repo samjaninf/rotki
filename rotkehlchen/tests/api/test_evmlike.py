@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -6,8 +7,8 @@ import requests
 from eth_utils import to_checksum_address
 
 from rotkehlchen.accounting.structures.balance import Balance
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.chain.zksync_lite.constants import ZKSYNCLITE_TX_SAVEPREFIX
 from rotkehlchen.constants.assets import A_DAI, A_ETH, A_GNO
 from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.fval import FVal
@@ -20,7 +21,12 @@ from rotkehlchen.tests.utils.api import (
     assert_simple_ok_response,
 )
 from rotkehlchen.tests.utils.factories import make_evm_address
-from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
+from rotkehlchen.types import (
+    ChecksumEvmAddress,
+    Location,
+    TimestampMS,
+    deserialize_evm_tx_hash,
+)
 from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
@@ -31,14 +37,19 @@ if TYPE_CHECKING:
 @pytest.mark.parametrize('zksync_lite_accounts', [[make_evm_address(), make_evm_address()]])
 def test_evmlike_transactions_refresh(
         rotkehlchen_api_server: 'APIServer',
-        zksync_lite_accounts,
+        zksync_lite_accounts: list['ChecksumEvmAddress'],
 ) -> None:
     """Just tests the api part of refreshing evmlike transactions. Since at the moment
     this only concerns zksynclite, actual data check is in
     integration/test_zksynclite.py::test_get_transactions"""
     now = ts_now()
 
-    def mock_fetch_transactions(address, start_ts, end_ts) -> None:
+    # Timestamps are optional args here since zksynclite doesn't use them
+    def mock_fetch_transactions(
+            address: 'ChecksumEvmAddress',
+            start_ts: int = 0,
+            end_ts: int = now,
+    ) -> None:
         assert to_checksum_address(address)
         assert start_ts == 0
         assert end_ts >= now
@@ -71,7 +82,7 @@ def test_evmlike_transactions_refresh(
 @pytest.mark.parametrize('zksync_lite_accounts', [[make_evm_address(), make_evm_address()]])
 def test_evmlike_blockchain_balances(
         rotkehlchen_api_server: 'APIServer',
-        zksync_lite_accounts,
+        zksync_lite_accounts: list['ChecksumEvmAddress'],
 ) -> None:
     """Just tests the api part of refreshing evmlike transactions. Since at the moment
     this only concerns zksynclite, actual data check is in
@@ -87,10 +98,12 @@ def test_evmlike_blockchain_balances(
         A_GNO: Balance(amount=FVal(50), usd_value=FVal(25)),
     }
 
-    def serialize_balances(value) -> dict[str, dict]:
+    def serialize_balances(value: dict[Asset, Balance]) -> dict[str, dict]:
         return {asset.identifier: balance.serialize() for asset, balance in value.items()}
 
-    def mocked_get_balances(addresses):
+    def mocked_get_balances(
+            addresses: Sequence[ChecksumEvmAddress],
+    ) -> dict[ChecksumEvmAddress, dict[Asset, Balance]]:
         return {
             addresses[0]: addy_0_balances,
             addresses[1]: addy_1_balances,
@@ -228,7 +241,10 @@ def compare_events_without_id(e1: dict, e2: dict) -> None:
 @pytest.mark.parametrize('default_mock_price_value', [ONE])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
 @pytest.mark.parametrize('zksync_lite_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
-def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite_accounts) -> None:
+def test_decode_pending_evmlike(
+        rotkehlchen_api_server: 'APIServer',
+        zksync_lite_accounts: list['ChecksumEvmAddress'],
+) -> None:
     """Tests pulling and decoding evmlike (zksync lite) transactions
 
     Also checks:
@@ -292,7 +308,7 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
         event_type=HistoryEventType.DEPOSIT,
         event_subtype=HistoryEventSubType.BRIDGE,
         asset=A_ETH,
-        balance=Balance(amount=FVal('6.626770825')),
+        amount=FVal('6.626770825'),
         location_label=user_address,
         address=user_address,
         notes='Bridge 6.626770825 ETH from ZKSync Lite to Ethereum',
@@ -306,7 +322,7 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
         event_type=HistoryEventType.DEPOSIT,
         event_subtype=HistoryEventSubType.FEE,
         asset=A_ETH,
-        balance=Balance(amount=FVal('0.00367')),
+        amount=FVal('0.00367'),
         location_label=user_address,
         address=user_address,
         notes='Bridging fee of 0.00367 ETH',
@@ -320,7 +336,7 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_ETH,
-        balance=Balance(amount=FVal('0.9630671085')),
+        amount=FVal('0.9630671085'),
         location_label=user_address,
         address=string_to_evm_address('0x9531C059098e3d194fF87FebB587aB07B30B1306'),
         notes='Receive 0.9630671085 ETH from 0x9531C059098e3d194fF87FebB587aB07B30B1306',
@@ -340,7 +356,7 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
                 event_type=HistoryEventType.SPEND,
                 event_subtype=HistoryEventSubType.NONE,
                 asset=A_ETH,
-                balance=Balance(amount=FVal('0.005')),
+                amount=FVal('0.005'),
                 location_label=user_address,
                 address=string_to_evm_address('0xd31b671F1a398B519222FdAba5aB5464B9F2a3Fa'),
                 notes='Send 0.005 ETH to 0xd31b671F1a398B519222FdAba5aB5464B9F2a3Fa',
@@ -360,7 +376,7 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
                 event_type=HistoryEventType.SPEND,
                 event_subtype=HistoryEventSubType.FEE,
                 asset=A_ETH,
-                balance=Balance(amount=FVal('0.001513')),
+                amount=FVal('0.001513'),
                 location_label=user_address,
                 notes='Spend 0.001513 ETH to ChangePubKey',
             ).serialize())
@@ -380,7 +396,7 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
                 event_type=HistoryEventType.TRANSFER,
                 event_subtype=HistoryEventSubType.NONE,
                 asset=A_ETH,
-                balance=Balance(amount=ZERO),
+                amount=ZERO,
                 location_label=user_address,
                 address=user_address,
                 notes='Transfer 0 ETH to 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12',
@@ -401,7 +417,7 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
                 event_type=HistoryEventType.TRANSFER,
                 event_subtype=HistoryEventSubType.FEE,
                 asset=A_ETH,
-                balance=Balance(amount=FVal('0.0001843')),
+                amount=FVal('0.0001843'),
                 location_label=user_address,
                 address=user_address,
                 notes='Transfer fee of 0.0001843 ETH',
@@ -415,18 +431,16 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
         rotkehlchen_api_server,
         'evmliketransactionsresource',
     ), json={
-        'chain': 'zksync_lite',
-        'tx_hash': tx_hash1.hex(),  # pylint: disable=no-member
+        'transactions': [{
+            'chain': 'zksync_lite',
+            'tx_hash': tx_hash1.hex(),  # pylint: disable=no-member
+        }],
     })
     assert_simple_ok_response(response)  # see all is fine
 
     # now let's check the DB contains the entries we will check against when deleting
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     with rotki.data.db.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT COUNT(*) FROM used_query_ranges WHERE name=?',
-            (f'{ZKSYNCLITE_TX_SAVEPREFIX}{user_address}',),
-        ).fetchone()[0] == 1
         assert cursor.execute('SELECT COUNT(*) FROM zksynclite_transactions').fetchone()[0] == 16
         assert cursor.execute('SELECT COUNT(*) FROM zksynclite_swaps').fetchone()[0] == 0
         assert cursor.execute('SELECT COUNT(*) FROM history_events').fetchone()[0] == 17
@@ -442,10 +456,6 @@ def test_decode_pending_evmlike(rotkehlchen_api_server: 'APIServer', zksync_lite
 
     # finally check all related DB data got deleted
     with rotki.data.db.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT COUNT(*) FROM used_query_ranges WHERE name=?',
-            (f'{ZKSYNCLITE_TX_SAVEPREFIX}{user_address}',),
-        ).fetchone()[0] == 0
         assert cursor.execute('SELECT COUNT(*) FROM zksynclite_transactions').fetchone()[0] == 0
         assert cursor.execute('SELECT COUNT(*) FROM zksynclite_swaps').fetchone()[0] == 0
         assert cursor.execute('SELECT COUNT(*) FROM history_events').fetchone()[0] == 0

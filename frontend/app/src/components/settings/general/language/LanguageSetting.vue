@@ -1,7 +1,16 @@
 <script setup lang="ts">
+import { externalLinks } from '@shared/external-links';
 import { supportedLanguages } from '@/data/supported-language';
 import { SupportedLanguage } from '@/types/settings/frontend-settings';
-import { externalLinks } from '@/data/external-links';
+import { useSessionStore } from '@/store/session';
+import { useLastLanguage } from '@/composables/session/language';
+import LanguageSelectorItem from '@/components/settings/general/language/LanguageSelectorItem.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
+defineOptions({
+  inheritAttrs: false,
+});
 
 const props = withDefaults(
   defineProps<{
@@ -18,15 +27,14 @@ const props = withDefaults(
 
 const { useLocalSetting } = toRefs(props);
 
-const language = ref<string>(SupportedLanguage.EN);
+const language = ref<SupportedLanguage>(SupportedLanguage.EN);
 
 const { lastLanguage } = useLastLanguage();
 
 async function updateSetting(value: string, update: (newValue: any) => Promise<void>) {
   if (get(useLocalSetting))
     set(lastLanguage, value);
-  else
-    await update(value);
+  else await update(value);
 }
 
 const { forceUpdateMachineLanguage } = useLastLanguage();
@@ -41,80 +49,82 @@ onMounted(() => {
 });
 
 const { t } = useI18n();
-const rootAttrs = useAttrs();
 </script>
 
 <template>
-  <div>
-    <div class="flex gap-2">
-      <SettingsOption
-        #default="{ error, success, updateImmediate }"
-        class="w-full"
-        setting="language"
-        frontend-setting
-        :error-message="t('general_settings.validation.language.error')"
+  <SettingsOption
+    class="w-full"
+    setting="language"
+    frontend-setting
+    :error-message="t('general_settings.language.validation.error')"
+  >
+    <template #title>
+      {{ t('general_settings.language.title') }}
+    </template>
+    <template #subtitle>
+      {{ t('general_settings.language.subtitle') }}
+    </template>
+    <template #default="{ error, success, updateImmediate }">
+      <RuiAlert
+        type="warning"
+        class="mb-6"
       >
-        <RuiMenuSelect
-          v-model="language"
-          :options="supportedLanguages"
-          :label="t('general_settings.labels.language')"
-          :success-messages="success"
-          :error-messages="error"
-          key-attr="identifier"
-          variant="outlined"
-          v-bind="rootAttrs"
-          @input="updateSetting($event, updateImmediate)"
+        {{ t('general_settings.language.contribution') }}
+        <ExternalLink
+          :url="externalLinks.contributeSection.language"
+          custom
         >
-          <template #selection="{ item }">
-            <LanguageSelectorItem
-              :countries="item.countries ?? [item.identifier]"
-              :label="item.label"
-            />
-          </template>
-          <template #item="{ item }">
-            <LanguageSelectorItem
-              :countries="item.countries ?? [item.identifier]"
-              :label="item.label"
-            />
-          </template>
-        </RuiMenuSelect>
-      </SettingsOption>
-      <RuiTooltip
-        :popper="{ placement: 'bottom', offsetDistance: 0 }"
-        tooltip-class="max-w-[25rem]"
-      >
-        <template #activator>
-          <ExternalLink
-            :url="externalLinks.contributeSection.language"
-            custom
+          <RuiButton
+            variant="text"
+            color="primary"
+            size="sm"
+            class="-ml-1.5 mt-3"
           >
-            <RuiButton
-              variant="text"
-              class="mt-1"
-              icon
-            >
-              <RuiIcon name="file-edit-line" />
-            </RuiButton>
-          </ExternalLink>
+            {{ t('general_settings.language.click_here') }}
+            <template #append>
+              <RuiIcon
+                name="lu-external-link"
+                size="16"
+              />
+            </template>
+          </RuiButton>
+        </ExternalLink>
+      </RuiAlert>
+      <RuiMenuSelect
+        v-model="language"
+        :options="supportedLanguages"
+        :label="t('general_settings.language.label')"
+        :success-messages="success"
+        :error-messages="error"
+        key-attr="identifier"
+        variant="outlined"
+        v-bind="$attrs"
+        @update:model-value="updateSetting($event as SupportedLanguage, updateImmediate)"
+      >
+        <template #selection="{ item }">
+          <LanguageSelectorItem
+            :countries="item.countries ?? [item.identifier]"
+            :label="item.label"
+          />
         </template>
-        <span>
-          {{ t('general_settings.language_contribution_tooltip') }}
-        </span>
-      </RuiTooltip>
-    </div>
-    <RuiCheckbox
-      v-if="!useLocalSetting"
-      hide-details
-      class="mt-1"
-      color="primary"
-      :value="forceUpdateMachineLanguage === 'true'"
-      @input="updateForceUpdateMachineLanguage($event)"
-    >
-      {{
-        t(
-          'general_settings.labels.force_saved_language_setting_in_machine_hint',
-        )
-      }}
-    </RuiCheckbox>
-  </div>
+        <template #item="{ item }">
+          <LanguageSelectorItem
+            :countries="item.countries ?? [item.identifier]"
+            :label="item.label"
+          />
+        </template>
+      </RuiMenuSelect>
+
+      <RuiCheckbox
+        v-if="!useLocalSetting"
+        hide-details
+        class="mt-1"
+        color="primary"
+        :model-value="forceUpdateMachineLanguage === 'true'"
+        @update:model-value="updateForceUpdateMachineLanguage($event)"
+      >
+        {{ t('general_settings.language.force_saved_language_setting_in_machine_hint') }}
+      </RuiCheckbox>
+    </template>
+  </SettingsOption>
 </template>

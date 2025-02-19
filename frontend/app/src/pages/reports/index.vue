@@ -1,20 +1,37 @@
 <script setup lang="ts">
-import { type Message, Priority, Severity } from '@rotki/common/lib/messages';
-import { Routes } from '@/router/routes';
+import { type Message, Priority, Severity } from '@rotki/common';
 import { TaskType } from '@/types/task-type';
 import { displayDateFormatter } from '@/data/date-formatter';
 import FileUpload from '@/components/import/FileUpload.vue';
-import type {
-  ProfitLossReportDebugPayload,
-  ProfitLossReportPeriod,
-} from '@/types/reports';
+import { NoteLocation } from '@/types/notes';
+import { Routes } from '@/router/routes';
+import { downloadFileByTextContent } from '@/utils/download';
+import { isTaskCancelled } from '@/utils';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useMessageStore } from '@/store/message';
+import { useNotificationsStore } from '@/store/notifications';
+import { useAreaVisibilityStore } from '@/store/session/visibility';
+import { useReportsStore } from '@/store/reports';
+import { useTaskStore } from '@/store/tasks';
+import { useInterop } from '@/composables/electron-interop';
+import { useReportsApi } from '@/composables/api/reports';
+import ProgressScreen from '@/components/helper/ProgressScreen.vue';
+import ReportsTable from '@/components/profitloss/ReportsTable.vue';
+import ErrorScreen from '@/components/error/ErrorScreen.vue';
+import ReportGenerator from '@/components/profitloss/ReportGenerator.vue';
 import type { TaskMeta } from '@/types/task';
+import type { ProfitLossReportDebugPayload, ProfitLossReportPeriod } from '@/types/reports';
 
-const { isTaskRunning, awaitTask } = useTaskStore();
+definePage({
+  meta: {
+    noteLocation: NoteLocation.PROFIT_LOSS_REPORTS,
+  },
+});
+
+const { awaitTask, isTaskRunning } = useTaskStore();
 const reportsStore = useReportsStore();
 const { reportError } = storeToRefs(reportsStore);
-const { generateReport, clearError, exportReportData, fetchReports }
-  = reportsStore;
+const { clearError, exportReportData, fetchReports, generateReport } = reportsStore;
 const isRunning = isTaskRunning(TaskType.TRADE_HISTORY);
 const importDataDialog = ref<boolean>(false);
 const reportDebugData = ref<File>();
@@ -25,7 +42,7 @@ const router = useRouter();
 const route = useRoute();
 
 const { t } = useI18n();
-const { appSession, openDirectory } = useInterop();
+const { appSession, getPath, openDirectory } = useInterop();
 
 onMounted(async () => {
   const query = get(route).query;
@@ -35,8 +52,8 @@ onMounted(async () => {
 
     if (start && end) {
       const period = {
-        start: Number.parseInt(start),
         end: Number.parseInt(end),
+        start: Number.parseInt(start),
       };
 
       await router.replace({ query: {} });
@@ -56,16 +73,16 @@ async function generate(period: ProfitLossReportPeriod) {
     set(pinned, null);
 
   const formatDate = (timestamp: number) =>
-    displayDateFormatter.format(
-      new Date(timestamp * 1000),
-      get(dateDisplayFormat),
-    );
+    displayDateFormatter.format(new Date(timestamp * 1000), get(dateDisplayFormat));
 
   const reportId = await generateReport(period);
 
   const action = () => {
     router.push({
-      path: Routes.PROFIT_LOSS_REPORT.replace(':id', reportId.toString()),
+      name: '/reports/[id]',
+      params: {
+        id: reportId.toString(),
+      },
       query: {
         openReportActionable: 'true',
       },
@@ -73,30 +90,30 @@ async function generate(period: ProfitLossReportPeriod) {
   };
 
   if (reportId > 0) {
-    if (router.currentRoute.path === Routes.PROFIT_LOSS_REPORTS) {
+    if (route.path === Routes.PROFIT_LOSS_REPORTS) {
       action();
       return;
     }
     notify({
-      title: t('profit_loss_reports.notification.title'),
-      message: t('profit_loss_reports.notification.message', {
-        start: formatDate(period.start),
-        end: formatDate(period.end),
-      }),
-      display: true,
-      severity: Severity.INFO,
-      priority: Priority.ACTION,
       action: {
-        label: t('profit_loss_reports.notification.action'),
         action,
+        label: t('profit_loss_reports.notification.action'),
       },
+      display: true,
+      message: t('profit_loss_reports.notification.message', {
+        end: formatDate(period.end),
+        start: formatDate(period.start),
+      }),
+      priority: Priority.ACTION,
+      severity: Severity.INFO,
+      title: t('profit_loss_reports.notification.title'),
     });
   }
 }
 
 const { setMessage } = useMessageStore();
 
-async function exportData({ start, end }: ProfitLossReportPeriod) {
+async function exportData({ end, start }: ProfitLossReportPeriod) {
   const payload: ProfitLossReportDebugPayload = {
     fromTimestamp: start,
     toTimestamp: end,
@@ -117,26 +134,22 @@ async function exportData({ start, end }: ProfitLossReportPeriod) {
 
     if (appSession) {
       message = {
-        title: t('profit_loss_reports.debug.export_message.title'),
         description: result
           ? t('profit_loss_reports.debug.export_message.success')
           : t('profit_loss_reports.debug.export_message.failure'),
         success: !!result,
+        title: t('profit_loss_reports.debug.export_message.title'),
       };
     }
     else {
-      downloadFileByTextContent(
-        JSON.stringify(result, null, 2),
-        'pnl_debug.json',
-        'application/json',
-      );
+      downloadFileByTextContent(JSON.stringify(result, null, 2), 'pnl_debug.json', 'application/json');
     }
   }
   catch (error: any) {
     message = {
-      title: t('profit_loss_reports.debug.export_message.title'),
       description: error.message,
       success: false,
+      title: t('profit_loss_reports.debug.export_message.title'),
     };
   }
 
@@ -147,7 +160,7 @@ async function exportData({ start, end }: ProfitLossReportPeriod) {
 const { importReportData, uploadReportData } = useReportsApi();
 
 async function importData() {
-  if (!get(reportDebugData))
+  if (!isDefined(reportDebugData))
     return;
 
   set(importDataLoading, true);
@@ -157,10 +170,13 @@ async function importData() {
 
   const taskType = TaskType.IMPORT_PNL_REPORT_DATA;
 
+  const file = get(reportDebugData);
+
   try {
-    const { taskId } = appSession
-      ? await importReportData(get(reportDebugData)!.path)
-      : await uploadReportData(get(reportDebugData)!);
+    const path = getPath(file);
+    const { taskId } = path
+      ? await importReportData(path)
+      : await uploadReportData(file);
 
     const { result } = await awaitTask<boolean, TaskMeta>(taskId, taskType, {
       title: t('profit_loss_reports.debug.import_message.title'),
@@ -177,17 +193,17 @@ async function importData() {
 
   if (!success) {
     setMessage({
-      title: t('profit_loss_reports.debug.import_message.title'),
       description: t('profit_loss_reports.debug.import_message.failure', {
         message,
       }),
+      title: t('profit_loss_reports.debug.import_message.title'),
     });
   }
   else {
     setMessage({
-      title: t('profit_loss_reports.debug.import_message.title'),
       description: t('profit_loss_reports.debug.import_message.success'),
       success: true,
+      title: t('profit_loss_reports.debug.import_message.title'),
     });
     await fetchReports();
   }

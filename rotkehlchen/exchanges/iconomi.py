@@ -18,7 +18,6 @@ from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import (
-    AssetMovement,
     Location,
     MarginPosition,
     Price,
@@ -26,7 +25,6 @@ from rotkehlchen.exchanges.data_structures import (
     TradeType,
 )
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
-from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -40,7 +38,6 @@ from rotkehlchen.user_messages import MessagesAggregator
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.history.events.structures.base import HistoryEvent
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +67,8 @@ def trade_from_iconomi(raw_trade: dict) -> Trade:
         tx_amount = deserialize_asset_amount(raw_trade['source_amount'])
         native_amount = deserialize_asset_amount(raw_trade['target_amount'])
         native_asset = asset_from_iconomi(raw_trade['target_ticker'])
+    else:
+        raise DeserializationError(f'Unexpected Iconomi trade type {raw_trade["type"]}')
 
     amount = tx_amount
     rate = Price(native_amount / tx_amount)
@@ -104,9 +103,9 @@ class Iconomi(ExchangeInterface):
             api_key=api_key,
             secret=secret,
             database=database,
+            msg_aggregator=msg_aggregator,
         )
         self.uri = 'https://api.iconomi.com'
-        self.msg_aggregator = msg_aggregator
         self.aust = A_AUST.resolve_to_asset_with_oracles()
 
     def _generate_signature(self, request_type: str, request_path: str, timestamp: str) -> str:
@@ -249,11 +248,16 @@ class Iconomi(ExchangeInterface):
                     amount=amount,
                     usd_value=usd_value,
                 )
-            except (UnknownAsset, UnsupportedAsset) as e:
-                asset_tag = 'unknown' if isinstance(e, UnknownAsset) else 'unsupported'
+            except UnsupportedAsset:
                 self.msg_aggregator.add_warning(
-                    f'Found {asset_tag} ICONOMI asset {ticker}. '
+                    f'Found unsupported ICONOMI asset {ticker}. '
                     f' Ignoring its balance query.',
+                )
+                continue
+            except UnknownAsset as e:
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='balance query',
                 )
                 continue
 
@@ -335,9 +339,10 @@ class Iconomi(ExchangeInterface):
                 try:
                     trades.append(trade_from_iconomi(tx))
                 except UnknownAsset as e:
-                    self.msg_aggregator.add_warning(
-                        f'Ignoring an iconomi transaction because of unsupported '
-                        f'asset {e!s}')
+                    self.send_unknown_asset_message(
+                        asset_identifier=e.identifier,
+                        details='transaction',
+                    )
                 except (DeserializationError, KeyError) as e:
                     msg = str(e)
                     if isinstance(e, KeyError):
@@ -354,39 +359,9 @@ class Iconomi(ExchangeInterface):
 
         return trades, (start_ts, end_ts)
 
-    def query_supported_tickers(
-            self,
-    ) -> list[str]:
-
-        tickers = []
-        resp = self._api_query('get', 'assets', authenticated=False)
-
-        for asset_info in resp:
-            if not asset_info['supported']:
-                continue
-            if GlobalDBHandler.is_asset_symbol_unsupported(Location.ICONOMI, asset_info['ticker']):
-                continue
-            tickers.append(asset_info['ticker'])
-
-        return tickers
-
-    def query_online_deposits_withdrawals(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list[AssetMovement]:
-        return []  # noop for iconomi
-
     def query_online_margin_history(
             self,
             start_ts: Timestamp,  # pylint: disable=unused-argument
             end_ts: Timestamp,
     ) -> list[MarginPosition]:
-        return []  # noop for iconomi
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
         return []  # noop for iconomi

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import {
-  TimeFramePeriod,
-  type TimeFrameSetting,
-} from '@rotki/common/lib/settings/graphs';
+import { TimeFramePeriod, type TimeFrameSetting } from '@rotki/common';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import TimeFrameSettings from '@/components/settings/general/TimeFrameSettings.vue';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
 
 const defaultGraphTimeframe = ref<TimeFrameSetting>(TimeFramePeriod.ALL);
 const visibleTimeframes = ref<TimeFramePeriod[]>([]);
@@ -11,9 +13,7 @@ const currentSessionTimeframe = ref<TimeFramePeriod>(TimeFramePeriod.ALL);
 const { t } = useI18n();
 
 const { timeframe } = useSessionSettingsStore();
-const { timeframeSetting, visibleTimeframes: visible } = storeToRefs(
-  useFrontendSettingsStore(),
-);
+const { timeframeSetting, visibleTimeframes: visible } = storeToRefs(useFrontendSettingsStore());
 
 function resetTimeframeSetting() {
   set(defaultGraphTimeframe, get(timeframeSetting));
@@ -37,28 +37,36 @@ onMounted(() => {
 </script>
 
 <template>
-  <SettingsOption
-    #default="{ error, success, updateImmediate: updateTimeframeSetting }"
-    setting="timeframeSetting"
-    frontend-setting
-    :success-message="successMessage"
-    :error-message="t('frontend_settings.validation.timeframe.error')"
-    @finished="resetTimeframeSetting()"
-  >
+  <SettingsItem>
+    <template #title>
+      {{ t('timeframe_settings.default_timeframe') }}
+    </template>
+    <template #subtitle>
+      {{ t('timeframe_settings.default_timeframe_description') }}
+    </template>
     <SettingsOption
-      #default="{ updateImmediate: updateVisibleTimeframes }"
-      setting="visibleTimeframes"
+      #default="{ error, success, updateImmediate: updateTimeframeSetting }"
+      setting="timeframeSetting"
       frontend-setting
-      @finished="resetVisibleTimeframes()"
+      :success-message="successMessage"
+      :error-message="t('frontend_settings.validation.timeframe.error')"
+      @finished="resetTimeframeSetting()"
     >
-      <TimeFrameSettings
-        :message="{ error, success }"
-        :value="defaultGraphTimeframe"
-        :visible-timeframes="visibleTimeframes"
-        :current-session-timeframe="currentSessionTimeframe"
-        @timeframe-change="updateTimeframeSetting($event)"
-        @visible-timeframes-change="updateVisibleTimeframes($event)"
-      />
+      <SettingsOption
+        #default="{ updateImmediate: updateVisibleTimeframes }"
+        setting="visibleTimeframes"
+        frontend-setting
+        @finished="resetVisibleTimeframes()"
+      >
+        <TimeFrameSettings
+          :message="{ error, success }"
+          :value="defaultGraphTimeframe"
+          :visible-timeframes="visibleTimeframes"
+          :current-session-timeframe="currentSessionTimeframe"
+          @timeframe-change="updateTimeframeSetting($event)"
+          @visible-timeframes-change="updateVisibleTimeframes($event)"
+        />
+      </SettingsOption>
     </SettingsOption>
-  </SettingsOption>
+  </SettingsItem>
 </template>

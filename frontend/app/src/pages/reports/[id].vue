@@ -1,6 +1,23 @@
 <script setup lang="ts">
-import { Routes } from '@/router/routes';
+import { NoteLocation } from '@/types/notes';
+import { useReportsStore } from '@/store/reports';
+import ProfitLossEvents from '@/components/profitloss/ProfitLossEvents.vue';
+import ProfitLossOverview from '@/components/profitloss/ProfitLossOverview.vue';
+import ReportActionable from '@/components/profitloss/ReportActionable.vue';
+import ExportReportCsv from '@/components/profitloss/ExportReportCsv.vue';
+import AccountingSettingsDisplay from '@/components/profitloss/AccountingSettingsDisplay.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import ReportHeader from '@/components/profitloss/ReportHeader.vue';
+import ProgressScreen from '@/components/helper/ProgressScreen.vue';
 import type { SelectedReport } from '@/types/reports';
+
+definePage({
+  meta: {
+    canNavigateBack: true,
+    noteLocation: NoteLocation.PROFIT_LOSS_REPORTS,
+  },
+});
 
 defineOptions({
   name: 'ReportDetail',
@@ -11,12 +28,12 @@ const refreshing = ref(false);
 const reportsStore = useReportsStore();
 const { report, reports } = storeToRefs(reportsStore);
 
-const { fetchReports, fetchReport, clearReport, isLatestReport } = reportsStore;
+const { clearReport, fetchReport, fetchReports, isLatestReport } = reportsStore;
 const router = useRouter();
-const route = useRoute();
+const route = useRoute<'/reports/[id]'>();
 let firstPage = true;
 
-const selectedReport: ComputedRef<SelectedReport> = computed(() => get(report));
+const selectedReport = computed<SelectedReport>(() => get(report));
 const settings = computed(() => get(selectedReport).settings);
 
 const initialOpenReportActionable = ref<boolean>(false);
@@ -33,7 +50,7 @@ onMounted(async () => {
 
   const success = await fetchReport(reportId);
   if (!success)
-    await router.push(Routes.PROFIT_LOSS_REPORTS);
+    router.push('/reports');
 
   if (get(route).query.openReportActionable) {
     set(initialOpenReportActionable, true);
@@ -43,22 +60,12 @@ onMounted(async () => {
 });
 
 const showUpgradeMessage = computed(
-  () =>
-    get(report).entriesLimit > 0
-    && get(report).entriesLimit < get(report).entriesFound,
+  () => get(report).entriesLimit > 0 && get(report).entriesLimit < get(report).entriesFound,
 );
 
 onUnmounted(() => clearReport());
 
-async function onPage({
-  limit,
-  offset,
-  reportId,
-}: {
-  reportId: number;
-  limit: number;
-  offset: number;
-}) {
+async function onPage({ limit, offset, reportId }: { reportId: number; limit: number; offset: number }) {
   if (firstPage) {
     firstPage = false;
     return;
@@ -69,13 +76,13 @@ async function onPage({
 }
 
 async function regenerateReport() {
-  const { start, end } = get(report);
+  const { end, start } = get(report);
   await router.push({
-    path: Routes.PROFIT_LOSS_REPORTS,
+    path: '/reports',
     query: {
+      end: end.toString(),
       regenerate: 'true',
       start: start.toString(),
-      end: end.toString(),
     },
   });
 }
@@ -95,9 +102,9 @@ async function regenerateReport() {
         v-if="showUpgradeMessage"
         type="warning"
       >
-        <i18n
+        <i18n-t
           tag="div"
-          path="profit_loss_report.upgrade"
+          keypath="profit_loss_report.upgrade"
           class="text-subtitle-1"
         >
           <template #processed>
@@ -109,10 +116,10 @@ async function regenerateReport() {
               class="font-medium"
             />
           </template>
-        </i18n>
-        <i18n
+        </i18n-t>
+        <i18n-t
           tag="div"
-          path="profit_loss_report.upgrade2"
+          keypath="profit_loss_report.upgrade2"
         >
           <template #link>
             <ExternalLink
@@ -120,7 +127,7 @@ async function regenerateReport() {
               premium
             />
           </template>
-        </i18n>
+        </i18n-t>
       </RuiAlert>
       <AccountingSettingsDisplay :accounting-settings="settings" />
       <div class="flex gap-2">
@@ -138,7 +145,7 @@ async function regenerateReport() {
           @click="regenerateReport()"
         >
           <template #prepend>
-            <RuiIcon name="refresh-line" />
+            <RuiIcon name="lu-refresh-ccw" />
           </template>
           {{ t('profit_loss_report.actionable.actions.regenerate_report') }}
         </RuiButton>

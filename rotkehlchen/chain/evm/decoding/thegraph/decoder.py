@@ -1,7 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, Any, Final
 
-from rotkehlchen.accounting.structures.balance import Balance
+from eth_typing.abi import ABI
+
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
@@ -13,6 +14,7 @@ from rotkehlchen.chain.evm.decoding.structures import (
 )
 from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.history.events.structures.evm_event import EvmProduct
@@ -20,7 +22,7 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChecksumEvmAddress, Timestamp
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import CPT_THEGRAPH, THEGRAPH_CPT_DETAILS
 
@@ -36,11 +38,11 @@ TOPIC_STAKE_DELEGATED: Final = b'\xcd\x03f\xdc\xe5$}\x87O\xfc`\xa7b\xaaz\xbb\xb8
 TOPIC_STAKE_DELEGATED_LOCKED: Final = b'\x040\x18?\x84\xd9\xc4P#\x86\xd4\x99\xda\x80eC\xde\xe1\xd9\xde\x83\xc0\x8b\x01\xe3\x9am!\x16\xc4;%'  # noqa: E501
 TOPIC_STAKE_DELEGATED_WITHDRAWN: Final = b'\x1b.w7\xe0C\xc5\xcf\x1bX|\xebM\xae\xb7\xae\x00\x14\x8b\x9b\xda\x8fy\xf1\t>\xea\xd0\x8f\x14\x19R'  # noqa: E501
 
-GRAPH_TOKEN_LOCK_WALLET_ABI: Final = [
+GRAPH_TOKEN_LOCK_WALLET_ABI: Final[ABI] = [
     {
         'inputs': [],
         'name': 'beneficiary',
-        'outputs': [{'internalType': 'address', 'name': '', 'type': 'address'}],
+        'outputs': [{'name': '', 'type': 'address'}],
         'stateMutability': 'view',
         'type': 'function',
     },
@@ -91,12 +93,12 @@ class ThegraphCommonDecoder(DecoderInterface):
 
     def _decode_stake_delegated(self, context: DecoderContext) -> DecodingOutput:
         deposit_event, burn_event = None, None
-        delegator = hex_or_bytes_to_address(context.tx_log.topics[2])
+        delegator = bytes_to_address(context.tx_log.topics[2])
         if delegator is None or self.base.is_tracked(delegator) is False:
             return DEFAULT_DECODING_OUTPUT
 
-        indexer = hex_or_bytes_to_address(context.tx_log.topics[1])
-        stake_amount = hex_or_bytes_to_int(context.tx_log.data[:32])
+        indexer = bytes_to_address(context.tx_log.topics[1])
+        stake_amount = int.from_bytes(context.tx_log.data[:32])
         stake_amount_norm = token_normalized_value(
             token_amount=stake_amount,
             token=self.token,
@@ -109,10 +111,10 @@ class ThegraphCommonDecoder(DecoderInterface):
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE
             ):
-                initial_amount_norm = event.balance.amount
+                initial_amount_norm = event.amount
                 event.event_type = HistoryEventType.STAKING
                 event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
-                event.balance = Balance(amount=stake_amount_norm)
+                event.amount = stake_amount_norm
                 event.notes = f'Delegate {stake_amount_norm} GRT to indexer {indexer}'
                 event.counterparty = CPT_THEGRAPH
                 event.extra_data = {'indexer': indexer}
@@ -128,7 +130,7 @@ class ThegraphCommonDecoder(DecoderInterface):
                         event_type=HistoryEventType.SPEND,
                         event_subtype=HistoryEventSubType.FEE,
                         asset=self.token,
-                        balance=Balance(amount=tokens_burnt),
+                        amount=tokens_burnt,
                         location_label=delegator,
                         notes=f'Burn {tokens_burnt} GRT as delegation tax',
                         counterparty=CPT_THEGRAPH,
@@ -154,13 +156,13 @@ class ThegraphCommonDecoder(DecoderInterface):
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_stake_locked(self, context: DecoderContext) -> DecodingOutput:
-        delegator = hex_or_bytes_to_address(context.tx_log.topics[2])
+        delegator = bytes_to_address(context.tx_log.topics[2])
         if delegator is None or self.base.is_tracked(delegator) is False:
             return DEFAULT_DECODING_OUTPUT
 
-        indexer = hex_or_bytes_to_address(context.tx_log.topics[1])
-        tokens_amount = hex_or_bytes_to_int(context.tx_log.data[:32])
-        lock_timeout_secs = hex_or_bytes_to_int(context.tx_log.data[64:128])
+        indexer = bytes_to_address(context.tx_log.topics[1])
+        tokens_amount = int.from_bytes(context.tx_log.data[:32])
+        lock_timeout_secs = int.from_bytes(context.tx_log.data[64:128])
         tokens_amount_norm = token_normalized_value(
             token_amount=tokens_amount,
             token=self.token,
@@ -172,7 +174,7 @@ class ThegraphCommonDecoder(DecoderInterface):
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=self.token,
-            balance=Balance(),
+            amount=ZERO,
             location_label=delegator,
             notes=(
                 f'Undelegate {tokens_amount_norm} GRT from indexer {indexer}.'
@@ -184,13 +186,13 @@ class ThegraphCommonDecoder(DecoderInterface):
         return DecodingOutput(event=event)
 
     def _decode_stake_withdrawn(self, context: DecoderContext) -> DecodingOutput:
-        delegator = hex_or_bytes_to_address(context.tx_log.topics[2])
+        delegator = bytes_to_address(context.tx_log.topics[2])
         if delegator is None or self.base.is_tracked(delegator) is False:
             return DEFAULT_DECODING_OUTPUT
 
-        indexer = hex_or_bytes_to_address(context.tx_log.topics[1])
+        indexer = bytes_to_address(context.tx_log.topics[1])
         tokens_amount_norm = token_normalized_value(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data[:32]),
+            token_amount=int.from_bytes(context.tx_log.data[:32]),
             token=self.token,
         )
         # create action item that will modify the relevant Transfer event that will appear later

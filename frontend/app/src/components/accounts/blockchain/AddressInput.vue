@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { helpers, requiredIf } from '@vuelidate/validators';
-import { isEmpty } from 'lodash-es';
+import { isEmpty } from 'es-toolkit/compat';
 import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
+import { trimOnPaste } from '@/utils/event';
+import WalletAddressesImport from '@/components/accounts/blockchain/WalletAddressesImport.vue';
 import type { ValidationErrors } from '@/types/api/errors';
 
 const props = defineProps<{
@@ -10,6 +12,7 @@ const props = defineProps<{
   disabled: boolean;
   multi: boolean;
   errorMessages: ValidationErrors;
+  showWalletImport?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -18,11 +21,11 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { errorMessages, addresses, disabled } = toRefs(props);
+const { addresses, disabled, errorMessages } = toRefs(props);
 
-const address: Ref<string> = ref('');
-const userAddresses: Ref<string> = ref('');
-const multiple: Ref<boolean> = ref(false);
+const address = ref<string>('');
+const userAddresses = ref<string>('');
+const multiple = ref<boolean>(false);
 
 const entries = computed(() => {
   const allAddresses = get(userAddresses)
@@ -69,8 +72,13 @@ watch(address, (address) => {
 });
 
 function setAddress(addresses: string[]) {
-  if (addresses.length === 1)
+  if (addresses.length === 1) {
     set(address, addresses[0]);
+  }
+  else if (addresses.length === 0) {
+    set(address, '');
+    set(userAddresses, '');
+  }
 }
 
 watch(addresses, addresses => setAddress(addresses));
@@ -79,13 +87,13 @@ onMounted(() => setAddress(get(addresses)));
 const rules = {
   address: {
     required: helpers.withMessage(
-      t('account_form.validation.address_non_empty').toString(),
+      t('account_form.validation.address_non_empty'),
       requiredIf(logicNot(multiple)),
     ),
   },
   userAddresses: {
     required: helpers.withMessage(
-      t('account_form.validation.address_non_empty').toString(),
+      t('account_form.validation.address_non_empty'),
       requiredIf(logicAnd(multiple)),
     ),
   },
@@ -120,8 +128,8 @@ const v$ = useVuelidate(
   },
   {
     $autoDirty: true,
-    $stopPropagation: true,
     $externalResults: errorMessagesModel,
+    $stopPropagation: true,
   },
 );
 
@@ -144,6 +152,21 @@ watch(multiple, () => {
   set(userAddresses, '');
 });
 
+function updateAddressesFromWalletImport(addresses: string[]) {
+  if (addresses.length > 1) {
+    set(multiple, true);
+    nextTick(() => {
+      set(userAddresses, addresses.join(',\n'));
+    });
+  }
+  else if (addresses.length === 1) {
+    set(multiple, false);
+    nextTick(() => {
+      set(address, addresses[0]);
+    });
+  }
+}
+
 defineExpose({
   validate,
 });
@@ -155,40 +178,49 @@ defineExpose({
       v-if="multi"
       v-model="multiple"
       color="primary"
-      class="mt-0 mb-6"
+      class="mt-0 mb-4 flex"
       hide-details
       :disabled="disabled"
     >
       {{ t('account_form.labels.multiple') }}
     </RuiCheckbox>
-    <RuiTextField
-      v-if="!multiple"
-      v-model="address"
-      data-cy="account-address-field"
-      variant="outlined"
-      color="primary"
-      class="account-form__address"
-      :label="t('common.account')"
-      :rules="rules"
-      autocomplete="off"
-      :disabled="disabled"
-      :error-messages="toMessages(v$.address)"
-      @paste="onPasteAddress($event)"
-      @blur="v$.address.$touch()"
-    />
-    <RuiTextArea
-      v-else
-      v-model="userAddresses"
-      variant="outlined"
-      color="primary"
-      min-rows="5"
-      :disabled="disabled"
-      :error-messages="toMessages(v$.userAddresses)"
-      :hint="t('account_form.labels.addresses_hint')"
-      :label="t('account_form.labels.addresses')"
-      @blur="v$.userAddresses.$touch()"
-      @paste="onPasteMulti($event)"
-    />
+    <div class="flex items-start gap-2">
+      <RuiTextField
+        v-if="!multiple"
+        v-model="address"
+        data-cy="account-address-field"
+        variant="outlined"
+        color="primary"
+        class="account-form__address flex-1"
+        :label="t('common.account')"
+        :rules="rules"
+        autocomplete="off"
+        :disabled="disabled"
+        :error-messages="toMessages(v$.address)"
+        @paste="onPasteAddress($event)"
+        @blur="v$.address.$touch()"
+      />
+      <RuiTextArea
+        v-else
+        v-model="userAddresses"
+        variant="outlined"
+        color="primary"
+        class="flex-1"
+        min-rows="5"
+        :disabled="disabled"
+        :error-messages="toMessages(v$.userAddresses)"
+        :hint="t('account_form.labels.addresses_hint')"
+        :label="t('account_form.labels.addresses')"
+        @blur="v$.userAddresses.$touch()"
+        @paste="onPasteMulti($event)"
+      />
+      <WalletAddressesImport
+        v-if="showWalletImport"
+        :disabled="disabled"
+        @update:addresses="updateAddressesFromWalletImport($event)"
+      />
+    </div>
+
     <div
       v-if="multiple"
       class="text-caption mb-2 px-3"

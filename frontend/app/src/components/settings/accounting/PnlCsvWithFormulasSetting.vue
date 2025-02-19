@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const exportCSVFormulas = ref(false);
 const { pnlCsvWithFormulas } = storeToRefs(useAccountingSettingsStore());
 
@@ -18,13 +21,11 @@ const { t } = useI18n();
     <RuiSwitch
       v-model="exportCSVFormulas"
       class="csv_export_settings__exportCSVFormulas"
-      :label="
-        t('account_settings.csv_export_settings.labels.export_csv_formulas')
-      "
+      :label="t('account_settings.csv_export_settings.labels.export_csv_formulas')"
       color="primary"
       :success-messages="success"
       :error-messages="error"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

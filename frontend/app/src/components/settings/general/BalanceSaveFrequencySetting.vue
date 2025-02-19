@@ -3,29 +3,30 @@ import useVuelidate from '@vuelidate/core';
 import { between, helpers, required } from '@vuelidate/validators';
 import { Constraints } from '@/data/constraints';
 import { toMessages } from '@/utils/validation';
+import { Defaults } from '@/data/defaults';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useValidation } from '@/composables/validation';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
-const balanceSaveFrequency = ref<string>('0');
+const DEFAULT_FREQUENCY = Defaults.BALANCE_SAVE_FREQUENCY;
 
-const { balanceSaveFrequency: frequency } = storeToRefs(
-  useGeneralSettingsStore(),
-);
+const balanceSaveFrequency = ref<string>(DEFAULT_FREQUENCY.toString());
+
+const { balanceSaveFrequency: frequency } = storeToRefs(useGeneralSettingsStore());
 
 const { t } = useI18n();
 
 const maxBalanceSaveFrequency = Constraints.MAX_HOURS_DELAY;
 const rules = {
   balanceSaveFrequency: {
-    required: helpers.withMessage(
-      t('general_settings.validation.balance_frequency.non_empty'),
-      required,
-    ),
     between: helpers.withMessage(
-      t('general_settings.validation.balance_frequency.invalid_frequency', {
-        start: 1,
+      t('general_settings.balance_frequency.validation.invalid_frequency', {
         end: maxBalanceSaveFrequency,
+        start: 1,
       }),
       between(1, maxBalanceSaveFrequency),
     ),
+    required: helpers.withMessage(t('general_settings.balance_frequency.validation.non_empty'), required),
   },
 };
 const v$ = useVuelidate(rules, { balanceSaveFrequency }, { $autoDirty: true });
@@ -35,12 +36,19 @@ function resetBalanceSaveFrequency() {
   set(balanceSaveFrequency, get(frequency).toString());
 }
 
-const transform = (value?: string) => (value ? Number.parseInt(value) : value);
+function transform(value?: string) {
+  return value ? Number.parseInt(value) : value;
+}
 
 function successMessage(frequency: string) {
-  return t('general_settings.validation.balance_frequency.success', {
+  return t('general_settings.balance_frequency.validation.success', {
     frequency,
   });
+}
+
+function reset(update: (value: number) => void): void {
+  update(DEFAULT_FREQUENCY);
+  set(balanceSaveFrequency, DEFAULT_FREQUENCY.toString());
 }
 
 onMounted(() => {
@@ -50,27 +58,41 @@ onMounted(() => {
 
 <template>
   <SettingsOption
-    #default="{ error, success, update }"
     setting="balanceSaveFrequency"
     :transform="transform"
-    :error-message="t('general_settings.validation.balance_frequency.error')"
+    :error-message="t('general_settings.balance_frequency.validation.error')"
     :success-message="successMessage"
     @finished="resetBalanceSaveFrequency()"
   >
-    <RuiTextField
-      v-model="balanceSaveFrequency"
-      variant="outlined"
-      color="primary"
-      min="1"
-      :max="maxBalanceSaveFrequency"
-      class="mt-2 general-settings__fields__balance-save-frequency"
-      :label="t('general_settings.labels.balance_saving_frequency')"
-      type="number"
-      :success-messages="success"
-      :error-messages="
-        error || toMessages(v$.balanceSaveFrequency)
-      "
-      @input="callIfValid($event, update)"
-    />
+    <template #title>
+      {{ t('general_settings.balance_frequency.title') }}
+    </template>
+    <template #default="{ error, success, update, updateImmediate }">
+      <div class="flex items-start w-full">
+        <RuiTextField
+          v-model="balanceSaveFrequency"
+          variant="outlined"
+          color="primary"
+          min="1"
+          :max="maxBalanceSaveFrequency"
+          data-cy="balance-save-frequency-input"
+          class="w-full"
+          :label="t('general_settings.balance_frequency.label')"
+          type="number"
+          :success-messages="success"
+          :error-messages="error || toMessages(v$.balanceSaveFrequency)"
+          @update:model-value="callIfValid($event, update)"
+        />
+
+        <RuiButton
+          class="mt-1 ml-2"
+          variant="text"
+          icon
+          @click="reset(updateImmediate)"
+        >
+          <RuiIcon name="lu-history" />
+        </RuiButton>
+      </div>
+    </template>
   </SettingsOption>
 </template>

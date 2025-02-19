@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useMainStore } from '@/store/main';
+import OnboardingSettings from '@/components/settings/OnboardingSettings.vue';
+
 const { t } = useI18n();
 const visible = ref<boolean>(false);
 const { connected } = toRefs(useMainStore());
@@ -9,6 +12,7 @@ const { connected } = toRefs(useMainStore());
     <RuiTooltip
       :text="t('backend_settings_button.tooltip')"
       :popper="{ placement: 'top', offsetDistance: 0 }"
+      tooltip-class="max-w-[12rem]"
     >
       <template #activator>
         <RuiButton
@@ -19,7 +23,7 @@ const { connected } = toRefs(useMainStore());
           rounded
           @click="visible = true"
         >
-          <RuiIcon name="settings-4-line" />
+          <RuiIcon name="lu-settings" />
         </RuiButton>
       </template>
     </RuiTooltip>

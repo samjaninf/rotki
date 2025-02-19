@@ -1,14 +1,13 @@
 <script setup lang="ts">
-const props = withDefaults(
-  defineProps<{
-    field: string;
-    value?: string | number | null;
-    diff: boolean;
-  }>(),
-  {
-    value: null,
-  },
-);
+import HashLink from '@/components/helper/HashLink.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import type { UnderlyingToken } from '@rotki/common';
+
+const props = defineProps<{
+  field: string;
+  value?: string | number | boolean | null | UnderlyingToken[];
+  diff: boolean;
+}>();
 
 const isStarted = computed(() => props.field === 'started');
 const isAddress = computed(() => props.field === 'address');

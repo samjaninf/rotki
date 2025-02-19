@@ -1,8 +1,21 @@
 <script setup lang="ts">
-import { DECENTRALIZED_EXCHANGES, Module } from '@/types/modules';
+import { DECENTRALIZED_EXCHANGES, Module, PurgeableOnlyModule } from '@/types/modules';
 import { Purgeable } from '@/types/session/purge';
+import { useLocationStore } from '@/store/locations';
+import { useExchangeApi } from '@/composables/api/balances/exchanges';
+import { useCacheClear } from '@/composables/session/cache-clear';
+import { useHistoryEventsApi } from '@/composables/api/history/events';
+import { useBlockchainBalancesApi } from '@/composables/api/balances/blockchain';
+import { useSessionPurge } from '@/composables/session/purge';
+import { useSupportedChains } from '@/composables/info/chains';
+import ActionStatusIndicator from '@/components/error/ActionStatusIndicator.vue';
+import DefiModuleSelector from '@/components/defi/DefiModuleSelector.vue';
+import LocationSelector from '@/components/helper/LocationSelector.vue';
+import ChainSelect from '@/components/accounts/blockchain/ChainSelect.vue';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
 
-const modules = Object.values(Module);
+const purgeableOnlyModules = Object.values(PurgeableOnlyModule);
+const purgeableModules = [...Object.values(Module), ...purgeableOnlyModules];
 const { allExchanges } = storeToRefs(useLocationStore());
 const { txChains } = useSupportedChains();
 
@@ -13,14 +26,14 @@ const { deleteExchangeData } = useExchangeApi();
 
 const { t } = useI18n();
 
-const source: Ref<Purgeable> = ref(Purgeable.TRANSACTIONS);
+const source = ref<Purgeable>(Purgeable.TRANSACTIONS);
 
-const centralizedExchangeToClear: Ref<string> = ref('');
-const decentralizedExchangeToClear: Ref<string> = ref('');
-const chainToClear: Ref<string> = ref('');
-const moduleToClear: Ref<string> = ref('');
+const centralizedExchangeToClear = ref<string>('');
+const decentralizedExchangeToClear = ref<string>('');
+const chainToClear = ref<string>('');
+const moduleToClear = ref<string>('');
 
-const purgable = [
+const purgeable = [
   {
     id: Purgeable.CENTRALIZED_EXCHANGES,
     text: t('purge_selector.centralized_exchanges'),
@@ -44,7 +57,7 @@ const purgable = [
 ];
 
 async function purgeSource(source: Purgeable) {
-  const valueRef = purgable.find(({ id }) => id === source)?.value;
+  const valueRef = purgeable.find(({ id }) => id === source)?.value;
   const value = valueRef ? get(valueRef) : '';
   if (source === Purgeable.TRANSACTIONS) {
     await deleteTransactions(value);
@@ -62,29 +75,31 @@ async function purgeSource(source: Purgeable) {
       await Promise.all(DECENTRALIZED_EXCHANGES.map(deleteModuleData));
   }
 
-  await purgeCache(source, value);
+  // Purgeable only modules don't have some cache that needs reset.
+  if (Array.prototype.includes.call(purgeableOnlyModules, value))
+    return;
+
+  purgeCache(source, value);
 }
 
-const { status, pending, showConfirmation } = useCacheClear<Purgeable>(
-  purgable,
+const { pending, showConfirmation, status } = useCacheClear<Purgeable>(
+  purgeable,
   purgeSource,
   (source: string) => ({
-    success: t('data_management.purge_data.success', {
+    error: t('data_management.purge_data.error', {
       source,
     }),
-    error: t('data_management.purge_data.error', {
+    success: t('data_management.purge_data.success', {
       source,
     }),
   }),
   (textSource, source) => {
-    const valueRef = purgable.find(({ id }) => id === source)?.value;
+    const valueRef = purgeable.find(({ id }) => id === source)?.value;
     const value = valueRef ? get(valueRef) : '';
 
     let message = '';
     if (source === Purgeable.TRANSACTIONS) {
-      message = t(
-        'data_management.purge_data.transaction_purge_confirm.message',
-      );
+      message = t('data_management.purge_data.transaction_purge_confirm.message');
     }
     else if (value) {
       message = t('data_management.purge_data.confirm.message', {
@@ -99,8 +114,8 @@ const { status, pending, showConfirmation } = useCacheClear<Purgeable>(
     }
 
     return {
-      title: t('data_management.purge_data.confirm.title'),
       message,
+      title: t('data_management.purge_data.confirm.title'),
     };
   },
 );
@@ -109,90 +124,81 @@ const chainsSelection = useArrayMap(txChains, item => item.id);
 </script>
 
 <template>
-  <div>
-    <RuiCardHeader class="p-0 mb-4">
-      <template #header>
-        {{ t('data_management.purge_data.title') }}
-      </template>
-      <template #subheader>
-        {{ t('data_management.purge_data.subtitle') }}
-      </template>
-    </RuiCardHeader>
+  <SettingsItem>
+    <template #title>
+      {{ t('data_management.purge_data.title') }}
+    </template>
+    <template #subtitle>
+      {{ t('data_management.purge_data.subtitle') }}
+    </template>
+    <div class="flex flex-col gap-4">
+      <RuiAutoComplete
+        v-model="source"
+        variant="outlined"
+        :label="t('purge_selector.label')"
+        :options="purgeable"
+        text-attr="text"
+        key-attr="id"
+        hide-details
+        :disabled="pending"
+      />
+      <ChainSelect
+        v-if="source === Purgeable.TRANSACTIONS"
+        v-model="chainToClear"
+        clearable
+        persistent-hint
+        :items="chainsSelection"
+        :label="t('purge_selector.chain_to_clear.label')"
+        :hint="t('purge_selector.chain_to_clear.hint')"
+      />
+      <LocationSelector
+        v-else-if="source === Purgeable.CENTRALIZED_EXCHANGES"
+        v-model="centralizedExchangeToClear"
+        clearable
+        persistent-hint
+        :items="allExchanges"
+        :label="t('purge_selector.centralized_exchange_to_clear.label')"
+        :hint="t('purge_selector.centralized_exchange_to_clear.hint')"
+      />
+      <LocationSelector
+        v-else-if="source === Purgeable.DECENTRALIZED_EXCHANGES"
+        v-model="decentralizedExchangeToClear"
+        clearable
+        persistent-hint
+        :items="DECENTRALIZED_EXCHANGES"
+        :label="t('purge_selector.decentralized_exchange_to_clear.label')"
+        :hint="t('purge_selector.decentralized_exchange_to_clear.hint')"
+      />
+      <DefiModuleSelector
+        v-else-if="source === Purgeable.DEFI_MODULES"
+        v-model="moduleToClear"
+        :items="purgeableModules"
+        :label="t('purge_selector.defi_module_to_clear.label')"
+        :hint="t('purge_selector.defi_module_to_clear.hint')"
+      />
 
-    <div class="flex items-center gap-4">
-      <div class="flex flex-col md:flex-row md:gap-4 flex-1">
-        <RuiAutoComplete
-          v-model="source"
-          class="flex-1"
-          variant="outlined"
-          :label="t('purge_selector.label')"
-          :options="purgable"
-          text-attr="text"
-          key-attr="id"
-          :disabled="pending"
-        />
-        <ChainSelect
-          v-if="source === Purgeable.TRANSACTIONS"
-          :model-value.sync="chainToClear"
-          class="flex-1"
-          clearable
-          persistent-hint
-          :items="chainsSelection"
-          :label="t('purge_selector.chain_to_clear.label')"
-          :hint="t('purge_selector.chain_to_clear.hint')"
-        />
-        <LocationSelector
-          v-else-if="source === Purgeable.CENTRALIZED_EXCHANGES"
-          v-model="centralizedExchangeToClear"
-          class="flex-1"
-          clearable
-          persistent-hint
-          :items="allExchanges"
-          :label="t('purge_selector.centralized_exchange_to_clear.label')"
-          :hint="t('purge_selector.centralized_exchange_to_clear.hint')"
-        />
-        <LocationSelector
-          v-else-if="source === Purgeable.DECENTRALIZED_EXCHANGES"
-          v-model="decentralizedExchangeToClear"
-          class="flex-1"
-          clearable
-          persistent-hint
-          :items="DECENTRALIZED_EXCHANGES"
-          :label="t('purge_selector.decentralized_exchange_to_clear.label')"
-          :hint="t('purge_selector.decentralized_exchange_to_clear.hint')"
-        />
-        <DefiModuleSelector
-          v-else-if="source === Purgeable.DEFI_MODULES"
-          v-model="moduleToClear"
-          class="flex-1"
-          :items="modules"
-          :label="t('purge_selector.defi_module_to_clear.label')"
-          :hint="t('purge_selector.defi_module_to_clear.hint')"
-        />
+      <ActionStatusIndicator
+        v-if="status"
+        :status="status"
+      />
+
+      <div class="flex justify-end">
+        <RuiButton
+          :disabled="!source || pending"
+          :loading="pending"
+          color="error"
+          @click="showConfirmation(source)"
+        >
+          <template #prepend>
+            <RuiIcon
+              name="lu-trash-2"
+              size="16"
+            />
+          </template>
+
+          {{ t('purge_selector.tooltip') }}
+        </RuiButton>
       </div>
-      <RuiTooltip
-        :popper="{ placement: 'top' }"
-        :open-delay="400"
-        class="-mt-8"
-      >
-        <template #activator>
-          <RuiButton
-            variant="text"
-            icon
-            :disabled="!source || pending"
-            :loading="pending"
-            @click="showConfirmation(source)"
-          >
-            <RuiIcon name="delete-bin-line" />
-          </RuiButton>
-        </template>
-        <span> {{ t('purge_selector.tooltip') }} </span>
-      </RuiTooltip>
     </div>
-
-    <ActionStatusIndicator
-      v-if="status"
-      :status="status"
-    />
-  </div>
+  </SettingsItem>
 </template>

@@ -1,14 +1,16 @@
 import { z } from 'zod';
-import {
-  type MatchedKeyword,
-  type SearchMatcher,
-  assetDeserializer,
-  assetSuggestions,
-  dateDeserializer,
-  dateSerializer,
-  dateValidator,
-} from '@/types/filtering';
+import { getDateInputISOFormat } from '@/utils/date';
+import { useHistoryStore } from '@/store/history';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { assetDeserializer, assetSuggestions, dateDeserializer, dateSerializer, dateValidator } from '@/utils/assets';
 import { TradeType } from '@/types/history/trade';
+import type {
+  MatchedKeyword,
+  SearchMatcher,
+
+} from '@/types/filtering';
+import type { FilterSchema } from '@/composables/use-pagination-filter/types';
 
 enum TradeFilterKeys {
   BASE = 'base',
@@ -32,97 +34,88 @@ export type Matcher = SearchMatcher<TradeFilterKeys, TradeFilterValueKeys>;
 
 export type Filters = MatchedKeyword<TradeFilterValueKeys>;
 
-export function useTradeFilters() {
-  const filters: Ref<Filters> = ref({});
+export function useTradeFilters(): FilterSchema<Filters, Matcher> {
+  const filters = ref<Filters>({});
 
   const { associatedLocations } = storeToRefs(useHistoryStore());
   const { dateInputFormat } = storeToRefs(useFrontendSettingsStore());
-  const { assetSearch, assetInfo } = useAssetInfoRetrieval();
+  const { assetInfo, assetSearch } = useAssetInfoRetrieval();
   const { t } = useI18n();
 
-  const matchers: ComputedRef<Matcher[]> = computed(
-    () =>
-      [
-        {
-          key: TradeFilterKeys.BASE,
-          keyValue: TradeFilterValueKeys.BASE,
-          description: t('closed_trades.filter.base_asset'),
-          asset: true,
-          suggestions: assetSuggestions(assetSearch),
-          deserializer: assetDeserializer(assetInfo),
-        },
-        {
-          key: TradeFilterKeys.QUOTE,
-          keyValue: TradeFilterValueKeys.QUOTE,
-          description: t('closed_trades.filter.quote_asset'),
-          asset: true,
-          suggestions: assetSuggestions(assetSearch),
-          deserializer: assetDeserializer(assetInfo),
-        },
-        {
-          key: TradeFilterKeys.ACTION,
-          keyValue: TradeFilterValueKeys.ACTION,
-          description: t('closed_trades.filter.trade_type'),
-          string: true,
-          suggestions: () => TradeType.options,
-          validate: type => (TradeType.options as string[]).includes(type),
-        },
-        {
-          key: TradeFilterKeys.START,
-          keyValue: TradeFilterValueKeys.START,
-          description: t('closed_trades.filter.start_date'),
-          string: true,
-          suggestions: () => [],
-          hint: t('closed_trades.filter.date_hint', {
-            format: getDateInputISOFormat(get(dateInputFormat)),
-          }),
-          validate: dateValidator(dateInputFormat),
-          serializer: dateSerializer(dateInputFormat),
-          deserializer: dateDeserializer(dateInputFormat),
-        },
-        {
-          key: TradeFilterKeys.END,
-          keyValue: TradeFilterValueKeys.END,
-          description: t('closed_trades.filter.end_date'),
-          string: true,
-          suggestions: () => [],
-          hint: t('closed_trades.filter.date_hint', {
-            format: getDateInputISOFormat(get(dateInputFormat)),
-          }),
-          validate: dateValidator(dateInputFormat),
-          serializer: dateSerializer(dateInputFormat),
-          deserializer: dateDeserializer(dateInputFormat),
-        },
-        {
-          key: TradeFilterKeys.LOCATION,
-          keyValue: TradeFilterValueKeys.LOCATION,
-          description: t('closed_trades.filter.location'),
-          string: true,
-          suggestions: () => get(associatedLocations),
-          validate: location =>
-            get(associatedLocations).includes(location),
-        },
-      ] satisfies Matcher[],
-  );
-
-  const updateFilter = (newFilters: Filters) => {
-    set(filters, newFilters);
-  };
+  const matchers = computed<Matcher[]>(() => [
+    {
+      asset: true,
+      description: t('closed_trades.filter.base_asset'),
+      deserializer: assetDeserializer(assetInfo),
+      key: TradeFilterKeys.BASE,
+      keyValue: TradeFilterValueKeys.BASE,
+      suggestions: assetSuggestions(assetSearch),
+    },
+    {
+      asset: true,
+      description: t('closed_trades.filter.quote_asset'),
+      deserializer: assetDeserializer(assetInfo),
+      key: TradeFilterKeys.QUOTE,
+      keyValue: TradeFilterValueKeys.QUOTE,
+      suggestions: assetSuggestions(assetSearch),
+    },
+    {
+      description: t('closed_trades.filter.trade_type'),
+      key: TradeFilterKeys.ACTION,
+      keyValue: TradeFilterValueKeys.ACTION,
+      string: true,
+      suggestions: (): TradeType[] => Object.values(TradeType),
+      validate: (type): boolean => Object.values(TradeType).map(item => item.toString()).includes(type),
+    },
+    {
+      description: t('closed_trades.filter.start_date'),
+      deserializer: dateDeserializer(dateInputFormat),
+      hint: t('closed_trades.filter.date_hint', {
+        format: getDateInputISOFormat(get(dateInputFormat)),
+      }),
+      key: TradeFilterKeys.START,
+      keyValue: TradeFilterValueKeys.START,
+      serializer: dateSerializer(dateInputFormat),
+      string: true,
+      suggestions: (): string[] => [],
+      validate: dateValidator(dateInputFormat),
+    },
+    {
+      description: t('closed_trades.filter.end_date'),
+      deserializer: dateDeserializer(dateInputFormat),
+      hint: t('closed_trades.filter.date_hint', {
+        format: getDateInputISOFormat(get(dateInputFormat)),
+      }),
+      key: TradeFilterKeys.END,
+      keyValue: TradeFilterValueKeys.END,
+      serializer: dateSerializer(dateInputFormat),
+      string: true,
+      suggestions: (): string[] => [],
+      validate: dateValidator(dateInputFormat),
+    },
+    {
+      description: t('closed_trades.filter.location'),
+      key: TradeFilterKeys.LOCATION,
+      keyValue: TradeFilterValueKeys.LOCATION,
+      string: true,
+      suggestions: (): string[] => get(associatedLocations),
+      validate: (location): boolean => get(associatedLocations).includes(location),
+    },
+  ] satisfies Matcher[]);
 
   const OptionalString = z.string().optional();
   const RouteFilterSchema = z.object({
-    [TradeFilterValueKeys.BASE]: OptionalString,
-    [TradeFilterValueKeys.QUOTE]: OptionalString,
     [TradeFilterValueKeys.ACTION]: OptionalString,
-    [TradeFilterValueKeys.START]: OptionalString,
+    [TradeFilterValueKeys.BASE]: OptionalString,
     [TradeFilterValueKeys.END]: OptionalString,
     [TradeFilterValueKeys.LOCATION]: OptionalString,
+    [TradeFilterValueKeys.QUOTE]: OptionalString,
+    [TradeFilterValueKeys.START]: OptionalString,
   });
 
   return {
     filters,
     matchers,
-    updateFilter,
     RouteFilterSchema,
   };
 }

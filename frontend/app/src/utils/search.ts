@@ -6,11 +6,11 @@ interface SplitResult {
   exclude?: boolean;
 }
 
-function defaultSplitResult() {
+function defaultSplitResult(): SplitResult {
   return {
+    exclude: undefined,
     key: '',
     value: '',
-    exclude: undefined,
   };
 }
 
@@ -21,17 +21,18 @@ export function splitSearch(keyword: Nullable<string>): SplitResult {
   const negateOperatorIndex = keyword.indexOf('!=');
   const equalOperatorIndex = keyword.indexOf('=');
   const colonOperatorIndex = keyword.indexOf(':');
-  const matchOperatorIndex = equalOperatorIndex === -1 || colonOperatorIndex === -1
-    ? Math.max(equalOperatorIndex, colonOperatorIndex)
-    : Math.min(equalOperatorIndex, colonOperatorIndex);
+  const matchOperatorIndex
+    = equalOperatorIndex === -1 || colonOperatorIndex === -1
+      ? Math.max(equalOperatorIndex, colonOperatorIndex)
+      : Math.min(equalOperatorIndex, colonOperatorIndex);
 
   const exclude = negateOperatorIndex > -1;
 
   if (!exclude && matchOperatorIndex < 0) {
     return {
+      exclude: undefined,
       key: keyword.trim(),
       value: '',
-      exclude: undefined,
     };
   }
 
@@ -39,13 +40,11 @@ export function splitSearch(keyword: Nullable<string>): SplitResult {
   const length = exclude ? 2 : 1;
 
   const key = keyword.slice(0, Math.max(0, separatorIndex)).trim();
-  const value = keyword
-    .substring(separatorIndex + length, keyword.length)
-    .trim();
+  const value = keyword.substring(separatorIndex + length, keyword.length).trim();
 
   return {
+    exclude,
     key,
     value,
-    exclude,
   };
 }

@@ -1,8 +1,9 @@
-import { camelCase } from 'lodash-es';
+import { camelCase } from 'es-toolkit';
+import { etherscanLinks, externalLinks } from '@shared/external-links';
 import { pslSuffixes } from '@/data/psl';
-import { Routes } from '@/router/routes';
-import { etherscanLinks, externalLinks } from '@/data/external-links';
 import { isEtherscanKey } from '@/types/external';
+import { logger } from '@/utils/logging';
+import type { RouteLocationRaw } from 'vue-router';
 
 export function getDomain(str: string): string {
   const pattern = /^(?:https?:)?(?:\/\/)?(?:[^\n@]+@)?(?:www\.)?([^\n/:]+)/;
@@ -32,30 +33,32 @@ export function getDomain(str: string): string {
   return domain;
 }
 
+interface ExternalUrl { external: string; route: RouteLocationRaw }
+
 /**
  * Returns the registration url of a specified Etherscan location and a path to the local page
  * @param {string} location
- * @returns {{external: string, route: {path: string, hash: string}} | {}}
+ * @returns {{external: string, route: RouteLocationRaw} | undefined}
  */
-export function getEtherScanRegisterUrl(location: string) {
+export function getEtherScanRegisterUrl(location: string): ExternalUrl | undefined {
   const camelCaseLocation = camelCase(location);
 
   if (isEtherscanKey(camelCaseLocation)) {
     const data = etherscanLinks[camelCaseLocation];
     return {
       external: data,
-      route: { path: Routes.API_KEYS_EXTERNAL_SERVICES, hash: `#${location}` },
+      route: { hash: `#${location}`, path: '/api-keys/external' },
     };
   }
 
   logger.warn(`Unsupported etherscan location: '${location}'`);
-  return {};
+  return undefined;
 }
 
-export function getTheGraphRegisterUrl() {
+export function getTheGraphRegisterUrl(): ExternalUrl {
   return {
     external: externalLinks.applyTheGraphApiKey,
-    route: { path: Routes.API_KEYS_EXTERNAL_SERVICES, hash: `#thegraph` },
+    route: { hash: `#thegraph`, path: '/api-keys/external' },
   };
 }
 
@@ -63,9 +66,9 @@ export function getTheGraphRegisterUrl() {
  * Returns the registration url of a specified service location and a path to the local page
  * @param {string} service
  * @param {string} location
- * @returns {{} | {external: string, route: {path: string, hash: string}}}
+ * @returns {undefined | {external: string, route: RouteLocationRaw}}
  */
-export function getServiceRegisterUrl(service: string, location: string) {
+export function getServiceRegisterUrl(service: string, location: string): ExternalUrl | undefined {
   switch (service) {
     case 'etherscan':
       return getEtherScanRegisterUrl(location);
@@ -73,6 +76,6 @@ export function getServiceRegisterUrl(service: string, location: string) {
       return getTheGraphRegisterUrl();
     default:
       logger.warn(`Unsupported service: '${service}'`);
-      return {};
+      return undefined;
   }
 }

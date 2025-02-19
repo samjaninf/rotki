@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useSupportedChains } from '@/composables/info/chains';
+import AppImage from '@/components/common/AppImage.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
+
 interface Props {
   size?: string;
   chain: string;

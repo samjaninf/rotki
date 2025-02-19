@@ -1,93 +1,61 @@
-import { LpType } from '@rotki/common/lib/defi';
-import type { BigNumber } from '@rotki/common';
+import { type BigNumber, LpType, type XSwapLiquidityBalance } from '@rotki/common';
+import { bigNumberSum } from '@/utils/calculation';
+import { sortDesc } from '@/utils/bignumbers';
+import { useUniswapStore } from '@/store/defi/uniswap';
+import { useSushiswapStore } from '@/store/defi/sushiswap';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import type { ComputedRef } from 'vue';
 
-export function useLiquidityPosition() {
-  const { uniswapV2Balances, uniswapV3Balances } = useUniswapStore();
+interface UseLiquidityPositionReturn {
+  lpAggregatedBalances: ComputedRef<XSwapLiquidityBalance[]>;
+  lpTotal: ComputedRef<BigNumber>;
+  getPoolName: (type: LpType, assets: string[]) => string;
+}
+
+export function useLiquidityPosition(): UseLiquidityPositionReturn {
+  const { uniswapV2Balances } = useUniswapStore();
   const { balanceList: sushiswapBalances } = useSushiswapStore();
-  const { balancerBalances } = useBalancerStore();
   const { assetSymbol } = useAssetInfoRetrieval();
 
-  const lpAggregatedBalances = (includeNft = true) =>
-    computed(() => {
-      const mappedUniswapV3Balances = get(uniswapV3Balances([])).map(item => ({
-        ...item,
-        usdValue: item.userBalance.usdValue,
-        asset: item.nftId,
-        premiumOnly: true,
-        type: 'nft',
-        lpType: LpType.UNISWAP_V3,
-      }));
+  const lpAggregatedBalances = computed<XSwapLiquidityBalance[]>(() => {
+    const mappedUniswapV2Balances = get(uniswapV2Balances([])).map((item, index) => ({
+      asset: createEvmIdentifierFromAddress(item.address),
+      assets: item.assets,
+      id: index,
+      lpType: LpType.UNISWAP_V2,
+      premiumOnly: false,
+      type: 'token',
+      usdValue: item.userBalance.usdValue,
+    }) satisfies XSwapLiquidityBalance);
 
-      const mappedUniswapV2Balances = get(uniswapV2Balances([])).map(item => ({
-        ...item,
-        usdValue: item.userBalance.usdValue,
-        asset: createEvmIdentifierFromAddress(item.address),
-        premiumOnly: false,
-        type: 'token',
-        lpType: LpType.UNISWAP_V2,
-      }));
+    const mappedSushiswapBalances = get(sushiswapBalances([])).map((item, index) => ({
+      asset: createEvmIdentifierFromAddress(item.address),
+      assets: item.assets,
+      id: index,
+      lpType: LpType.SUSHISWAP,
+      premiumOnly: true,
+      type: 'token',
+      usdValue: item.userBalance.usdValue,
+    }) satisfies XSwapLiquidityBalance);
 
-      const mappedSushiswapBalances = get(sushiswapBalances([])).map(item => ({
-        ...item,
-        usdValue: item.userBalance.usdValue,
-        asset: createEvmIdentifierFromAddress(item.address),
-        premiumOnly: true,
-        type: 'token',
-        lpType: LpType.SUSHISWAP,
-      }));
+    return [
+      ...mappedUniswapV2Balances,
+      ...mappedSushiswapBalances,
+    ].sort((a, b) => sortDesc(a.usdValue, b.usdValue)).map((item, id) => ({ ...item, id }));
+  });
 
-      const mappedBalancerBalances = get(balancerBalances([])).map(item => ({
-        ...item,
-        usdValue: item.userBalance.usdValue,
-        asset: createEvmIdentifierFromAddress(item.address),
-        premiumOnly: true,
-        assets: item.tokens.map(asset => ({
-          ...asset,
-          asset: asset.token,
-        })),
-        type: 'token',
-        lpType: LpType.BALANCER,
-      }));
+  const lpTotal = computed<BigNumber>(() => bigNumberSum(get(lpAggregatedBalances).map(item => item.usdValue)));
 
-      return [
-        ...(includeNft ? mappedUniswapV3Balances : []),
-        ...mappedUniswapV2Balances,
-        ...mappedSushiswapBalances,
-        ...mappedBalancerBalances,
-      ]
-        .sort((a, b) => sortDesc(a.usdValue, b.usdValue))
-        .map((item, id) => ({ ...item, id }));
-    });
+  const getPoolName = (type: LpType, assets: string[]): string => {
+    const concatAssets = (assets: string[]): string => assets.map(asset => get(assetSymbol(asset))).join('/');
 
-  const lpTotal = (includeNft = false) =>
-    computed<BigNumber>(() =>
-      bigNumberSum(
-        get(lpAggregatedBalances(includeNft)).map(item => item.usdValue),
-      ),
-    );
-
-  const getPoolName = (type: LpType, assets: string[]) => {
-    const concatAssets = (assets: string[]) =>
-      assets.map(asset => get(assetSymbol(asset))).join('/');
-
-    const data = [
-      {
-        identifier: LpType.UNISWAP_V2,
-        name: (assets: string[]) => `UNIv2 ${concatAssets(assets)}`,
-      },
-      {
-        identifier: LpType.UNISWAP_V3,
-        name: (assets: string[]) => `UNIv3 ${concatAssets(assets)}`,
-      },
-      {
-        identifier: LpType.SUSHISWAP,
-        name: (assets: string[]) => `SLP ${concatAssets(assets)}`,
-      },
-      {
-        identifier: LpType.BALANCER,
-        name: (assets: string[]) => concatAssets(assets),
-      },
-    ];
+    const data = [{
+      identifier: LpType.UNISWAP_V2,
+      name: (assets: string[]): string => `UNIv2 ${concatAssets(assets)}`,
+    }, {
+      identifier: LpType.SUSHISWAP,
+      name: (assets: string[]): string => `SLP ${concatAssets(assets)}`,
+    }];
 
     const selected = data.find(({ identifier }) => identifier === get(type));
 
@@ -98,8 +66,8 @@ export function useLiquidityPosition() {
   };
 
   return {
+    getPoolName,
     lpAggregatedBalances,
     lpTotal,
-    getPoolName,
   };
 }

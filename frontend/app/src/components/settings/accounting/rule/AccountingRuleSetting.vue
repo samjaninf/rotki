@@ -1,58 +1,72 @@
 <script setup lang="ts">
+import { startPromise } from '@shared/utils';
 import { TaskType } from '@/types/task-type';
-import type { DataTableColumn } from '@rotki/ui-library-compat';
-import type { Collection } from '@/types/collection';
-import type {
-  Filters,
-  Matcher,
-} from '@/composables/filters/accounting-rule';
-import type {
-  AccountingRuleEntry,
-  AccountingRuleRequestPayload,
-} from '@/types/settings/accounting';
+import { getPlaceholderRule } from '@/utils/settings';
+import { useMessageStore } from '@/store/message';
+import { useTaskStore } from '@/store/tasks';
+import { useConfirmStore } from '@/store/confirm';
+import { useAccountingApi } from '@/composables/api/settings/accounting-api';
+import { useHistoryEventMappings } from '@/composables/history/events/mapping';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useAccountingSettings } from '@/composables/settings/accounting';
+import { type Filters, type Matcher, useAccountingRuleFilter } from '@/composables/filters/accounting-rule';
+import AccountingRuleImportDialog from '@/components/settings/accounting/rule/AccountingRuleImportDialog.vue';
+import AccountingRuleFormDialog from '@/components/settings/accounting/rule/AccountingRuleFormDialog.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
+import AccountingRuleWithLinkedSettingDisplay
+  from '@/components/settings/accounting/rule/AccountingRuleWithLinkedSettingDisplay.vue';
+import CounterpartyDisplay from '@/components/history/CounterpartyDisplay.vue';
+import HistoryEventTypeCombination from '@/components/history/events/HistoryEventTypeCombination.vue';
+import CollectionHandler from '@/components/helper/CollectionHandler.vue';
+import TableFilter from '@/components/table-filter/TableFilter.vue';
+import AccountingRuleConflictsDialog from '@/components/settings/accounting/rule/AccountingRuleConflictsDialog.vue';
+import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
+import type { AccountingRuleEntry, AccountingRuleRequestPayload } from '@/types/settings/accounting';
+import type { DataTableColumn } from '@rotki/ui-library';
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
+
+const { exportJSON, getAccountingRule, getAccountingRules, getAccountingRulesConflicts } = useAccountingSettings();
+
+const editMode = ref<boolean>(false);
+
+const modelValue = ref<AccountingRuleEntry>();
 
 const {
-  getAccountingRule,
-  getAccountingRules,
-  getAccountingRulesConflicts,
-  exportJSON,
-} = useAccountingSettings();
-
-const {
-  state,
-  isLoading,
   fetchData,
-  setPage,
   filters,
-  pagination,
+  isLoading,
   matchers,
+  pagination,
+  setPage,
+  state,
   updateFilter,
-  editableItem,
 } = usePaginationFilters<
   AccountingRuleEntry,
   AccountingRuleRequestPayload,
-  AccountingRuleEntry,
-  Collection<AccountingRuleEntry>,
   Filters,
   Matcher
->(null, true, useAccountingRuleFilter, getAccountingRules);
+>(getAccountingRules, {
+  filterSchema: useAccountingRuleFilter,
+  history: 'router',
+});
 
-const conflictsNumber: Ref<number> = ref(0);
+const conflictsNumber = ref<number>(0);
 
-const conflictsDialogOpen: Ref<boolean> = ref(false);
+const conflictsDialogOpen = ref<boolean>(false);
 
 async function checkConflicts() {
   const { total } = await getAccountingRulesConflicts({ limit: 1, offset: 0 });
   set(conflictsNumber, total);
 
+  const { currentRoute } = router;
+
   const {
-    currentRoute: {
-      query: { resolveConflicts },
-    },
-  } = router;
+    query: { resolveConflicts },
+  } = get(currentRoute);
 
   if (resolveConflicts) {
     if (total > 0)
@@ -62,81 +76,99 @@ async function checkConflicts() {
   }
 }
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const cols = computed<DataTableColumn<AccountingRuleEntry>[]>(() => [
   {
+    cellClass: 'py-4',
+    class: 'whitespace-pre-line',
+    key: 'eventTypeAndSubtype',
     label: `${t('accounting_settings.rule.labels.event_type')} - \n${t(
       'accounting_settings.rule.labels.event_subtype',
     )}`,
-    key: 'eventTypeAndSubtype',
-    class: 'whitespace-pre-line',
-    cellClass: 'py-4',
   },
   {
-    label: t('transactions.events.form.resulting_combination.label'),
     key: 'resultingCombination',
+    label: t('transactions.events.form.resulting_combination.label'),
   },
   {
-    label: t('common.counterparty'),
-    key: 'counterparty',
-    class: 'border-r border-default',
     cellClass: 'border-r border-default',
+    class: 'border-r border-default',
+    key: 'counterparty',
+    label: t('common.counterparty'),
   },
   {
-    label: t('accounting_settings.rule.labels.taxable'),
+    align: 'center',
+    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
     key: 'taxable',
-    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
-    align: 'center',
+    label: t('accounting_settings.rule.labels.taxable'),
   },
   {
-    label: t('accounting_settings.rule.labels.count_entire_amount_spend'),
+    align: 'center',
+    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
     key: 'countEntireAmountSpend',
-    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
-    align: 'center',
+    label: t('accounting_settings.rule.labels.count_entire_amount_spend'),
   },
   {
-    label: t('accounting_settings.rule.labels.count_cost_basis_pnl'),
+    align: 'center',
+    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
     key: 'countCostBasisPnl',
-    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
-    align: 'center',
+    label: t('accounting_settings.rule.labels.count_cost_basis_pnl'),
   },
   {
-    label: t('accounting_settings.rule.labels.accounting_treatment'),
+    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
     key: 'accountingTreatment',
-    class: 'max-w-[6rem] text-sm whitespace-normal font-medium align-center',
+    label: t('accounting_settings.rule.labels.accounting_treatment'),
   },
   {
-    label: t('common.actions_text'),
-    key: 'actions',
     align: 'center',
+    key: 'actions',
+    label: t('common.actions_text'),
     width: '1px',
   },
 ]);
 
-const { historyEventTypesData, historyEventSubTypesData, getEventTypeData } = useHistoryEventMappings();
+const { getEventTypeData, historyEventSubTypesData, historyEventTypesData } = useHistoryEventMappings();
 
 function getHistoryEventTypeName(eventType: string): string {
-  return get(historyEventTypesData).find(item => item.identifier === eventType)
-    ?.label ?? toSentenceCase(eventType);
+  return get(historyEventTypesData).find(item => item.identifier === eventType)?.label ?? toSentenceCase(eventType);
 }
 
 function getHistoryEventSubTypeName(eventSubtype: string): string {
-  return get(historyEventSubTypesData).find(item => item.identifier === eventSubtype)
-    ?.label ?? toSentenceCase(eventSubtype);
+  return (
+    get(historyEventSubTypesData).find(item => item.identifier === eventSubtype)?.label
+    ?? toSentenceCase(eventSubtype)
+  );
 }
 
-const { setOpenDialog, setPostSubmitFunc } = useAccountingRuleForm();
+function createNewEntry() {
+  return (
+    {
+      accountingTreatment: null,
+      countCostBasisPnl: {
+        value: false,
+      },
+      countEntireAmountSpend: {
+        value: false,
+      },
+      counterparty: null,
+      eventSubtype: '',
+      eventType: '',
+      identifier: -1,
+      taxable: {
+        value: false,
+      },
+    }
+  );
+}
 
 function add() {
-  set(editableItem, null);
-  setOpenDialog(true);
+  set(modelValue, createNewEntry());
+  set(editMode, false);
 }
 
 function edit(rule: AccountingRuleEntry) {
-  set(editableItem, rule);
-  setOpenDialog(true);
+  set(modelValue, rule);
+  set(editMode, true);
 }
-
-setPostSubmitFunc(fetchData);
 
 const { show } = useConfirmStore();
 const { setMessage } = useMessageStore();
@@ -164,8 +196,8 @@ async function refresh() {
 function showDeleteConfirmation(item: AccountingRuleEntry) {
   show(
     {
-      title: t('accounting_settings.rule.delete'),
       message: t('accounting_settings.rule.confirm_delete'),
+      title: t('accounting_settings.rule.delete'),
     },
     async () => await deleteAccountingRule(item),
   );
@@ -174,52 +206,44 @@ function showDeleteConfirmation(item: AccountingRuleEntry) {
 function getType(eventType: string, eventSubtype: string) {
   return get(
     getEventTypeData({
-      eventType,
       eventSubtype,
+      eventType,
     }),
   );
 }
 
 onMounted(async () => {
-  const {
-    currentRoute: {
-      query: {
-        'add-rule': addRule,
-        'edit-rule': editRule,
-        eventSubtype,
-        eventType,
-        counterparty,
-      },
-    },
-  } = router;
+  const { query } = get(route);
+  const { 'add-rule': addRule, counterparty, 'edit-rule': editRule, eventSubtype, eventType } = query;
 
   const ruleData = {
+    counterparty: counterparty?.toString() ?? null,
     eventSubtype: eventSubtype?.toString() ?? '',
     eventType: eventType?.toString() ?? '',
-    counterparty: counterparty?.toString() ?? null,
   };
 
+  async function openDialog(rule?: AccountingRuleEntry) {
+    if (rule) {
+      startPromise(nextTick(() => {
+        edit(rule);
+      }));
+    }
+    await router.replace({ query: {} });
+  }
+
   if (addRule) {
-    set(editableItem, {
+    await openDialog({
       ...getPlaceholderRule(),
       ...ruleData,
     });
-    setOpenDialog(true);
-    await router.replace({ query: {} });
   }
   else if (editRule) {
-    const rule = await getAccountingRule(
-      {
-        eventTypes: [ruleData.eventType],
-        eventSubtypes: [ruleData.eventSubtype],
-        limit: 2,
-        offset: 0,
-      },
-      ruleData.counterparty,
-    );
-    set(editableItem, rule);
-    setOpenDialog(!!rule);
-    await router.replace({ query: {} });
+    await openDialog(await getAccountingRule({
+      eventSubtypes: [ruleData.eventSubtype],
+      eventTypes: [ruleData.eventType],
+      limit: 2,
+      offset: 0,
+    }, ruleData.counterparty));
   }
   await refresh();
 });
@@ -229,15 +253,20 @@ const { isTaskRunning } = useTaskStore();
 const exportFileLoading = isTaskRunning(TaskType.EXPORT_ACCOUNTING_RULES);
 const importFileLoading = isTaskRunning(TaskType.IMPORT_ACCOUNTING_RULES);
 
-const importFileDialog: Ref<boolean> = ref(false);
+const importFileDialog = ref<boolean>(false);
 </script>
 
 <template>
-  <TablePageLayout
-    child
-    :title="[t('accounting_settings.rule.title')]"
-  >
-    <template #buttons>
+  <div>
+    <div class="pb-5 border-b border-default flex flex-wrap gap-2 items-center justify-between">
+      <SettingCategoryHeader>
+        <template #title>
+          {{ t('accounting_settings.rule.title') }}
+        </template>
+        <template #subtitle>
+          {{ t('accounting_settings.rule.subtitle') }}
+        </template>
+      </SettingCategoryHeader>
       <div class="flex flex-row items-center justify-end gap-2">
         <RuiTooltip :open-delay="400">
           <template #activator>
@@ -248,7 +277,7 @@ const importFileDialog: Ref<boolean> = ref(false);
               @click="refresh()"
             >
               <template #prepend>
-                <RuiIcon name="refresh-line" />
+                <RuiIcon name="lu-refresh-ccw" />
               </template>
               {{ t('common.refresh') }}
             </RuiButton>
@@ -260,23 +289,64 @@ const importFileDialog: Ref<boolean> = ref(false);
           @click="add()"
         >
           <template #prepend>
-            <RuiIcon name="add-line" />
+            <RuiIcon name="lu-plus" />
           </template>
           {{ t('accounting_settings.rule.add') }}
         </RuiButton>
+        <RuiMenu
+          :popper="{ placement: 'bottom-end' }"
+          close-on-content-click
+        >
+          <template #activator="{ attrs }">
+            <RuiButton
+              variant="text"
+              icon
+              size="sm"
+              class="!p-2"
+              v-bind="attrs"
+            >
+              <RuiIcon
+                name="lu-ellipsis-vertical"
+                size="20"
+              />
+            </RuiButton>
+          </template>
+          <div class="py-2">
+            <RuiButton
+              variant="list"
+              :loading="exportFileLoading"
+              @click="exportJSON()"
+            >
+              <template #prepend>
+                <RuiIcon name="lu-file-down" />
+              </template>
+              {{ t('accounting_settings.rule.export') }}
+            </RuiButton>
+            <RuiButton
+              variant="list"
+              :loading="importFileLoading"
+              @click="importFileDialog = true"
+            >
+              <template #prepend>
+                <RuiIcon name="lu-file-up" />
+              </template>
+              {{ t('accounting_settings.rule.import') }}
+            </RuiButton>
+          </div>
+        </RuiMenu>
       </div>
-    </template>
+    </div>
 
-    <RuiCard>
+    <RuiCard class="mt-5">
       <template #custom-header>
-        <div class="flex items-center justify-between p-4 pb-0 gap-4">
+        <div class="flex flex-wrap gap-x-4 gap-y-2 items-center justify-between p-4 pb-0">
           <template v-if="conflictsNumber > 0">
             <RuiButton
               color="warning"
               @click="conflictsDialogOpen = true"
             >
               <template #prepend>
-                <RuiIcon name="error-warning-line" />
+                <RuiIcon name="lu-circle-alert" />
               </template>
               {{ t('accounting_settings.rule.conflicts.title') }}
               <template #append>
@@ -291,7 +361,7 @@ const importFileDialog: Ref<boolean> = ref(false);
             </RuiButton>
             <AccountingRuleConflictsDialog
               v-if="conflictsDialogOpen"
-              :table-headers="tableHeaders"
+              :table-headers="cols"
               @close="conflictsDialogOpen = false"
               @refresh="refresh()"
             />
@@ -304,47 +374,6 @@ const importFileDialog: Ref<boolean> = ref(false);
               @update:matches="updateFilter($event)"
             />
           </div>
-          <RuiMenu
-            :popper="{ placement: 'bottom-end' }"
-            close-on-content-click
-          >
-            <template #activator="{ on }">
-              <RuiButton
-                variant="text"
-                icon
-                size="sm"
-                class="!p-2"
-                v-on="on"
-              >
-                <RuiIcon
-                  name="more-2-fill"
-                  size="20"
-                />
-              </RuiButton>
-            </template>
-            <div class="py-2">
-              <RuiButton
-                variant="list"
-                :loading="exportFileLoading"
-                @click="exportJSON()"
-              >
-                <template #prepend>
-                  <RuiIcon name="file-download-line" />
-                </template>
-                {{ t('accounting_settings.rule.export') }}
-              </RuiButton>
-              <RuiButton
-                variant="list"
-                :loading="importFileLoading"
-                @click="importFileDialog = true"
-              >
-                <template #prepend>
-                  <RuiIcon name="file-upload-line" />
-                </template>
-                {{ t('accounting_settings.rule.import') }}
-              </RuiButton>
-            </div>
-          </RuiMenu>
         </div>
       </template>
 
@@ -354,13 +383,12 @@ const importFileDialog: Ref<boolean> = ref(false);
       >
         <template #default="{ data }">
           <RuiDataTable
+            v-model:pagination.external="pagination"
             outlined
             :rows="data"
-            :cols="tableHeaders"
+            :cols="cols"
             :loading="isLoading"
-            :pagination.sync="pagination"
             row-attr="identifier"
-            :pagination-modifiers="{ external: true }"
           >
             <template #header.taxable>
               <RuiTooltip
@@ -374,7 +402,7 @@ const importFileDialog: Ref<boolean> = ref(false);
                     <RuiIcon
                       class="shrink-0"
                       size="18"
-                      name="information-line"
+                      name="lu-info"
                     />
                     {{ t('accounting_settings.rule.labels.taxable') }}
                   </div>
@@ -394,20 +422,12 @@ const importFileDialog: Ref<boolean> = ref(false);
                     <RuiIcon
                       class="shrink-0"
                       size="18"
-                      name="information-line"
+                      name="lu-info"
                     />
-                    {{
-                      t(
-                        'accounting_settings.rule.labels.count_entire_amount_spend',
-                      )
-                    }}
+                    {{ t('accounting_settings.rule.labels.count_entire_amount_spend') }}
                   </div>
                 </template>
-                {{
-                  t(
-                    'accounting_settings.rule.labels.count_entire_amount_spend_subtitle',
-                  )
-                }}
+                {{ t('accounting_settings.rule.labels.count_entire_amount_spend_subtitle') }}
               </RuiTooltip>
             </template>
             <template #header.countCostBasisPnl>
@@ -422,18 +442,12 @@ const importFileDialog: Ref<boolean> = ref(false);
                     <RuiIcon
                       class="shrink-0"
                       size="18"
-                      name="information-line"
+                      name="lu-info"
                     />
-                    {{
-                      t('accounting_settings.rule.labels.count_cost_basis_pnl')
-                    }}
+                    {{ t('accounting_settings.rule.labels.count_cost_basis_pnl') }}
                   </div>
                 </template>
-                {{
-                  t(
-                    'accounting_settings.rule.labels.count_cost_basis_pnl_subtitle',
-                  )
-                }}
+                {{ t('accounting_settings.rule.labels.count_cost_basis_pnl_subtitle') }}
               </RuiTooltip>
             </template>
             <template #header.accountingTreatment>
@@ -493,15 +507,18 @@ const importFileDialog: Ref<boolean> = ref(false);
           </RuiDataTable>
         </template>
       </CollectionHandler>
+
+      <AccountingRuleFormDialog
+        v-model="modelValue"
+        :edit-mode="editMode"
+        @refresh="fetchData()"
+      />
+
+      <AccountingRuleImportDialog
+        v-model="importFileDialog"
+        :loading="importFileLoading"
+        @refresh="refresh()"
+      />
     </RuiCard>
-    <AccountingRuleFormDialog
-      :loading="isLoading"
-      :editable-item="editableItem"
-    />
-    <AccountingRuleImportDialog
-      v-model="importFileDialog"
-      :loading="importFileLoading"
-      @refresh="refresh()"
-    />
-  </TablePageLayout>
+  </div>
 </template>

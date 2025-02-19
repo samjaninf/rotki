@@ -1,76 +1,69 @@
 /* istanbul ignore file */
-import { PiniaVuePlugin, createPinia } from 'pinia';
-import Vue from 'vue';
+import { createPinia } from 'pinia';
+import { checkIfDevelopment } from '@shared/utils';
+import { setupFormatter } from '@/utils/setup-formatter';
+import { setupDayjs } from '@/utils/date';
+import { usePremiumApi } from '@/premium/setup-interface';
 import App from '@/App.vue';
+import { attemptPolyfillResizeObserver } from '@/utils/cypress';
+import { registerDevtools } from '@/plugins/devtools';
+import { i18n } from '@/i18n';
+import { router } from '@/router';
+import { createRuiPlugin } from '@/plugins/rui';
+import { StoreResetPlugin, StoreTrackPlugin } from '@/store/plugins';
+import { StoreStatePersistsPlugin } from '@/store/debug';
+import { useItemsPerPage } from '@/composables/session/use-items-per-page';
+import './main.scss';
 import 'roboto-fontface/css/roboto/roboto-fontface.css';
 import 'typeface-roboto-mono';
-import { vuetify } from '@/plugins/vuetify';
-import { usePremiumApi } from '@/premium/setup-interface';
-import { i18n } from './i18n';
-import { router } from './router';
-import { createRuiPlugin } from './plugins/rui';
-
-import '@/plugins/rui';
-import '@/main.scss';
+import 'flag-icons/css/flag-icons.min.css';
 
 const isDevelopment = checkIfDevelopment() && !import.meta.env.VITE_TEST;
-Vue.config.productionTip = false;
-Vue.config.devtools = isDevelopment;
+const IS_CLIENT = typeof window !== 'undefined';
 
-Vue.use(PiniaVuePlugin);
-Vue.use(i18n);
-
-// This should disable vite page reloads on CI.
-// Monitor e2e tests for this and if this doesn't work remove it.
-if (import.meta.env.MODE === 'production' && import.meta.env.VITE_TEST) {
-  logger.info('disabling vite:reload');
-  if (import.meta.hot) {
-    import.meta.hot.on('vite:beforeFullReload', () => {
-      logger.info('vite:reload detected');
-      throw new Error('(skipping full reload)');
-    });
-  }
-}
-
-Vue.directive('blur', {
-  inserted(el) {
-    el.addEventListener('focus', ({ target }): void => {
-      if (!target)
-        return;
-
-      (target as any).blur();
-    });
-  },
-});
+attemptPolyfillResizeObserver();
 
 const pinia = createPinia();
 pinia.use(StoreResetPlugin);
 pinia.use(StoreTrackPlugin);
 
 if (isDevelopment)
-  pinia.use(storePiniaPlugins);
+  pinia.use(StoreStatePersistsPlugin);
 
 setActivePinia(pinia);
 
-const { itemsPerPage } = storeToRefs(useFrontendSettingsStore());
+const itemsPerPage = useItemsPerPage();
+const { isMdAndDown } = useBreakpoint();
 
 const rui = createRuiPlugin({
-  table: { itemsPerPage, globalItemsPerPage: true, limits: [10, 25, 50, 100], stickyOffset: 60 },
+  table: { globalItemsPerPage: true, itemsPerPage, limits: [10, 25, 50, 100], stickyOffset: computed(() => get(isMdAndDown) ? 56 : 64) },
 });
 
-Vue.use(rui);
+const app = createApp(App);
 
-new Vue({
-  setup(): void {
-    provide('premium', usePremiumApi());
-    rui.setupProvide();
+app.directive('blur', {
+  mounted(el): void {
+    el.addEventListener('focus', (event: any): void => {
+      if (!event.target)
+        return;
+
+      event.target.blur();
+    });
   },
-  vuetify,
-  router,
-  pinia,
-  i18n,
-  render: h => h(App),
-}).$mount('#app');
+});
+
+app.provide('premium', usePremiumApi());
+
+app.use(rui);
+app.use(pinia);
+app.use(i18n);
+app.use(router);
+app.mount('#app');
 
 setupDayjs();
 setupFormatter();
+
+if (isDevelopment && IS_CLIENT)
+  registerDevtools(app);
+
+export { app };

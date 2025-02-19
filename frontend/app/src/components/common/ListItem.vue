@@ -9,12 +9,12 @@ const props = withDefaults(
     loading?: boolean;
   }>(),
   {
-    size: 'sm',
-    title: '',
-    subtitle: '',
-    noPadding: false,
-    noHover: false,
     loading: false,
+    noHover: false,
+    noPadding: false,
+    size: 'sm',
+    subtitle: '',
+    title: '',
   },
 );
 
@@ -26,30 +26,22 @@ const avatarSizeClasses = computed(() => {
 
   return 'w-8 h-8';
 });
-
-const slots = useSlots();
-
-const css = useCssModule();
 </script>
 
 <template>
   <div
     :class="[
-      css.wrapper,
+      $style.wrapper,
       {
-        [css['with-padding']]: !noPadding,
+        [$style['with-padding']]: !noPadding,
         'hover:bg-rui-grey-100 hover:dark:bg-rui-grey-800': !noHover,
       },
     ]"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
   >
     <div
-      v-if="slots.avatar"
+      v-if="$slots.avatar"
       :class="avatarSizeClasses"
-      class="flex items-center justify-center avatar"
+      class="flex items-center justify-center avatar shrink-0"
     >
       <slot
         v-if="!loading"
@@ -60,15 +52,15 @@ const css = useCssModule();
         class="w-full h-full rounded-full"
       />
     </div>
-    <div class="flex-1 flex flex-col text-truncate">
+    <div class="flex-1 flex flex-col text-truncate leading-[1.25em]">
       <template v-if="loading">
         <RuiSkeletonLoader class="mt-[3px] mb-1.5 w-8" />
-        <RuiSkeletonLoader class="w-16 mb-1 h-3" />
+        <RuiSkeletonLoader class="w-16 mb-0.5 h-3" />
       </template>
       <template v-else>
         <slot>
           <div
-            class="font-medium text-truncate"
+            class="font-medium text-truncate text-sm"
             :title="title"
             data-cy="list-title"
           >
@@ -77,7 +69,7 @@ const css = useCssModule();
             </slot>
           </div>
           <div
-            class="text-rui-text-secondary text-caption whitespace-nowrap text-truncate"
+            class="text-rui-text-secondary text-caption text-truncate"
             :title="subtitle"
             data-cy="list-subtitle"
           >

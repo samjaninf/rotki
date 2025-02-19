@@ -4,7 +4,7 @@ import hmac
 import os
 import warnings as test_warnings
 from contextlib import ExitStack
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import call, patch
 from urllib.parse import urlencode
 
@@ -15,6 +15,7 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_binance
 from rotkehlchen.constants.assets import A_ADA, A_BNB, A_BTC, A_DOT, A_ETH, A_EUR, A_USDT, A_WBTC
 from rotkehlchen.constants.misc import ONE
+from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import BINANCE_MARKETS_KEY
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
@@ -28,6 +29,7 @@ from rotkehlchen.exchanges.binance import (
 )
 from rotkehlchen.exchanges.data_structures import Location, Trade, TradeType
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.types import HistoryEventSubType
 from rotkehlchen.tests.utils.constants import A_AXS, A_BUSD, A_LUNA, A_RDN
 from rotkehlchen.tests.utils.exchanges import (
     BINANCE_DEPOSITS_HISTORY_RESPONSE,
@@ -46,6 +48,7 @@ from rotkehlchen.types import ApiKey, ApiSecret, Timestamp
 from rotkehlchen.utils.misc import ts_now_in_ms
 
 if TYPE_CHECKING:
+    from rotkehlchen.history.events.structures.asset_movement import AssetMovement
     from rotkehlchen.history.price import PriceHistorian
 
 
@@ -251,6 +254,15 @@ def test_binance_query_trade_history(function_scope_binance):
     with patch.object(binance.session, 'request', side_effect=mock_my_trades):
         trades = binance.query_trade_history(start_ts=0, end_ts=1638529919, only_cache=False)
 
+    with function_scope_binance.db.conn.read_ctx() as cursor:
+        assert function_scope_binance.db.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.BINANCE_PAIR_LAST_ID,
+            location=function_scope_binance.location.serialize(),
+            location_name=function_scope_binance.name,
+            queried_pair='BNBBTC',
+        ) == 28457
+
     expected_trades = [Trade(
         timestamp=1499865549,
         location=Location.BINANCE,
@@ -369,7 +381,7 @@ def test_binance_query_trade_history_unexpected_data(function_scope_binance):
     query_binance_and_test(input_str)
 
 
-def test_binance_query_deposits_withdrawals(function_scope_binance):
+def test_binance_query_deposits_withdrawals(function_scope_binance: 'Binance') -> None:
     """Test the happy case of binance deposit withdrawal query
 
     NB: set `start_ts` and `end_ts` with a difference less than 90 days to
@@ -379,7 +391,7 @@ def test_binance_query_deposits_withdrawals(function_scope_binance):
     end_ts = 1636400907
     binance = function_scope_binance
 
-    def mock_get_deposit_withdrawal(url, params, **kwargs):  # pylint: disable=unused-argument
+    def mock_get_history_events(url, params, **kwargs):  # pylint: disable=unused-argument
         from_ts, to_ts = params.get('startTime'), params.get('endTime')
         if 'capital/deposit' in url:
             if from_ts >= 1508022000000 and to_ts <= 1515797999999:
@@ -410,8 +422,8 @@ def test_binance_query_deposits_withdrawals(function_scope_binance):
 
         return MockResponse(200, response_str)
 
-    with patch.object(binance.session, 'request', side_effect=mock_get_deposit_withdrawal):
-        movements = binance.query_online_deposits_withdrawals(
+    with patch.object(binance.session, 'request', side_effect=mock_get_history_events):
+        movements = binance.query_online_history_events(
             start_ts=Timestamp(start_ts),
             end_ts=Timestamp(end_ts),
         )
@@ -421,7 +433,7 @@ def test_binance_query_deposits_withdrawals(function_scope_binance):
     assert len(errors) == 0
     assert len(warnings) == 0
     assert_binance_asset_movements_result(
-        movements=movements,
+        movements=cast('list[AssetMovement]', movements),
         location=Location.BINANCE,
         got_fiat=True,
     )
@@ -439,7 +451,7 @@ def test_binance_query_deposits_withdrawals_unexpected_data(function_scope_binan
 
     def mock_binance_and_query(deposits, withdrawals, expected_warnings_num, expected_errors_num):
 
-        def mock_get_deposit_withdrawal(url, **kwargs):  # pylint: disable=unused-argument
+        def mock_get_history_events(url, **kwargs):  # pylint: disable=unused-argument
             if 'deposit' in url:
                 response_str = deposits
             else:
@@ -447,14 +459,17 @@ def test_binance_query_deposits_withdrawals_unexpected_data(function_scope_binan
 
             return MockResponse(200, response_str)
 
-        with patch.object(binance.session, 'request', side_effect=mock_get_deposit_withdrawal):
-            movements = binance.query_online_deposits_withdrawals(
+        with patch.object(binance.session, 'request', side_effect=mock_get_history_events):
+            movements = binance.query_online_history_events(
                 start_ts=Timestamp(start_ts),
                 end_ts=Timestamp(end_ts),
             )
 
         if expected_errors_num == 0 and expected_warnings_num == 0:
-            assert len(movements) == 1
+            if len(movements) == 2:
+                assert movements[1].event_subtype == HistoryEventSubType.FEE
+            else:
+                assert len(movements) == 1
         else:
             assert len(movements) == 0
 
@@ -629,7 +644,7 @@ def test_binance_query_deposits_withdrawals_gte_90_days(function_scope_binance):
         ]
         yield from results
 
-    def mock_get_deposit_withdrawal(url, params, **kwargs):  # pylint: disable=unused-argument
+    def mock_get_history_events(url, params, **kwargs):  # pylint: disable=unused-argument
         if 'capital/deposit' in url:
             response_str = next(get_deposit_result)
         elif 'capital/withdraw' in url:
@@ -652,8 +667,8 @@ def test_binance_query_deposits_withdrawals_gte_90_days(function_scope_binance):
     get_fiat_deposit_result = get_fiat_deposit_result()
     get_fiat_withdraw_result = get_fiat_withdraw_result()
 
-    with patch.object(binance.session, 'request', side_effect=mock_get_deposit_withdrawal):
-        movements = binance.query_online_deposits_withdrawals(
+    with patch.object(binance.session, 'request', side_effect=mock_get_history_events):
+        movements = binance.query_online_history_events(
             start_ts=Timestamp(start_ts),
             end_ts=Timestamp(end_ts),
         )
@@ -663,7 +678,7 @@ def test_binance_query_deposits_withdrawals_gte_90_days(function_scope_binance):
     assert len(errors) == 0
     assert len(warnings) == 0
 
-    assert len(movements) == 6
+    assert len(movements) == 9
 
 
 @pytest.mark.freeze_time(datetime.datetime(2020, 11, 24, 3, 14, 15, tzinfo=datetime.UTC))
@@ -758,7 +773,7 @@ def test_api_query_list_calls_with_time_delta(function_scope_binance):
     binance = function_scope_binance
 
     with patch.object(binance, 'api_query_list') as mock_api_query_list:
-        binance.query_online_deposits_withdrawals(
+        binance.query_online_history_events(
             start_ts=Timestamp(start_ts),
             end_ts=Timestamp(end_ts),
         )
@@ -929,7 +944,6 @@ def test_binance_query_lending_interests_history(
 
     with (
         patch.object(binance.session, 'request', side_effect=mock_my_lendings),
-        patch('rotkehlchen.exchanges.binance.PriceHistorian', price_historian),
         binance.db.conn.cursor() as cursor,
     ):
         assert binance.query_lending_interests_history(

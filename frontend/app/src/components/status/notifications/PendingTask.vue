@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
 import { TaskType } from '@/types/task-type';
+import { useReportsStore } from '@/store/reports';
 import type { Task, TaskMeta } from '@/types/task';
 
 const props = defineProps<{ task: Task<TaskMeta> }>();
@@ -54,7 +55,7 @@ const progress = useToNumber(taskProgress);
           icon
           @click="emit('cancel', task)"
         >
-          <RuiIcon name="close-line" />
+          <RuiIcon name="lu-x" />
         </RuiButton>
       </template>
       {{ t('collapsed_pending_tasks.cancel_task') }}

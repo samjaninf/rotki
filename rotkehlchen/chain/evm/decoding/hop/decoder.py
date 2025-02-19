@@ -1,13 +1,13 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.accounting.structures.balance import Balance
-from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.ethereum.utils import (
     token_normalized_value,
     token_normalized_value_decimals,
 )
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, ZERO_ADDRESS
+from rotkehlchen.chain.evm.decoding.constants import STAKED, WITHDRAWN
 from rotkehlchen.chain.evm.decoding.hop.constants import CPT_HOP, HOP_CPT_DETAILS
 from rotkehlchen.chain.evm.decoding.hop.structures import HopBridgeEventData
 from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
@@ -22,25 +22,29 @@ from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
+from rotkehlchen.globaldb.cache import (
+    globaldb_get_unique_cache_value,
+    globaldb_set_unique_cache_value,
+)
+from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChainID, ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.types import HOP_PROTOCOL_LP, CacheType, ChainID, ChecksumEvmAddress
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import (
     ADD_LIQUIDITY,
     REMOVE_LIQUIDITY,
     REMOVE_LIQUIDITY_ONE,
     REWARDS_PAID,
-    STAKED,
     TOKEN_SWAP,
     TRANSFER_FROM_L1_COMPLETED,
     TRANSFER_SENT,
     WITHDRAWAL_BONDED,
-    WITHDRAWN,
     WITHDREW,
 )
 
@@ -62,7 +66,8 @@ class HopCommonDecoder(DecoderInterface):
             bridges: dict[ChecksumEvmAddress, HopBridgeEventData],
             reward_contracts: set[ChecksumEvmAddress],
     ) -> None:
-        super().__init__(
+        DecoderInterface.__init__(  # forced to use this instead of super
+            self,  # in ordere to "address" the diamond inheritance problem
             evm_inquirer=evm_inquirer,
             base_tools=base_tools,
             msg_aggregator=msg_aggregator,
@@ -106,9 +111,35 @@ class HopCommonDecoder(DecoderInterface):
 
         return f'Bridge {amount} {asset.symbol_or_name()} {chain_label}{target_str}via Hop protocol'  # noqa: E501
 
+    def _process_hop_lp_token(self, lp_token: EvmToken, pool_address: ChecksumEvmAddress) -> None:
+        """Save the protocol value of the LP token and cache its pool address."""
+        GlobalDBHandler.set_token_protocol_if_missing(
+            token=lp_token,
+            new_protocol=HOP_PROTOCOL_LP,
+        )
+        # Cache the pool address if needed
+        with GlobalDBHandler().conn.write_ctx() as write_cursor:
+            if globaldb_get_unique_cache_value(
+                cursor=write_cursor,
+                key_parts=(
+                    CacheType.HOP_POOL_ADDRESS,
+                    str(lp_token.chain_id.value),
+                    lp_token.evm_address,
+                ),
+            ) is None:
+                globaldb_set_unique_cache_value(
+                    write_cursor=write_cursor,
+                    key_parts=(
+                        CacheType.HOP_POOL_ADDRESS,
+                        str(lp_token.chain_id.value),
+                        lp_token.evm_address,
+                    ),
+                    value=pool_address,
+                )
+
     def _decode_withdrawal_bonded(self, context: DecoderContext) -> DecodingOutput:
         """This function is used to decode the WithdrawalBonded events on Hop protocol."""
-        if not self.base.is_tracked(hex_or_bytes_to_address(context.transaction.input_data[4:36])):
+        if not self.base.is_tracked(bytes_to_address(context.transaction.input_data[4:36])):
             return DEFAULT_DECODING_OUTPUT
 
         if (bridge := self.bridges.get(context.tx_log.address)) is None:
@@ -124,15 +155,15 @@ class HopCommonDecoder(DecoderInterface):
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.BRIDGE
                 event.notes = self._generate_bridge_note(
-                    amount=event.balance.amount, asset=event.asset,
+                    amount=event.amount, asset=event.asset,
                 )
                 event.counterparty = CPT_HOP
                 break
 
         else:
             asset = Asset(bridge.identifier)
-            amount = hex_or_bytes_to_int(context.transaction.input_data[36:68])
-            bonder_fee = hex_or_bytes_to_int(context.transaction.input_data[100:132])
+            amount = int.from_bytes(context.transaction.input_data[36:68])
+            bonder_fee = int.from_bytes(context.transaction.input_data[100:132])
             norm_amount = token_normalized_value(
                 token_amount=amount - bonder_fee, token=asset.resolve_to_evm_token(),
             )
@@ -152,15 +183,15 @@ class HopCommonDecoder(DecoderInterface):
 
     def _decode_transfer_sent(self, context: DecoderContext) -> DecodingOutput:
         """This function is used to decode the TransferSentToL2 events on Hop protocol."""
-        if not self.base.is_tracked(recipient := hex_or_bytes_to_address(context.tx_log.topics[3])):  # noqa: E501
+        if not self.base.is_tracked(recipient := bytes_to_address(context.tx_log.topics[3])):
             return DEFAULT_DECODING_OUTPUT
 
         if (bridge := self.bridges.get(context.tx_log.address)) is None:
             return DEFAULT_DECODING_OUTPUT
 
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        amount_raw = int.from_bytes(context.tx_log.data[:32])
         amount = self._get_bridge_asset_amount(amount_raw=amount_raw, identifier=bridge.identifier)
-        bonder_fee_raw = hex_or_bytes_to_int(context.tx_log.data[64:96])
+        bonder_fee_raw = int.from_bytes(context.tx_log.data[64:96])
         bonder_fee = token_normalized_value_decimals(bonder_fee_raw, DEFAULT_TOKEN_DECIMALS)
         for event in context.decoded_events:
             if (
@@ -174,14 +205,14 @@ class HopCommonDecoder(DecoderInterface):
                 event.counterparty = CPT_HOP
 
                 if bonder_fee > ZERO:
-                    event.balance.amount = amount - bonder_fee
+                    event.amount = amount - bonder_fee
                     fee_event = self.base.make_event_next_index(
                         tx_hash=event.tx_hash,
                         timestamp=context.transaction.timestamp,
                         event_type=HistoryEventType.SPEND,
                         event_subtype=HistoryEventSubType.FEE,
                         asset=event.asset,
-                        balance=Balance(amount=bonder_fee),
+                        amount=bonder_fee,
                         location_label=event.location_label,
                         notes=f'Spend {bonder_fee} {event.asset.symbol_or_name()} as a hop fee',
                         counterparty=CPT_HOP,
@@ -193,11 +224,11 @@ class HopCommonDecoder(DecoderInterface):
                         events_list=context.decoded_events,
                     )
                 event.notes = self._generate_bridge_note(
-                    amount=event.balance.amount,
+                    amount=event.amount,
                     asset=event.asset,
                     recipient=recipient,
                     sender=string_to_evm_address(event.location_label) if event.location_label else None,  # noqa: E501
-                    chain_id=hex_or_bytes_to_int(context.tx_log.topics[2]),
+                    chain_id=int.from_bytes(context.tx_log.topics[2]),
                 )
                 break
 
@@ -213,20 +244,20 @@ class HopCommonDecoder(DecoderInterface):
                 event.event_type = HistoryEventType.DEPOSIT
                 event.event_subtype = HistoryEventSubType.BRIDGE
                 event.counterparty = CPT_HOP
-                event.notes = f'Burn {event.balance.amount} of Hop {event.asset.symbol_or_name()}'
+                event.notes = f'Burn {event.amount} of Hop {event.asset.symbol_or_name()}'
                 break
 
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_withdrawal(self, context: DecoderContext) -> DecodingOutput:
         """This function is used to decode the Withdrew event on Hop protocol."""
-        if not self.base.is_tracked(hex_or_bytes_to_address(context.tx_log.topics[2])):
+        if not self.base.is_tracked(bytes_to_address(context.tx_log.topics[2])):
             return DEFAULT_DECODING_OUTPUT
 
         if (bridge := self.bridges.get(context.tx_log.address)) is None:
             return DEFAULT_DECODING_OUTPUT
 
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data[:32])
+        amount_raw = int.from_bytes(context.tx_log.data[:32])
         amount = self._get_bridge_asset_amount(amount_raw=amount_raw, identifier=bridge.identifier)
         for event in context.decoded_events:
             if (
@@ -234,12 +265,12 @@ class HopCommonDecoder(DecoderInterface):
                 event.asset.identifier == bridge.identifier and
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == amount
+                event.amount == amount
             ):
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.BRIDGE
                 event.notes = self._generate_bridge_note(
-                    amount=event.balance.amount, asset=event.asset,
+                    amount=event.amount, asset=event.asset,
                 )
                 event.counterparty = CPT_HOP
                 break
@@ -248,8 +279,8 @@ class HopCommonDecoder(DecoderInterface):
             # corresponding receive not found, create an ActionItem
             # to update the event when it's decoded
             asset = Asset(bridge.identifier)
-            amount_raw = hex_or_bytes_to_int(context.transaction.input_data[36:68])
-            bonder_fee = hex_or_bytes_to_int(context.transaction.input_data[100:132])
+            amount_raw = int.from_bytes(context.transaction.input_data[36:68])
+            bonder_fee = int.from_bytes(context.transaction.input_data[100:132])
             norm_amount = token_normalized_value(
                 token_amount=amount_raw - bonder_fee, token=asset.resolve_to_evm_token(),
             )
@@ -270,7 +301,7 @@ class HopCommonDecoder(DecoderInterface):
 
     def _decode_transfer_from_l1(self, context: DecoderContext) -> DecodingOutput:
         """This function is used to decode the TRANSFER_FROM_L1_COMPLETED event on Hop protocol."""
-        if not self.base.is_tracked(recipient := hex_or_bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
+        if not self.base.is_tracked(recipient := bytes_to_address(context.tx_log.topics[1])):
             return DEFAULT_DECODING_OUTPUT
 
         if (bridge := self.bridges.get(context.tx_log.address)) is None:
@@ -282,7 +313,7 @@ class HopCommonDecoder(DecoderInterface):
                 event.event_subtype = HistoryEventSubType.BRIDGE
                 event.counterparty = CPT_HOP
                 event.notes = self._generate_bridge_note(
-                    amount=event.balance.amount,
+                    amount=event.amount,
                     asset=event.asset,
                     recipient=recipient,
                     sender=string_to_evm_address(event.location_label) if event.location_label else None,  # noqa: E501
@@ -295,7 +326,7 @@ class HopCommonDecoder(DecoderInterface):
         """Decodes a TokenSwap event to set the proper bridged amount"""
         for item in context.action_items:
             if item.to_event_subtype == HistoryEventSubType.BRIDGE:
-                tokens_bought = hex_or_bytes_to_int(context.tx_log.data[32:64])
+                tokens_bought = int.from_bytes(context.tx_log.data[32:64])
                 asset = item.asset.resolve_to_evm_token()
                 amount = token_normalized_value(tokens_bought, asset)
                 item.to_notes = self._generate_bridge_note(amount=amount, asset=asset)
@@ -303,29 +334,32 @@ class HopCommonDecoder(DecoderInterface):
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_add_liquidity(self, context: DecoderContext) -> DecodingOutput:
-        if not self.base.is_tracked(user_address := hex_or_bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
+        if (
+            liquidity_data := self._decode_common_liquidity(
+                context=context,
+                first_token_raw=context.tx_log.data[160:192],
+                second_token_raw=context.tx_log.data[192:224],
+            )
+        ) is None:
             return DEFAULT_DECODING_OUTPUT
 
-        first_token_amount = token_normalized_value_decimals(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data[160:192]),
-            token_decimals=DEFAULT_TOKEN_DECIMALS,
-        )
-        second_token_amount = token_normalized_value_decimals(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data[192:224]),
-            token_decimals=DEFAULT_TOKEN_DECIMALS,
-        )
-        token_amounts = {x for x in (first_token_amount, second_token_amount) if x != ZERO}
+        user_address, token_amounts = liquidity_data
+        out_event1, out_event2, in_event = None, None, None
         for event in context.decoded_events:
             if (
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.location_label == user_address and
-                event.balance.amount in token_amounts
+                event.amount in token_amounts
             ):
                 event.event_type = HistoryEventType.DEPOSIT
-                event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                event.event_subtype = HistoryEventSubType.DEPOSIT_FOR_WRAPPED
                 event.counterparty = CPT_HOP
-                event.notes = f'Deposit {event.balance.amount} {event.asset.symbol_or_name()} to Hop'  # noqa: E501
+                event.notes = f'Deposit {event.amount} {event.asset.symbol_or_name()} to Hop'
+                if out_event1 is None:
+                    out_event1 = event
+                else:
+                    out_event2 = event
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
@@ -334,8 +368,20 @@ class HopCommonDecoder(DecoderInterface):
                 event.event_type = HistoryEventType.RECEIVE
                 event.event_subtype = HistoryEventSubType.RECEIVE_WRAPPED
                 event.counterparty = CPT_HOP
-                event.notes = f'Receive {event.balance.amount} {event.asset.symbol_or_name()} after providing liquidity in Hop'  # noqa: E501
+                event.notes = f'Receive {event.amount} {event.asset.symbol_or_name()} after providing liquidity in Hop'  # noqa: E501
+                in_event = event
+                try:
+                    self._process_hop_lp_token(
+                        lp_token=event.asset.resolve_to_evm_token(),
+                        pool_address=context.tx_log.address,
+                    )
+                except (WrongAssetType, UnknownAsset) as e:
+                    log.error(f'Could not resolve {event.asset!s} in {self.evm_inquirer.chain_name} while decoding AddLiquidity in Hop: {e!s}')  # noqa: E501
 
+        maybe_reshuffle_events(
+            ordered_events=[out_event1, out_event2, in_event],
+            events_list=context.decoded_events,
+        )
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_remove_liquidity(self, context: DecoderContext, lp_amount_raw: int) -> DecodingOutput:  # noqa: E501
@@ -343,7 +389,13 @@ class HopCommonDecoder(DecoderInterface):
         RemoveLiquidity is emitted when both sides of the liquidity pool are withdrawn,
         whereas RemoveLiquidityOne is emitted when only one side of the liquidity pool
         is withdrawn."""
-        if (liquidity_data := self._decode_common_liquidity(context)) is None:
+        if (
+            liquidity_data := self._decode_common_liquidity(
+                context=context,
+                first_token_raw=context.tx_log.data[96:128],
+                second_token_raw=context.tx_log.data[128:160],
+            )
+        ) is None:
             return DEFAULT_DECODING_OUTPUT
 
         user_address, token_amounts = liquidity_data
@@ -358,21 +410,25 @@ class HopCommonDecoder(DecoderInterface):
             token_amounts=token_amounts,
         )
 
-    def _decode_common_liquidity(self, context: DecoderContext) -> tuple['ChecksumEvmAddress', set[FVal]] | None:  # noqa: E501
+    def _decode_common_liquidity(self, context: DecoderContext, first_token_raw: bytes, second_token_raw: bytes) -> tuple['ChecksumEvmAddress', set[FVal]] | None:  # noqa: E501
         """This function is used to decode the common resources of RemoveLiquidity and
         RemoveLiquidityOne events."""
-        if not self.base.is_tracked(user_address := hex_or_bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
+        if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1])):
             return None
 
         if (swap_asset_id := self.swaps_to_asset.get(context.tx_log.address)) is None:
+            log.error(
+                f'Could not find asset for the saddle swap address while decoding '
+                f'{self.evm_inquirer.chain_name} transaction {context.transaction.tx_hash.hex()}',
+            )
             return None
 
         first_token_amount = self._get_bridge_asset_amount(
-            amount_raw=hex_or_bytes_to_int(context.tx_log.data[96:128]),
+            amount_raw=int.from_bytes(first_token_raw),
             identifier=swap_asset_id,
         )
         second_token_amount = self._get_bridge_asset_amount(
-            amount_raw=hex_or_bytes_to_int(context.tx_log.data[128:160]),
+            amount_raw=int.from_bytes(second_token_raw),
             identifier=swap_asset_id,
         )
         # Filtering out zero amounts to not clash with any other events
@@ -390,27 +446,37 @@ class HopCommonDecoder(DecoderInterface):
         """This function is used to enrich the RemoveLiquidity and RemoveLiquidityOne events
         with proper event types and notes.
         """
+        out_event, in_event1, in_event2 = None, None, None
         for event in decoded_events:
             if (
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.location_label == user_address and
-                event.balance.amount == lp_amount
+                event.amount == lp_amount
             ):
                 event.event_subtype = HistoryEventSubType.RETURN_WRAPPED
                 event.counterparty = CPT_HOP
-                event.notes = f'Return {event.balance.amount} {event.asset.symbol_or_name()}'
+                event.notes = f'Return {event.amount} {event.asset.symbol_or_name()}'
+                out_event = event
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.location_label == user_address and
-                event.balance.amount in token_amounts
+                event.amount in token_amounts
             ):
                 event.event_type = HistoryEventType.WITHDRAWAL
-                event.event_subtype = HistoryEventSubType.REMOVE_ASSET
+                event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.counterparty = CPT_HOP
-                event.notes = f'Withdraw {event.balance.amount} {event.asset.symbol_or_name()} from Hop'  # noqa: E501
+                event.notes = f'Withdraw {event.amount} {event.asset.symbol_or_name()} from Hop'
+                if in_event1 is None:
+                    in_event1 = event
+                else:
+                    in_event2 = event
 
+        maybe_reshuffle_events(
+            ordered_events=[out_event, in_event1, in_event2],
+            events_list=decoded_events,
+        )
         return DEFAULT_DECODING_OUTPUT
 
     def _decode_saddle_swap(self, context: DecoderContext) -> DecodingOutput:
@@ -424,13 +490,13 @@ class HopCommonDecoder(DecoderInterface):
         if context.tx_log.topics[0] == REMOVE_LIQUIDITY:
             return self._decode_remove_liquidity(
                 context=context,
-                lp_amount_raw=hex_or_bytes_to_int(context.transaction.input_data[4:36]),
+                lp_amount_raw=int.from_bytes(context.transaction.input_data[4:36]),
             )
 
         if context.tx_log.topics[0] == REMOVE_LIQUIDITY_ONE:
             return self._decode_remove_liquidity(
                 context=context,
-                lp_amount_raw=hex_or_bytes_to_int(context.tx_log.data[:32]),
+                lp_amount_raw=int.from_bytes(context.tx_log.data[:32]),
             )
 
         return DEFAULT_DECODING_OUTPUT
@@ -477,14 +543,14 @@ class HopCommonDecoder(DecoderInterface):
             product: EvmProduct | None = None,
     ) -> DecodingOutput:
         amount = token_normalized_value_decimals(
-            token_amount=hex_or_bytes_to_int(context.tx_log.data[:32]),
+            token_amount=int.from_bytes(context.tx_log.data[:32]),
             token_decimals=DEFAULT_TOKEN_DECIMALS,
         )
         for event in context.decoded_events:
             if (
                 event.event_type == event_type and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.balance.amount == amount
+                event.amount == amount
             ):
                 event.event_type = HistoryEventType.STAKING
                 event.event_subtype = event_subtype

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import RefreshButton from '@/components/helper/RefreshButton.vue';
+
 withDefaults(
   defineProps<{
     tooltip: string;
@@ -6,8 +8,8 @@ withDefaults(
     disabled?: boolean;
   }>(),
   {
-    loading: false,
     disabled: false,
+    loading: false,
   },
 );
 
@@ -16,14 +18,11 @@ const emit = defineEmits<{
 }>();
 
 const refresh = () => emit('refresh');
-
-const slots = useSlots();
-const css = useCssModule();
 </script>
 
 <template>
   <RefreshButton
-    v-if="!slots.refreshMenu"
+    v-if="!$slots.refreshMenu"
     :loading="loading"
     :disabled="disabled"
     :tooltip="tooltip"
@@ -33,10 +32,8 @@ const css = useCssModule();
     v-else
     class="relative pr-1"
   >
-    <RuiMenu
-      :popper="{ placement: 'bottom-start' }"
-    >
-      <template #activator="{ on }">
+    <RuiMenu :popper="{ placement: 'bottom-start' }">
+      <template #activator="{ attrs }">
         <RefreshButton
           :loading="loading"
           :disabled="disabled"
@@ -45,15 +42,15 @@ const css = useCssModule();
         />
         <RuiButton
           :disabled="disabled"
-          :class="css.expander"
+          :class="$style.expander"
           icon
           variant="text"
           size="sm"
-          v-on="on"
+          v-bind="attrs"
         >
           <RuiIcon
             size="16"
-            name="arrow-down-s-line"
+            name="lu-chevron-down"
           />
         </RuiButton>
       </template>

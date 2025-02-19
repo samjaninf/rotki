@@ -1,22 +1,34 @@
 <script setup lang="ts">
-import { camelCase } from 'lodash-es';
+import { camelCase } from 'es-toolkit';
+import { etherscanLinks } from '@shared/external-links';
 import { isEtherscanKey } from '@/types/external';
-import { etherscanLinks } from '@/data/external-links';
+import { useNotificationsStore } from '@/store/notifications';
+import { useExternalApiKeys } from '@/composables/settings/api-keys/external';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import ServiceKey from '@/components/settings/api-keys/ServiceKey.vue';
 
-const props = defineProps<{ evmChain: string; chainName: string }>();
+const props = withDefaults(
+  defineProps<{
+    evmChain: string;
+    chainName: string;
+    unified?: boolean;
+  }>(),
+  {
+    unified: false,
+  },
+);
 const { evmChain } = toRefs(props);
 
 const name = 'etherscan';
 const { t } = useI18n();
 
-const { loading, apiKey, actionStatus, save, confirmDelete, getName }
-  = useExternalApiKeys(t);
+const { actionStatus, apiKey, confirmDelete, getName, loading, save } = useExternalApiKeys(t);
 
 const key = apiKey(name, evmChain);
 const status = actionStatus(name, evmChain);
 const identifier = computed(() => getName(name, get(evmChain)));
 
-const { remove: removeNotification, prioritized } = useNotificationsStore();
+const { prioritized, remove: removeNotification } = useNotificationsStore();
 
 /**
  * After an api key is added, remove the etherscan notification for that location
@@ -24,14 +36,16 @@ const { remove: removeNotification, prioritized } = useNotificationsStore();
 function removeEtherscanNotification() {
   // using prioritized list here, because the actionable notifications are always on top (index 0|1)
   // so it is faster to find
-  const notification = prioritized.find(
-    data => data.i18nParam?.props?.key === get(evmChain),
-  );
+  const notifications = prioritized.filter((data) => {
+    const isEtherscanNotification = data.category === NotificationCategory.ETHERSCAN;
+    if (props.unified)
+      return isEtherscanNotification;
+    return data.i18nParam?.props?.key === get(evmChain);
+  });
 
-  if (!notification)
-    return;
-
-  removeNotification(notification.id);
+  notifications.forEach((notification) => {
+    removeNotification(notification.id);
+  });
 }
 
 const link = computed(() => {
@@ -61,14 +75,15 @@ const link = computed(() => {
       })
     "
     :status="status"
+    class="pt-2"
     @save="save($event, removeEtherscanNotification)"
     @delete-key="confirmDelete($event)"
   >
-    <i18n
+    <i18n-t
       v-if="link"
       tag="div"
       class="text-rui-text-secondary text-body-2"
-      path="external_services.get_api_key"
+      keypath="external_services.get_api_key"
     >
       <template #link>
         <ExternalLink
@@ -78,6 +93,6 @@ const link = computed(() => {
           {{ t('common.here') }}
         </ExternalLink>
       </template>
-    </i18n>
+    </i18n-t>
   </ServiceKey>
 </template>

@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { Routes } from '@/router/routes';
+import { useLocations } from '@/composables/locations';
+import LocationIcon from '@/components/history/LocationIcon.vue';
+import NavigatorLink from '@/components/helper/NavigatorLink.vue';
+import type { RouteLocationRaw } from 'vue-router';
 
 const props = withDefaults(
   defineProps<{
@@ -8,36 +11,45 @@ const props = withDefaults(
     size?: string;
     openDetails?: boolean;
     detailPath?: string;
+    horizontal?: boolean;
   }>(),
   {
-    icon: false,
-    size: '24px',
-    openDetails: true,
     detailPath: '',
+    horizontal: false,
+    icon: false,
+    openDetails: true,
+    size: '24px',
   },
 );
 
-const { identifier, detailPath } = toRefs(props);
+const { detailPath, identifier } = toRefs(props);
 
 const { locationData } = useLocations();
 const location = locationData(identifier);
 
-const route = computed<{ path: string }>(() => {
+const route = computed<RouteLocationRaw>(() => {
   const details = get(detailPath);
   const tradeLocation = get(location);
-  let path: string;
-  if (details)
-    path = details;
-  else if (tradeLocation?.detailPath)
-    path = tradeLocation.detailPath;
-  else if (tradeLocation)
-    path = Routes.LOCATIONS.replace(':identifier', tradeLocation.identifier);
-  else
-    path = '';
-
-  return {
-    path,
-  };
+  if (details) {
+    return { path: details };
+  }
+  else if (tradeLocation?.detailPath) {
+    return {
+      hash: '#accounts-section',
+      path: tradeLocation.detailPath,
+    };
+  }
+  else if (tradeLocation) {
+    return {
+      name: '/locations/[identifier]',
+      params: {
+        identifier: tradeLocation.identifier,
+      },
+    };
+  }
+  else {
+    return { path: '' };
+  }
 });
 </script>
 
@@ -53,6 +65,7 @@ const route = computed<{ path: string }>(() => {
       :icon="icon"
       :size="size"
       class="w-full"
+      :horizontal="horizontal"
     />
   </NavigatorLink>
 </template>

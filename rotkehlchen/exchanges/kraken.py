@@ -18,11 +18,7 @@ from requests import Response
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
-from rotkehlchen.api.websockets.typedefs import (
-    HistoryEventsQueryType,
-    HistoryEventsStep,
-    WSMessageType,
-)
+from rotkehlchen.api.websockets.typedefs import HistoryEventsStep
 from rotkehlchen.assets.converters import asset_from_kraken
 from rotkehlchen.constants import KRAKEN_API_VERSION, KRAKEN_BASE_URL, ZERO
 from rotkehlchen.constants.assets import A_ETH2, A_KFEE, A_USD
@@ -35,11 +31,15 @@ from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import (
     ExchangeInterface,
     ExchangeQueryBalances,
     ExchangeWithExtras,
+)
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    create_asset_movement_with_fee,
 )
 from rotkehlchen.history.events.structures.base import (
     HistoryBaseEntryType,
@@ -51,7 +51,6 @@ from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount,
-    deserialize_asset_movement_category,
     deserialize_fval,
 )
 from rotkehlchen.types import (
@@ -66,7 +65,6 @@ from rotkehlchen.types import (
     TimestampMS,
     TradeType,
 )
-from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import pairwise, ts_ms_to_sec, ts_now
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
 from rotkehlchen.utils.mixins.enums import SerializableEnumNameMixin
@@ -77,12 +75,12 @@ if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset, AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
+    from rotkehlchen.user_messages import MessagesAggregator
 
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-KRAKEN_DELISTED = ('XDAO', 'XXVN', 'ZKRW', 'XNMC', 'BSV', 'XICN')
 KRAKEN_QUERY_TRIES = 8
 KRAKEN_BACKOFF_DIVIDEND = 15
 MAX_CALL_COUNTER_INCREASE = 2  # Trades and Ledger produce the max increase
@@ -126,7 +124,7 @@ def kraken_ledger_entry_type_to_ours(value: str) -> tuple[HistoryEventType, Hist
 
 
 def _check_and_get_response(response: Response, method: str) -> str | dict:
-    """Checks the kraken response and if it's succesfull returns the result.
+    """Checks the kraken response and if it's successful returns the result.
 
     If there is recoverable error a string is returned explaining the error
     May raise:
@@ -183,7 +181,7 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             api_key: ApiKey,
             secret: ApiSecret,
             database: 'DBHandler',
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
             kraken_account_type: KrakenAccountType | None = None,
     ):
         super().__init__(
@@ -192,8 +190,8 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             api_key=api_key,
             secret=secret,
             database=database,
+            msg_aggregator=msg_aggregator,
         )
-        self.msg_aggregator = msg_aggregator
         self.session.headers.update({'API-Key': self.api_key})
         self.set_account_type(kraken_account_type)
         self.call_counter = 0
@@ -408,9 +406,9 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
 
                 our_asset = asset_from_kraken(kraken_name)
             except UnknownAsset as e:
-                self.msg_aggregator.add_warning(
-                    f'Found unsupported/unknown kraken asset {e.identifier}. '
-                    f' Ignoring its balance query.',
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='balance query',
                 )
                 continue
             except DeserializationError as e:
@@ -581,105 +579,13 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             request['ofs'] = offset
         if extra_dict is not None:
             request.update(extra_dict)
-        result = self.api_query(endpoint, request)
-        return result
-
-    def query_online_deposits_withdrawals(
-            self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-    ) -> list[AssetMovement]:
-        with self.db.conn.read_ctx() as cursor:
-            self.query_kraken_ledgers(cursor, start_ts=start_ts, end_ts=end_ts)
-            filter_query = HistoryEventFilterQuery.make(
-                from_ts=Timestamp(start_ts),
-                to_ts=Timestamp(end_ts),
-                event_types=[
-                    HistoryEventType.DEPOSIT,
-                    HistoryEventType.WITHDRAWAL,
-                ],
-                location=Location.KRAKEN,
-                location_labels=[self.name],
-                entry_types=IncludeExcludeFilterData(values=[HistoryBaseEntryType.HISTORY_EVENT]),
-            )
-            events = self.history_events_db.get_history_events(
-                cursor=cursor,
-                filter_query=filter_query,
-                has_premium=True,
-            )
-        log.debug('Kraken deposit/withdrawals query result', num_results=len(events))
-        movements = []
-        get_attr = operator.attrgetter('event_identifier')
-        # Create a list of lists where each sublist has the events for the same event identifier
-        grouped_events = [list(g) for k, g in itertools.groupby(sorted(events, key=get_attr), get_attr)]  # noqa: E501
-        for movement_events in grouped_events:
-            if len(movement_events) == 2:
-                if movement_events[0].event_subtype == HistoryEventSubType.FEE:
-                    fee = Fee(movement_events[0].balance.amount)
-                    movement = movement_events[1]
-                elif movement_events[1].event_subtype == HistoryEventSubType.FEE:
-                    fee = Fee(movement_events[1].balance.amount)
-                    movement = movement_events[0]
-                else:
-                    self.msg_aggregator.add_error(
-                        f'Failed to process deposit/withdrawal. {grouped_events}. Ignoring ...',
-                    )
-                    continue
-            else:
-                movement = movement_events[0]
-                fee = Fee(ZERO)
-
-            amount = movement.balance.amount
-            try:
-                asset = movement.asset
-                movement_type = movement.event_type
-                movements.append(AssetMovement(
-                    location=Location.KRAKEN,
-                    category=deserialize_asset_movement_category(movement_type),
-                    timestamp=ts_ms_to_sec(movement.timestamp),
-                    address=None,  # no data from kraken ledger endpoint
-                    transaction_id=None,  # no data from kraken ledger endpoint
-                    asset=asset,
-                    amount=amount,
-                    fee_asset=asset,
-                    fee=fee,
-                    link=movement.event_identifier,
-                ))
-            except UnknownAsset as e:
-                self.msg_aggregator.add_warning(
-                    f'Found unknown kraken asset {e.identifier}. '
-                    f'Ignoring its deposit/withdrawals query.',
-                )
-                continue
-            except (DeserializationError, KeyError) as e:
-                msg = str(e)
-                if isinstance(e, KeyError):
-                    msg = f'Missing key entry for {msg}.'
-                self.msg_aggregator.add_error(
-                    'Failed to deserialize a kraken deposit/withdrawal. '
-                    'Check logs for details. Ignoring it.',
-                )
-                log.error(
-                    'Error processing a kraken deposit/withdrawal.',
-                    raw_asset_movement=movement_events,
-                    error=msg,
-                )
-                continue
-
-        return movements
+        return self.api_query(endpoint, request)
 
     def query_online_margin_history(
             self,
             start_ts: Timestamp,  # pylint: disable=unused-argument
             end_ts: Timestamp,
     ) -> list[MarginPosition]:
-        return []  # noop for kraken
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
         return []  # noop for kraken
 
     def process_kraken_events_for_trade(
@@ -719,7 +625,7 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                     receive_part = trade_part
 
             if (
-                trade_part.balance.amount != ZERO and
+                trade_part.amount != ZERO and
                 trade_part.event_subtype != HistoryEventSubType.FEE
             ):
                 trade_assets.append(trade_part.asset)
@@ -748,16 +654,16 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             if spend_part is not None:
                 base_asset = spend_part.asset
                 trade_type = TradeType.SELL
-                amount = spend_part.balance.amount
+                amount = spend_part.amount
             elif receive_part is not None:
                 base_asset = receive_part.asset
                 trade_type = TradeType.BUY
-                amount = receive_part.balance.amount
+                amount = receive_part.amount
             else:
                 log.warning(f'Found historic trade entries with no counterpart {trade_parts}')
                 return None
 
-            trade = Trade(
+            return Trade(
                 timestamp=timestamp,
                 location=Location.KRAKEN,
                 base_asset=base_asset,
@@ -769,7 +675,6 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                 fee_currency=None,
                 link=exchange_uuid,
             )
-            return trade
 
         if spend_part is None or receive_part is None:
             log.error(
@@ -788,7 +693,7 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             trade_type = TradeType.BUY
             base_asset = receive_asset
             quote_asset = spend_asset
-            amount = receive_part.balance.amount
+            amount = receive_part.amount
             if amount == ZERO:
                 self.msg_aggregator.add_warning(
                     f'Rate for kraken trade couldnt be calculated. Base amount is ZERO '
@@ -796,12 +701,12 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                 )
                 return None
 
-            rate = Price(spend_part.balance.amount / amount)
+            rate = Price(spend_part.amount / amount)
         else:
             trade_type = TradeType.SELL
             base_asset = spend_asset
             quote_asset = receive_asset
-            amount = spend_part.balance.amount
+            amount = spend_part.amount
             if amount == ZERO:
                 self.msg_aggregator.add_warning(
                     f'Rate for kraken trade couldnt be calculated. Base amount is ZERO '
@@ -809,19 +714,19 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                 )
                 return None
 
-            rate = Price(receive_part.balance.amount / amount)
+            rate = Price(receive_part.amount / amount)
 
         # If kfee was found we use it as the fee for the trade
         fee: Fee | None = None
         fee_asset: Asset | None = None
         if kfee_part is not None and fee_part is None:
-            fee = Fee(kfee_part.balance.amount)
+            fee = Fee(kfee_part.amount)
             fee_asset = A_KFEE
         else:
-            fee = Fee(fee_part.balance.amount) if fee_part is not None else None
+            fee = Fee(fee_part.amount) if fee_part is not None else None
             fee_asset = fee_part.asset if fee_part is not None else None
 
-        trade = Trade(
+        return Trade(
             timestamp=timestamp,
             location=Location.KRAKEN,
             base_asset=base_asset,
@@ -833,7 +738,6 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             fee_currency=fee_asset,
             link=exchange_uuid,
         )
-        return trade
 
     def process_kraken_trades(
             self,
@@ -896,14 +800,14 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                     )
                     continue
 
-                rate = Price(abs(receive_event.balance.amount / spend_event.balance.amount))
+                rate = Price(abs(receive_event.amount / spend_event.amount))
                 trade = Trade(
                     timestamp=ts_ms_to_sec(a1.timestamp),
                     location=Location.KRAKEN,
                     base_asset=receive_event.asset,
                     quote_asset=spend_event.asset,
                     trade_type=TradeType.BUY,
-                    amount=AssetAmount(receive_event.balance.amount),
+                    amount=AssetAmount(receive_event.amount),
                     rate=rate,
                     fee=None,
                     fee_currency=None,
@@ -924,7 +828,7 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             events: list[dict[str, Any]],
             events_source: str,
             save_skipped_events: bool,
-    ) -> tuple[list[HistoryEvent], set[str]]:
+    ) -> tuple[list[HistoryEvent | AssetMovement], set[str]]:
         """Run through a list of raw kraken events with different refids and process them.
 
         Returns a list of the newly created rotki events and a set of all processed refids
@@ -983,12 +887,12 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
         """
         Query Kraken's ledger to retrieve events and transform them to our internal representation
         of history events. Internally we look for the query range that needs to be queried in the
-        range (start_ts, end_ts) to avoid double quering the kraken API when this method is called
+        range (start_ts, end_ts) to avoid double querying the kraken API when this method is called
         for deposits/withdrawals and trades. The events queried are then stored in the database.
 
         If notify_events is True we send websocket messages to notify the current interval of
         time being queried. By default it is set to False to avoid sending unwanted message when
-        this funtion is called internally and not directly from the UI by the user.
+        this function is called internally and not directly from the UI by the user.
         May raise:
         - RemoteError if request to kraken fails for whatever reason
 
@@ -1006,15 +910,9 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
         for query_start_ts, query_end_ts in ranges_to_query:
             log.debug(f'Querying kraken ledger entries from {query_start_ts} to {query_end_ts}')
             if notify_events is True:
-                self.msg_aggregator.add_message(
-                    message_type=WSMessageType.HISTORY_EVENTS_STATUS,
-                    data={
-                        'status': str(HistoryEventsStep.QUERYING_EVENTS_STATUS_UPDATE),
-                        'location': str(self.location),
-                        'event_type': str(HistoryEventsQueryType.HISTORY_QUERY),
-                        'name': self.name,
-                        'period': [query_start_ts, query_end_ts],
-                    },
+                self.send_history_events_status_msg(
+                    step=HistoryEventsStep.QUERYING_EVENTS_STATUS_UPDATE,
+                    period=[query_start_ts, query_end_ts],
                 )
             try:
                 response, with_errors = self.query_until_finished(
@@ -1052,10 +950,10 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
             self,
             events: list[dict[str, Any]],
             save_skipped_events: bool,
-    ) -> tuple[list[HistoryEvent], bool, bool]:
+    ) -> tuple[list[HistoryEvent | AssetMovement], bool, bool]:
         """
         This function gets raw data from kraken and creates a list of related history events
-        to be used in the app. All events passed to this functon have same refid.
+        to be used in the app. All events passed to this function have same refid.
 
         It returns a list of events, a boolean indicating events are skipped
         and a boolean in the case that an unknown type is found.
@@ -1065,7 +963,7 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
 
         Information on how to interpret Kraken ledger type field: https://support.kraken.com/hc/en-us/articles/360001169383-How-to-interpret-Ledger-history-fields
         """
-        group_events: list[tuple[int, HistoryEvent]] = []
+        group_events: list[tuple[int, HistoryEvent | AssetMovement]] = []
         skipped = False
         # for receive/spend events they could be airdrops but they could also be instant swaps.
         # the only way to know if it was a trade is by finding a pair of receive/spend events.
@@ -1137,10 +1035,6 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                     log.warning(
                         f'Encountered kraken historic event type we do not process. {raw_event}',
                     )
-                elif event_type == HistoryEventType.DEPOSIT:
-                    event_subtype = HistoryEventSubType.DEPOSIT_ASSET
-                elif event_type == HistoryEventType.WITHDRAWAL:
-                    event_subtype = HistoryEventSubType.REMOVE_ASSET
 
                 fee_amount = deserialize_asset_amount(raw_event['fee'])
                 # check for failed events (events that cancel each other out -- like failed
@@ -1148,34 +1042,48 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                         len(events) == 2 and idx == 1 and
                         events[0]['type'] == events[1]['type'] and
                         events[0]['subtype'] == events[1]['subtype'] and
-                        abs(raw_amount) == group_events[0][1].balance.amount and (
+                        abs(raw_amount) == group_events[0][1].amount and (
                             len(group_events) != 2 or
-                            abs(fee_amount) == group_events[1][1].balance.amount)
+                            abs(fee_amount) == group_events[1][1].amount)
                 ):
                     log.info(f'Skipping failed kraken events that cancel each other out: {events}')
                     return [], skipped, False
 
                 # Make sure to not generate an event for KFEES that is not of type FEE
                 if asset != A_KFEE:
-                    event = HistoryEvent(
+                    # Process asset movements - there are no KFEE deposit/withdrawal events
+                    if event_type in {HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL}:
+                        group_events.extend(
+                            (idx, event) for event in create_asset_movement_with_fee(
+                                timestamp=timestamp,
+                                location=self.location,
+                                location_label=self.name,
+                                event_type=event_type,  # type: ignore  # will be deposit or withdrawal
+                                asset=asset,
+                                amount=abs(raw_amount),
+                                fee_asset=asset,
+                                fee=abs(fee_amount),
+                                unique_id=identifier,
+                            )
+                        )
+                        continue
+
+                    history_event = HistoryEvent(
                         event_identifier=identifier,
                         sequence_index=idx,
                         timestamp=timestamp,
                         location=Location.KRAKEN,
                         location_label=self.name,
                         asset=asset,
-                        balance=Balance(  # amount sign was used above to determine types
-                            amount=abs(raw_amount),  # now enforce positive
-                            usd_value=ZERO,
-                        ),
+                        amount=abs(raw_amount),  # amount sign was used above to determine types now enforce positive  # noqa: E501
                         notes=notes,
                         event_type=event_type,
                         event_subtype=event_subtype,
                     )
-                    if event.event_type in (HistoryEventType.RECEIVE, HistoryEventType.SPEND):
-                        receive_spend_events[event.event_identifier].append((idx, event))
+                    if history_event.event_type in (HistoryEventType.RECEIVE, HistoryEventType.SPEND):  # noqa: E501
+                        receive_spend_events[history_event.event_identifier].append((idx, history_event))  # noqa: E501
                     else:
-                        group_events.append((idx, event))
+                        group_events.append((idx, history_event))
                 if event_type != HistoryEventType.INFORMATIONAL and fee_amount != ZERO:  # avoid processing ignored events with fees that were converted to informational  # noqa: E501
                     group_events.append((idx, HistoryEvent(
                         event_identifier=identifier,
@@ -1184,10 +1092,7 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                         location=Location.KRAKEN,
                         location_label=self.name,
                         asset=asset,
-                        balance=Balance(
-                            amount=abs(fee_amount),
-                            usd_value=ZERO,
-                        ),
+                        amount=abs(fee_amount),
                         notes=notes,
                         event_type=event_type if event_type != HistoryEventType.RECEIVE else HistoryEventType.SPEND,  # in instant swaps @tewshi found that fees can also be in the receive part  # noqa: E501
                         event_subtype=HistoryEventSubType.FEE,
@@ -1215,9 +1120,9 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
 
         for event_set in receive_spend_events.values():
             if len(event_set) == 2:
-                for _, event in event_set:
-                    event.event_subtype = HistoryEventSubType.RECEIVE if event.event_type == HistoryEventType.RECEIVE else HistoryEventSubType.SPEND  # noqa: E501
-                    event.event_type = HistoryEventType.TRADE
+                for _, history_event in event_set:
+                    history_event.event_subtype = HistoryEventSubType.RECEIVE if history_event.event_type == HistoryEventType.RECEIVE else HistoryEventSubType.SPEND  # noqa: E501
+                    history_event.event_type = HistoryEventType.TRADE
 
             # make sure to add all the events to group_events
             group_events.extend(event_set)
@@ -1243,15 +1148,7 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
         return returned_events, skipped, found_unknown_event
 
     def query_history_events(self) -> None:
-        self.msg_aggregator.add_message(
-            message_type=WSMessageType.HISTORY_EVENTS_STATUS,
-            data={
-                'status': str(HistoryEventsStep.QUERYING_EVENTS_STARTED),
-                'location': str(self.location),
-                'event_type': str(HistoryEventsQueryType.HISTORY_QUERY),
-                'name': self.name,
-            },
-        )
+        self.send_history_events_status_msg(step=HistoryEventsStep.QUERYING_EVENTS_STARTED)
         with self.db.conn.read_ctx() as cursor:
             # We give the full range but internally it queries only for the missing time ranges
             self.query_kraken_ledgers(
@@ -1260,12 +1157,4 @@ class Kraken(ExchangeInterface, ExchangeWithExtras):
                 end_ts=ts_now(),
                 notify_events=True,
             )
-        self.msg_aggregator.add_message(
-            message_type=WSMessageType.HISTORY_EVENTS_STATUS,
-            data={
-                'status': str(HistoryEventsStep.QUERYING_EVENTS_FINISHED),
-                'location': str(self.location),
-                'event_type': str(HistoryEventsQueryType.HISTORY_QUERY),
-                'name': self.name,
-            },
-        )
+        self.send_history_events_status_msg(step=HistoryEventsStep.QUERYING_EVENTS_FINISHED)

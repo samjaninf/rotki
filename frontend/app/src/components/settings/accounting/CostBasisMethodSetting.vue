@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { CostBasisMethod } from '@/types/user';
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import CostBasisMethodSettings from '@/components/settings/accounting/CostBasisMethodSettings.vue';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
 const costBasisMethod = ref<CostBasisMethod>(CostBasisMethod.FIFO);
 const { costBasisMethod: method } = storeToRefs(useAccountingSettingsStore());
@@ -32,11 +35,11 @@ function getErrorMessage(method: string) {
   >
     <CostBasisMethodSettings
       v-model="costBasisMethod"
-      class="accounting-settings__cost-basis-method pt-4"
-      :success-messages="success"
-      :error-messages="error"
+      class="pt-4"
+      :success-messages="success ? [success] : []"
+      :error-messages="error ? [error] : []"
       :label="t('accounting_settings.trade.labels.cost_basis_method')"
-      @input="updateImmediate($event)"
+      @update:model-value="updateImmediate($event)"
     />
   </SettingsOption>
 </template>

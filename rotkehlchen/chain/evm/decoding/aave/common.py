@@ -1,12 +1,14 @@
+import logging
 from abc import abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.ethereum.constants import RAY
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.aave.constants import (
+    CPT_AAVE_V3,
     DISABLE_COLLATERAL,
     ENABLE_COLLATERAL,
     LIQUIDATION_CALL,
@@ -20,45 +22,46 @@ from rotkehlchen.chain.evm.decoding.structures import (
 )
 from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
-from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.resolver import evm_address_to_identifier
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress, EvmTokenKind, EvmTransaction
-from rotkehlchen.utils.misc import (
-    hex_or_bytes_to_address,
-    hex_or_bytes_to_int,
-    hex_or_bytes_to_str,
-)
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
-    from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
 
+logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
 
-class Commonv2v3Decoder(DecoderInterface):
+
+class Commonv2v3LikeDecoder(DecoderInterface):
     def __init__(
             self,
-            counterparty: Literal['aave-v2', 'aave-v3'],
-            label: Literal['AAVE v2', 'AAVE v3'],
-            pool_address: 'ChecksumEvmAddress',
+            counterparty: Literal['aave-v2', 'aave-v3', 'spark'],
+            label: Literal['AAVE v2', 'AAVE v3', 'Spark'],
+            pool_addresses: Sequence['ChecksumEvmAddress'],
             deposit_signature: bytes,
             borrow_signature: bytes,
             repay_signature: bytes,
-            eth_gateways: tuple['ChecksumEvmAddress', ...],
+            native_gateways: tuple['ChecksumEvmAddress', ...],
             evm_inquirer: 'EvmNodeInquirer',
             base_tools: 'BaseDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ):
         self.counterparty = counterparty
-        self.pool_address = pool_address
+        self.pool_addresses = pool_addresses
         self.deposit_signature = deposit_signature
         self.borrow_signature = borrow_signature
         self.repay_signature = repay_signature
-        self.eth_gateways = eth_gateways
+        self.native_gateways = native_gateways
         self.label = label
         DecoderInterface.__init__(
             self,
@@ -98,7 +101,7 @@ class Commonv2v3Decoder(DecoderInterface):
             tx_log: EvmTxReceiptLog,
     ) -> Optional['EvmEvent']:
         """Decode aave v2/v3 collateral events"""
-        user = hex_or_bytes_to_address(tx_log.topics[2])
+        user = bytes_to_address(tx_log.topics[2])
         if not self.base.is_tracked(user):
             return None
         return self.base.make_event_from_transaction(
@@ -107,7 +110,7 @@ class Commonv2v3Decoder(DecoderInterface):
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=token,
-            balance=Balance(),
+            amount=ZERO,
             location_label=user,
             notes=f'{"Enable" if tx_log.topics[0] == ENABLE_COLLATERAL else "Disable"} {token.symbol} as collateral on {self.label}',  # noqa: E501
             counterparty=self.counterparty,
@@ -119,34 +122,40 @@ class Commonv2v3Decoder(DecoderInterface):
             token: 'EvmToken',
             tx_log: EvmTxReceiptLog,
             decoded_events: list['EvmEvent'],
-    ) -> None:
-        """Decode aave v2/v3 deposit event"""
-        user = hex_or_bytes_to_address(tx_log.data[:32])
-        on_behalf_of = hex_or_bytes_to_address(tx_log.topics[2]) if hex_or_bytes_to_str(tx_log.topics[2]) != '' else None  # noqa: E501
-        # in the case of needing to wrap ETH to WETH aave uses the ETH_GATEWAY contract and the
-        # user is the contract address
+    ) -> tuple[EvmEvent | None, EvmEvent | None]:
+        """Decode aave v2/v3 deposit event. Returns the Deposit and Receive events."""
+        user = bytes_to_address(tx_log.data[:32])
+        try:
+            on_behalf_of = bytes_to_address(tx_log.topics[2])
+        except DeserializationError:
+            on_behalf_of = None
+
+        # in the case of needing to wrap the native asset aave uses the
+        # (NATIVE_CURRENCY)_GATEWAY contract and the user is the contract address
         if (
-            (user not in self.eth_gateways and not self.base.is_tracked(user)) and
+            (user not in self.native_gateways and not self.base.is_tracked(user)) and
             (on_behalf_of is None or not self.base.is_tracked(on_behalf_of))
         ):
-            return
+            return None, None
+
         amount = asset_normalized_value(
-            amount=hex_or_bytes_to_int(tx_log.data[32:64]),
+            amount=int.from_bytes(tx_log.data[32:64]),
             asset=token,
         )
+        deposit_event, receive_event = None, None
         notes = f'Deposit {amount} {token.symbol} into {self.label}'
-        if on_behalf_of is not None and user not in self.eth_gateways and on_behalf_of != user:
+        if on_behalf_of is not None and user not in self.native_gateways and on_behalf_of != user:
             notes += f' on behalf of {on_behalf_of}'
 
         for event in decoded_events:
             if (
                 event.address is not None and
-                (event.location_label == user or (event.location_label == on_behalf_of and user in self.eth_gateways)) and  # noqa: E501
-                event.balance.amount == amount and
+                (event.location_label == user or (event.location_label == on_behalf_of and user in self.native_gateways)) and  # noqa: E501
+                (self.counterparty == CPT_AAVE_V3 or event.amount == amount) and  # For aave v3 we can't match amounts exactly  # noqa: E501
                 event.event_subtype == HistoryEventSubType.NONE and (
                     self._address_is_aave_contract(queried_address=event.address) or
                     event.address == ZERO_ADDRESS or
-                    event.address in self.eth_gateways
+                    event.address in self.native_gateways
                 )
             ):
                 if (
@@ -154,37 +163,46 @@ class Commonv2v3Decoder(DecoderInterface):
                     event.address != ZERO_ADDRESS
                 ):
                     event.event_type = HistoryEventType.DEPOSIT
-                    event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                    event.event_subtype = HistoryEventSubType.DEPOSIT_FOR_WRAPPED
                     event.notes = notes
                     event.counterparty = self.counterparty
+                    deposit_event = event
                 elif (
                     event.address == ZERO_ADDRESS and
                     self._token_is_aave_contract(event.asset)
                 ):
                     event.event_subtype = HistoryEventSubType.RECEIVE_WRAPPED
                     resolved_asset = event.asset.resolve_to_asset_with_symbol()
-                    event.notes = f'Receive {event.balance.amount} {resolved_asset.symbol} from {self.label}'  # noqa: E501
+                    event.notes = f'Receive {event.amount} {resolved_asset.symbol} from {self.label}'  # noqa: E501
                     event.counterparty = self.counterparty
+                    receive_event = event
+
+        return deposit_event, receive_event
 
     def _decode_withdrawal(
             self,
             token: 'EvmToken',
             tx_log: EvmTxReceiptLog,
             decoded_events: list['EvmEvent'],
-    ) -> None:
-        """Decode aave v2/v3 withdrawal event"""
-        user = hex_or_bytes_to_address(tx_log.topics[2])
-        to = hex_or_bytes_to_address(tx_log.topics[3])
+    ) -> tuple[EvmEvent | None, EvmEvent | None]:
+        """Decode aave v2/v3 withdrawal event. Returns the Return and Withdraw events."""
+        user = bytes_to_address(tx_log.topics[2])
+        to = bytes_to_address(tx_log.topics[3])
         return_event, withdraw_event = None, None
-        if not self.base.any_tracked([user, to]):
-            return
+        if (
+            not (is_wnative_user := user in self.native_gateways) and
+            not self.base.any_tracked([user, to])
+        ):
+            return None, None
         amount = asset_normalized_value(
-            amount=hex_or_bytes_to_int(tx_log.data),
+            amount=int.from_bytes(tx_log.data),
             asset=token,
         )
-        notes = f'Withdraw {amount} {token.symbol} from {self.label}'
+        symbol = self.evm_inquirer.native_token.symbol if is_wnative_user else token.symbol
+        notes = f'Withdraw {amount} {symbol} from {self.label}'
         if to != user:
             notes += f' to {to}'
+
         for event in decoded_events:
             if (
                 event.address is not None and
@@ -192,68 +210,68 @@ class Commonv2v3Decoder(DecoderInterface):
                 event.event_subtype == HistoryEventSubType.NONE and (
                     self._address_is_aave_contract(queried_address=event.address) or
                     event.address == ZERO_ADDRESS or
-                    event.address in self.eth_gateways
+                    event.address in self.native_gateways
                 )
             ):
                 if (
-                    event.location_label == to and
+                    (event.location_label == to or (event.asset == self.evm_inquirer.native_token and is_wnative_user)) and  # noqa: E501
                     event.event_type == HistoryEventType.RECEIVE and
                     event.address != ZERO_ADDRESS
                 ):
                     event.event_type = HistoryEventType.WITHDRAWAL
-                    event.event_subtype = HistoryEventSubType.REMOVE_ASSET
-                    event.location_label = user
+                    event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
+                    if is_wnative_user is False:  # else location label is correctly set by the transfer decoder  # noqa: E501
+                        event.location_label = user
+
                     event.notes = notes
                     withdraw_event = event
                     event.counterparty = self.counterparty
                 elif (
-                    event.address == ZERO_ADDRESS and
+                    event.event_type != HistoryEventType.RECEIVE and
+                    (event.address == ZERO_ADDRESS or event.address in self.native_gateways) and
                     self._token_is_aave_contract(event.asset)
                 ):
                     event.event_subtype = HistoryEventSubType.RETURN_WRAPPED
-                    resolved_asset = event.asset.resolve_to_asset_with_symbol()
-                    event.notes = f'Return {event.balance.amount} {resolved_asset.symbol} to {self.label}'  # noqa: E501
+                    event.notes = f'Return {event.amount} {event.asset.symbol_or_name()} to {self.label}'  # noqa: E501
                     return_event = event
                     event.counterparty = self.counterparty
 
-        maybe_reshuffle_events(  # Make sure that the out event comes first
-            ordered_events=[return_event, withdraw_event],
-            events_list=decoded_events,
-        )
+        return return_event, withdraw_event
 
     def _decode_borrow(
             self,
             token: 'EvmToken',
             tx_log: EvmTxReceiptLog,
             decoded_events: list['EvmEvent'],
-    ) -> None:
-        """Decode aave v2/v3 borrow event"""
-        on_behalf_of = hex_or_bytes_to_address(tx_log.topics[2])
-        user = hex_or_bytes_to_address(tx_log.data[:32])
+    ) -> tuple[EvmEvent | None, EvmEvent | None]:
+        """Decode aave v2/v3 borrow event. Returns the Receive and Borrow events."""
+        on_behalf_of = bytes_to_address(tx_log.topics[2])
+        user = bytes_to_address(tx_log.data[:32])
         if not self.base.any_tracked([user, on_behalf_of]):
-            return
+            return None, None
 
         amount = asset_normalized_value(
-            amount=hex_or_bytes_to_int(tx_log.data[32:64]),
+            amount=int.from_bytes(tx_log.data[32:64]),
             asset=token,
         )
-        rate_mode = hex_or_bytes_to_int(tx_log.data[64:96])
+        rate_mode = int.from_bytes(tx_log.data[64:96])
         # Aave uses ray math https://docs.aave.com/developers/v/1.0/developing-on-aave/important-considerations#ray-math  # noqa: E501
         # To get the rate we have to divide the value by 1e27. And then multiply by 100 to get the percentage.  # noqa: E501
-        rate = hex_or_bytes_to_int(tx_log.data[96:128]) / FVal(RAY) * 100
+        rate = int.from_bytes(tx_log.data[96:128]) / FVal(RAY) * 100
         notes = f'Borrow {amount} {token.symbol} from {self.label} with {"stable" if rate_mode == 1 else "variable"} APY {rate.num:.2f}%'  # noqa: E501
         if on_behalf_of != user:
             notes += f' on behalf of {on_behalf_of}'
+        debt_event, receive_event = None, None
         for event in decoded_events:
             if (
                 event.address is not None and
-                event.balance.amount == amount and
+                event.amount == amount and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.location_label == user and
                 event.event_type == HistoryEventType.RECEIVE and (
                     self._address_is_aave_contract(queried_address=event.address) or
                     event.address == ZERO_ADDRESS or
-                    event.address in self.eth_gateways
+                    event.address in self.native_gateways
                 )
             ):
                 if (
@@ -263,6 +281,7 @@ class Commonv2v3Decoder(DecoderInterface):
                     event.event_subtype = HistoryEventSubType.GENERATE_DEBT
                     event.notes = notes
                     event.counterparty = self.counterparty
+                    debt_event = event
                 elif (
                     event.address == ZERO_ADDRESS and
                     self._token_is_aave_contract(event.asset)
@@ -271,18 +290,22 @@ class Commonv2v3Decoder(DecoderInterface):
                     resolved_asset = event.asset.resolve_to_asset_with_symbol()
                     event.notes = f'Receive {amount} {resolved_asset.symbol} from {self.label}'
                     event.counterparty = self.counterparty
+                    receive_event = event
+
+        return receive_event, debt_event
 
     def _decode_repay(
             self,
             token: 'EvmToken',
             tx_log: EvmTxReceiptLog,
             decoded_events: list['EvmEvent'],
-    ) -> None:
-        """Decode aave v2/v3 repay event"""
-        user = hex_or_bytes_to_address(tx_log.topics[2])
-        repayer = hex_or_bytes_to_address(tx_log.topics[3])
+    ) -> tuple[EvmEvent | None, EvmEvent | None]:
+        """Decode aave v2/v3 repay event. Returns the Return and Repay events."""
+        user = bytes_to_address(tx_log.topics[2])
+        repayer = bytes_to_address(tx_log.topics[3])
+        return_event, repay_event = None, None
         if not self.base.any_tracked([user, repayer]):
-            return
+            return None, None
 
         for event in decoded_events:
             if (
@@ -292,7 +315,7 @@ class Commonv2v3Decoder(DecoderInterface):
                 event.event_subtype == HistoryEventSubType.NONE and (
                     self._address_is_aave_contract(queried_address=event.address) or
                     event.address == ZERO_ADDRESS or
-                    event.address in self.eth_gateways
+                    event.address in self.native_gateways
                 )
             ):
                 if (
@@ -302,15 +325,19 @@ class Commonv2v3Decoder(DecoderInterface):
                     event.event_subtype = HistoryEventSubType.RETURN_WRAPPED
                     resolved_asset = event.asset.resolve_to_asset_with_symbol()
                     event.counterparty = self.counterparty
-                    event.notes = f'Return {event.balance.amount} {resolved_asset.symbol} to {self.label}'  # noqa: E501
+                    event.notes = f'Return {event.amount} {resolved_asset.symbol} to {self.label}'
+                    return_event = event
                     if repayer != user:
                         event.notes += f' for {user}'
                 elif event.address != ZERO_ADDRESS:
                     event.event_subtype = HistoryEventSubType.PAYBACK_DEBT
                     event.counterparty = self.counterparty
-                    event.notes = f'Repay {event.balance.amount} {token.symbol} on {self.label}'
+                    event.notes = f'Repay {event.amount} {token.symbol} on {self.label}'
+                    repay_event = event
                     if repayer != user:
                         event.notes += f' for {user}'
+
+        return return_event, repay_event
 
     def _decode_lending_pool_events(self, context: DecoderContext) -> DecodingOutput:
         """Decodes AAVE v2/v3 Lending Pool events"""
@@ -331,27 +358,89 @@ class Commonv2v3Decoder(DecoderInterface):
             return DEFAULT_DECODING_OUTPUT
 
         token = EvmToken(evm_address_to_identifier(
-            address=hex_or_bytes_to_address(context.tx_log.topics[1]),
+            address=bytes_to_address(context.tx_log.topics[1]),
             token_type=EvmTokenKind.ERC20,
             chain_id=self.evm_inquirer.chain_id,
         ))
 
         if context.tx_log.topics[0] in (ENABLE_COLLATERAL, DISABLE_COLLATERAL):
             event = self._decode_collateral_events(token, context.transaction, context.tx_log)
-            return DecodingOutput(event=event)
-        if context.tx_log.topics[0] == self.deposit_signature:
-            self._decode_deposit(token, context.tx_log, context.decoded_events)
-        elif context.tx_log.topics[0] == WITHDRAW:
-            self._decode_withdrawal(token, context.tx_log, context.decoded_events)
-        elif context.tx_log.topics[0] == self.borrow_signature:
-            self._decode_borrow(token, context.tx_log, context.decoded_events)
-        else:  # Repay
-            self._decode_repay(token, context.tx_log, context.decoded_events)
+            return DecodingOutput(event=event, matched_counterparty=self.counterparty)
 
-        return DEFAULT_DECODING_OUTPUT
+        if context.tx_log.topics[0] == self.deposit_signature:
+            paired_events = self._decode_deposit(token, context.tx_log, context.decoded_events)
+        elif context.tx_log.topics[0] == WITHDRAW:
+            paired_events = self._decode_withdrawal(token, context.tx_log, context.decoded_events)
+        elif context.tx_log.topics[0] == self.borrow_signature:
+            paired_events = self._decode_borrow(token, context.tx_log, context.decoded_events)
+        else:  # Repay
+            paired_events = self._decode_repay(token, context.tx_log, context.decoded_events)
+
+        if None in paired_events:
+            log.warning(  # can happen in cases where one of the events comes later such as in test_aave_v3_withdraw_with_bigger_interest  # noqa: E501
+                f'Could not find all paired events in {self.counterparty} tx {context.transaction.tx_hash.hex()}'  # noqa: E501
+                f' on {self.evm_inquirer.chain_name}.',
+            )
+
+        maybe_reshuffle_events(  # Make sure that the paired events are in order
+            ordered_events=paired_events,
+            events_list=context.decoded_events,
+        )
+        return DecodingOutput(matched_counterparty=self.counterparty)
+
+    def _decode_incentives_common(
+            self,
+            context: 'DecoderContext',
+            to_idx: int,
+            claimer_raw: bytes,
+            reward_token_address: ChecksumEvmAddress,
+            amount_raw: bytes,
+    ) -> DecodingOutput:
+        user_tracked = self.base.is_tracked(user := bytes_to_address(context.tx_log.topics[1]))
+        to_tracked = self.base.is_tracked(to_address := bytes_to_address(context.tx_log.topics[to_idx]))  # noqa: E501
+        claimer_tracked = self.base.is_tracked(claimer := bytes_to_address(claimer_raw))
+
+        if not user_tracked and not to_tracked and not claimer_tracked:
+            return DEFAULT_DECODING_OUTPUT
+
+        reward_token = self.base.get_or_create_evm_token(address=reward_token_address)
+        amount = asset_normalized_value(
+            amount=int.from_bytes(amount_raw),
+            asset=reward_token,
+        )
+
+        for event in context.decoded_events:
+            if (  # not checking subtype NONE as in the stkAAVE case it can already be decoded as RECEIVE_WRAPPED  # noqa: E501
+                    event.event_type == HistoryEventType.RECEIVE and
+                    event.asset == reward_token and
+                    event.amount == amount
+            ):
+                event.event_subtype = HistoryEventSubType.REWARD
+                event.counterparty = self.counterparty
+                event.notes = f'Claim {amount} {reward_token.resolve_to_asset_with_symbol().symbol}'  # noqa: E501
+
+                if not to_tracked:
+                    event.notes += f' for {to_address}'
+                    event.location_label = claimer
+                    if user != to_address:
+                        event.notes += f' on behalf of {user}'
+
+                else:
+                    event.location_label = to_address
+
+                event.notes += f' from {self.label} incentives'
+                event.address = context.tx_log.address
+
+                break
+
+        else:
+            log.error(
+                f'Failed to find the {self.label} incentive reward transfer for {self.evm_inquirer.chain_name} transaction {context.transaction.tx_hash.hex()}.',  # noqa: E501
+            )
+            return DEFAULT_DECODING_OUTPUT
+
+        return DecodingOutput(matched_counterparty=self.counterparty)
 
     # DecoderInterface method
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
-        return {
-            string_to_evm_address(self.pool_address): (self._decode_lending_pool_events,),
-        }
+        return dict.fromkeys(self.pool_addresses, (self._decode_lending_pool_events,))

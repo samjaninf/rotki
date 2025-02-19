@@ -1,7 +1,11 @@
-import { type Wrapper, mount } from '@vue/test-utils';
+import { type VueWrapper, mount } from '@vue/test-utils';
 import flushPromises from 'flush-promises/index';
-import Vuetify from 'vuetify';
-import PremiumSettings from '@/pages/settings/api-keys/premium/index.vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import PremiumSettings from '@/pages/api-keys/premium/index.vue';
+import { useConfirmStore } from '@/store/confirm';
+import { useInterop } from '@/composables/electron-interop';
+import { usePremium } from '@/composables/premium';
+import { usePremiumCredentialsApi } from '@/composables/api/session/premium-credentials';
 
 vi.mock('@/composables/electron-interop', () => {
   const mockInterop = {
@@ -18,17 +22,17 @@ vi.mock('@/composables/api/session/premium-credentials', () => ({
 }));
 
 describe('premiumSettings.vue', () => {
-  let wrapper: Wrapper<PremiumSettings>;
+  let wrapper: VueWrapper<InstanceType<typeof PremiumSettings>>;
   let api: ReturnType<typeof usePremiumCredentialsApi>;
 
   function createWrapper() {
-    const vuetify = new Vuetify();
     const pinia = createPinia();
     setActivePinia(pinia);
     return mount(PremiumSettings, {
-      pinia,
-      vuetify,
-      stubs: ['i18n', 'card-title'],
+      global: {
+        plugins: [pinia],
+        stubs: ['i18n-t', 'card-title'],
+      },
     });
   }
 
@@ -36,6 +40,10 @@ describe('premiumSettings.vue', () => {
     document.body.dataset.app = 'true';
     wrapper = createWrapper();
     api = usePremiumCredentialsApi();
+  });
+
+  afterEach(() => {
+    wrapper.unmount();
   });
 
   it('updates premium status upon setting keys', async () => {
@@ -56,7 +64,7 @@ describe('premiumSettings.vue', () => {
   });
 
   it('updates premium status upon removing keys', async () => {
-    const { premium } = storeToRefs(usePremiumStore());
+    const premium = usePremium();
     set(premium, true);
 
     await nextTick();

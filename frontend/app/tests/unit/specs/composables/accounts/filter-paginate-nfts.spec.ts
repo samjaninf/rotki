@@ -1,42 +1,45 @@
 import flushPromises from 'flush-promises';
+import { afterEach, assertType, beforeAll, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { useNonFungibleBalancesStore } from '@/store/balances/non-fungible';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import type * as Vue from 'vue';
 import type { MaybeRef } from '@vueuse/core';
 import type { Collection } from '@/types/collection';
-import type {
-  NonFungibleBalance,
-  NonFungibleBalancesRequestPayload,
-} from '@/types/nfbalances';
+import type { NonFungibleBalance, NonFungibleBalancesRequestPayload } from '@/types/nfbalances';
 import type { LocationQuery } from '@/types/route';
-import type Vue from 'vue';
 
-vi.mock('vue-router/composables', () => ({
-  useRoute: vi.fn().mockReturnValue(
-    reactive({
-      query: {},
+vi.mock('vue-router', async () => {
+  const { ref } = await import('vue');
+  const { set } = await import('@vueuse/core');
+  const route = ref({
+    query: {},
+  });
+  return {
+    useRoute: vi.fn().mockReturnValue(route),
+    useRouter: vi.fn().mockReturnValue({
+      push: vi.fn(({ query }) => {
+        set(route, { query });
+        return true;
+      }),
     }),
-  ),
-  useRouter: vi.fn().mockReturnValue({
-    push: vi.fn(({ query }) => {
-      useRoute().query = query;
-      return true;
-    }),
-  }),
-}));
+  };
+});
 
 vi.mock('vue', async () => {
-  const mod = await vi.importActual<Vue>('vue');
+  const mod = await vi.importActual<typeof Vue>('vue');
 
   return {
     ...mod,
-    onBeforeMount: vi.fn().mockImplementation((fn: Function) => fn()),
+    onBeforeMount: vi.fn().mockImplementation((fn: () => void) => fn()),
   };
 });
 
 describe('composables::history/filter-paginate', () => {
   let fetchNonFungibleBalances: (
-    payload: MaybeRef<NonFungibleBalancesRequestPayload>
+    payload: MaybeRef<NonFungibleBalancesRequestPayload>,
   ) => Promise<Collection<NonFungibleBalance>>;
-  const locationOverview: MaybeRef<string | null> = ref('');
-  const mainPage: Ref<boolean> = ref(false);
+  const locationOverview = ref<string>('');
+  const mainPage = ref<boolean>(false);
   const router = useRouter();
   const route = useRoute();
 
@@ -71,24 +74,19 @@ describe('composables::history/filter-paginate', () => {
         sort,
         state,
         fetchData,
-        applyRouteFilter,
         isLoading,
-      } = usePaginationFilters<NonFungibleBalance>(
+      } = usePaginationFilters<NonFungibleBalance>(fetchNonFungibleBalances, {
+        history: get(mainPage) ? 'router' : false,
         locationOverview,
-        mainPage,
-        useEmptyFilter,
-        fetchNonFungibleBalances,
-        {
-          onUpdateFilters,
-          extraParams,
-          defaultSortBy: {
-            key: 'name',
-            ascending: [true],
-          },
-        },
-      );
+        onUpdateFilters,
+        extraParams,
+        defaultSortBy: [{
+          column: 'name',
+          direction: 'asc',
+        }],
+      });
 
-      expect(get(userAction)).toBe(true);
+      expect(get(userAction)).toBe(false);
       expect(get(isLoading)).toBe(false);
       expect(get(filters)).to.toStrictEqual(undefined);
       expect(get(sort)).toHaveLength(1);
@@ -100,7 +98,7 @@ describe('composables::history/filter-paginate', () => {
       expect(get(state).total).toEqual(0);
 
       set(userAction, true);
-      applyRouteFilter();
+      await nextTick();
       fetchData().catch(() => {});
       expect(get(isLoading)).toBe(true);
       await flushPromises();
@@ -108,21 +106,23 @@ describe('composables::history/filter-paginate', () => {
     });
 
     it('check the return types', () => {
-      const { isLoading, state, filters, matchers }
-        = usePaginationFilters<NonFungibleBalance>(
-          locationOverview,
-          mainPage,
-          useEmptyFilter,
-          fetchNonFungibleBalances,
+      const {
+        isLoading,
+        state,
+        filters,
+        matchers,
+      } = usePaginationFilters<NonFungibleBalance>(fetchNonFungibleBalances, {
+        history: get(mainPage) ? 'router' : false,
+        locationOverview,
+        onUpdateFilters,
+        extraParams,
+        defaultSortBy: [
           {
-            onUpdateFilters,
-            extraParams,
-            defaultSortBy: {
-              key: 'name',
-              ascending: [true],
-            },
+            column: 'name',
+            direction: 'asc',
           },
-        );
+        ],
+      });
 
       expect(get(isLoading)).toBe(false);
 
@@ -135,22 +135,27 @@ describe('composables::history/filter-paginate', () => {
 
     it('modify filters and fetch data correctly', async () => {
       const pushSpy = vi.spyOn(router, 'push');
-      const query = { sortDesc: ['false'] };
+      const query = { sortOrder: ['asc'] };
 
-      const { isLoading, state } = usePaginationFilters<NonFungibleBalance>(
+      const {
+        isLoading,
+        state,
+        sort,
+      } = usePaginationFilters<NonFungibleBalance>(fetchNonFungibleBalances, {
+        history: get(mainPage) ? 'router' : false,
         locationOverview,
-        mainPage,
-        useEmptyFilter,
-        fetchNonFungibleBalances,
-        {
-          onUpdateFilters,
-          extraParams,
-          defaultSortBy: {
-            key: 'name',
-            ascending: [false],
-          },
-        },
-      );
+        onUpdateFilters,
+        extraParams,
+        defaultSortBy: [{
+          column: 'name',
+          direction: 'desc',
+        }],
+      });
+
+      expect(get(sort)).toStrictEqual([{
+        column: 'name',
+        direction: 'desc',
+      }]);
 
       await router.push({
         query,
@@ -158,7 +163,7 @@ describe('composables::history/filter-paginate', () => {
 
       expect(pushSpy).toHaveBeenCalledOnce();
       expect(pushSpy).toHaveBeenCalledWith({ query });
-      expect(route.query).toEqual(query);
+      expect(get(route).query).toEqual(query);
       expect(get(isLoading)).toBe(true);
       await flushPromises();
       expect(get(isLoading)).toBe(false);
@@ -170,6 +175,10 @@ describe('composables::history/filter-paginate', () => {
       expect(get(state).data).toHaveLength(9);
       expect(get(state).found).toEqual(29);
       expect(get(state).total).toEqual(30);
+      expect(get(sort)).toStrictEqual([{
+        column: 'timestamp',
+        direction: 'asc',
+      }]);
     });
   });
 });

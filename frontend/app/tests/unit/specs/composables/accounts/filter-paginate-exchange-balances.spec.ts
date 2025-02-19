@@ -1,41 +1,43 @@
 import flushPromises from 'flush-promises';
+import { afterEach, assertType, beforeAll, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { useExchangeBalancesStore } from '@/store/balances/exchanges';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import type * as Vue from 'vue';
 import type { MaybeRef } from '@vueuse/core';
-import type {
-  ExchangeSavingsCollection,
-  ExchangeSavingsEvent,
-  ExchangeSavingsRequestPayload,
-} from '@/types/exchanges';
-import type Vue from 'vue';
+import type { ExchangeSavingsCollection, ExchangeSavingsEvent, ExchangeSavingsRequestPayload } from '@/types/exchanges';
+import type { Collection } from '@/types/collection';
+import type { AssetBalance } from '@rotki/common';
 
-vi.mock('vue-router/composables', () => ({
-  useRoute: vi.fn().mockReturnValue(
-    reactive({
-      query: {},
+vi.mock('vue-router', async () => {
+  const { ref } = await import('vue');
+  const { set } = await import('@vueuse/core');
+  const route = ref({
+    query: {},
+  });
+  return {
+    useRoute: vi.fn().mockReturnValue(route),
+    useRouter: vi.fn().mockReturnValue({
+      push: vi.fn(({ query }) => {
+        set(route, { query });
+        return true;
+      }),
     }),
-  ),
-  useRouter: vi.fn().mockReturnValue({
-    push: vi.fn(({ query }) => {
-      useRoute().query = query;
-      return true;
-    }),
-  }),
-}));
+  };
+});
 
 vi.mock('vue', async () => {
-  const mod = await vi.importActual<Vue>('vue');
+  const mod = await vi.importActual<typeof Vue>('vue');
 
   return {
     ...mod,
-    onBeforeMount: vi.fn().mockImplementation((fn: Function) => fn()),
+    onBeforeMount: vi.fn().mockImplementation((fn: () => void) => fn()),
   };
 });
 
 describe('composables::history/filter-paginate', () => {
-  let fetchExchangeSavings: (
-    payload: MaybeRef<ExchangeSavingsRequestPayload>
-  ) => Promise<ExchangeSavingsCollection>;
-  const exchange: MaybeRef<string> = ref('binance');
-  const mainPage: Ref<boolean> = ref(false);
+  let fetchExchangeSavings: (payload: MaybeRef<ExchangeSavingsRequestPayload>) => Promise<ExchangeSavingsCollection>;
+  const exchange = ref<string>('binance');
+  const mainPage = ref<boolean>(false);
   const router = useRouter();
   const route = useRoute();
 
@@ -49,63 +51,58 @@ describe('composables::history/filter-paginate', () => {
   });
 
   describe('components::exchanges/BinanceSavingDetail.vue', () => {
+    const exchangeReceived = ref<AssetBalance[]>([]);
+    const exchangeAssets = ref<string[]>([]);
     const defaultParams = computed(() => ({
       location: get(exchange).toString(),
     }));
 
-    const defaultCollectionState = (): ExchangeSavingsCollection => ({
-      found: 0,
-      limit: 0,
-      data: [],
-      total: 0,
-      totalUsdValue: Zero,
-      assets: [],
-      received: [],
-    });
+    async function fetchSavings(payload: MaybeRef<ExchangeSavingsRequestPayload>) {
+      const { received = [], assets = [], ...collection } = await fetchExchangeSavings(payload);
+      set(exchangeAssets, assets);
+      set(exchangeReceived, received);
+      return collection;
+    }
 
     beforeEach(() => {
       set(mainPage, true);
+      set(exchangeAssets, []);
+      set(exchangeReceived, []);
     });
 
     it('initialize composable correctly', async () => {
-      const {
-        userAction,
-        filters,
-        sort,
-        state,
-        fetchData,
-        applyRouteFilter,
-        isLoading,
-      } = usePaginationFilters<
+      const { userAction, filters, sort, state, fetchData, isLoading } = usePaginationFilters<
         ExchangeSavingsEvent,
-        ExchangeSavingsRequestPayload,
-        ExchangeSavingsEvent,
-        ExchangeSavingsCollection
-      >(exchange, mainPage, useEmptyFilter, fetchExchangeSavings, {
-        defaultCollection: defaultCollectionState,
+        ExchangeSavingsRequestPayload
+      >(fetchSavings, {
+        history: get(mainPage) ? 'router' : false,
+        locationOverview: exchange,
         defaultParams,
-        defaultSortBy: {
-          ascending: [true],
-        },
+        defaultSortBy: [{
+          direction: 'asc',
+        }],
       });
 
-      expect(get(userAction)).toBe(true);
+      expect(get(userAction)).toBe(false);
       expect(get(isLoading)).toBe(false);
       expect(get(filters)).to.toStrictEqual(undefined);
       expect(get(sort)).toHaveLength(1);
-      expect(get(sort)).toMatchObject([{
-        column: 'timestamp',
-        direction: 'asc',
-      }]);
+      expect(get(sort)).toMatchObject([
+        {
+          column: 'timestamp',
+          direction: 'asc',
+        },
+      ]);
       expect(get(state).data).toHaveLength(0);
-      expect(get(state).assets).toHaveLength(0);
-      expect(get(state).received).toHaveLength(0);
+      expect(get(exchangeAssets)).toHaveLength(0);
+      expect(get(exchangeReceived)).toHaveLength(0);
       expect(get(state).total).toEqual(0);
 
       set(userAction, true);
-      applyRouteFilter();
+      await nextTick();
       fetchData().catch(() => {});
       expect(get(isLoading)).toBe(true);
+      await flushPromises();
       await flushPromises();
       expect(get(isLoading)).toBe(false);
       expect(get(state).total).toEqual(260);
@@ -114,20 +111,19 @@ describe('composables::history/filter-paginate', () => {
     it('check the return types', () => {
       const { isLoading, state, filters, matchers } = usePaginationFilters<
         ExchangeSavingsEvent,
-        ExchangeSavingsRequestPayload,
-        ExchangeSavingsEvent,
-        ExchangeSavingsCollection
-      >(exchange, mainPage, useEmptyFilter, fetchExchangeSavings, {
-        defaultCollection: defaultCollectionState,
+        ExchangeSavingsRequestPayload
+      >(fetchExchangeSavings, {
+        history: get(mainPage) ? 'router' : false,
+        locationOverview: exchange,
         defaultParams,
-        defaultSortBy: {
-          ascending: [true],
-        },
+        defaultSortBy: [{
+          direction: 'asc',
+        }],
       });
 
       expect(get(isLoading)).toBe(false);
 
-      expectTypeOf(get(state)).toEqualTypeOf<ExchangeSavingsCollection>();
+      expectTypeOf(get(state)).toEqualTypeOf<Collection<ExchangeSavingsEvent>>();
       expectTypeOf(get(state).data).toEqualTypeOf<ExchangeSavingsEvent[]>();
       expectTypeOf(get(state).found).toEqualTypeOf<number>();
       expectTypeOf(get(filters)).toEqualTypeOf<undefined>();
@@ -136,20 +132,24 @@ describe('composables::history/filter-paginate', () => {
 
     it('modify filters and fetch data correctly', async () => {
       const pushSpy = vi.spyOn(router, 'push');
-      const query = { sortDesc: ['false'] };
+      const query = { sortOrder: ['desc'] };
 
-      const { isLoading, state } = usePaginationFilters<
+      const { isLoading, state, sort } = usePaginationFilters<
         ExchangeSavingsEvent,
-        ExchangeSavingsRequestPayload,
-        ExchangeSavingsEvent,
-        ExchangeSavingsCollection
-      >(exchange, mainPage, useEmptyFilter, fetchExchangeSavings, {
-        defaultCollection: defaultCollectionState,
+        ExchangeSavingsRequestPayload
+      >(fetchSavings, {
+        history: get(mainPage) ? 'router' : false,
+        locationOverview: exchange,
         defaultParams,
-        defaultSortBy: {
-          ascending: [false],
-        },
+        defaultSortBy: [{
+          direction: 'asc',
+        }],
       });
+
+      expect(get(sort)).toStrictEqual([{
+        column: 'timestamp',
+        direction: 'asc',
+      }]);
 
       await router.push({
         query,
@@ -157,20 +157,24 @@ describe('composables::history/filter-paginate', () => {
 
       expect(pushSpy).toHaveBeenCalledOnce();
       expect(pushSpy).toHaveBeenCalledWith({ query });
-      expect(route.query).toEqual(query);
+      expect(get(route).query).toEqual(query);
       expect(get(isLoading)).toBe(true);
       await flushPromises();
       expect(get(isLoading)).toBe(false);
 
-      assertType<ExchangeSavingsCollection>(get(state));
+      assertType<Collection<ExchangeSavingsEvent>>(get(state));
       assertType<ExchangeSavingsEvent[]>(get(state).data);
       assertType<number>(get(state).found);
 
       expect(get(state).data).toHaveLength(10);
-      expect(get(state).assets).toHaveLength(2);
-      expect(get(state).received).toHaveLength(2);
+      expect(get(exchangeAssets)).toHaveLength(2);
+      expect(get(exchangeReceived)).toHaveLength(2);
       expect(get(state).found).toEqual(260);
       expect(get(state).total).toEqual(260);
+      expect(get(sort)).toStrictEqual([{
+        column: 'timestamp',
+        direction: 'desc',
+      }]);
     });
   });
 });

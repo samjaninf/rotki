@@ -1,11 +1,12 @@
 from http import HTTPStatus
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import gevent
 import pytest
 import requests
 
 from rotkehlchen.tests.utils.api import (
-    ASYNC_TASK_WAIT_TIMEOUT,
     api_url_for,
     assert_error_response,
     assert_ok_async_response,
@@ -16,7 +17,11 @@ from rotkehlchen.tests.utils.api import (
 from rotkehlchen.tests.utils.factories import UNIT_BTC_ADDRESS1, UNIT_BTC_ADDRESS2
 from rotkehlchen.types import SupportedBlockchain
 
-EXPECTED_XPUB_ADDESSES = [
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
+    from rotkehlchen.tests.fixtures.networking import ConfigurableSession
+
+EXPECTED_XPUB_ADDRESSES = [
     '125yorj66rmk82tMAPG7x97iY8D7cashiA',
     '13X9bcSY1UXwAwz6WaScAMFawpeTnPn1VU',
     '13hSrTAvfRzyEcjRcGS5gLEcNVNDhPvvUv',
@@ -62,7 +67,7 @@ TEST_BITCOIN_XPUB_1 = 'xpub6DCi5iJ57ZPd5qPzvTm5hUt6X23TJdh9H4NjNsNbt7t7UuTMJfawQ
 TEST_BITCOIN_XPUB_2 = 'xpub68V4ZQQ62mea7ZUKn2urQu47Bdn2Wr7SxrBxBDDwE3kjytj361YBGSKDT4WoBrE5htrSB8eAMe59NPnKrcAbiv2veN5GQUmfdjRddD1Hxrk'  # noqa: E501
 
 
-def _check_xpub_addition_outcome(outcome, xpub):
+def _check_xpub_addition_outcome(outcome: dict[str, Any], xpub: str) -> None:
     """Checks the outcome of the xpub additions for the following test.
     Both results should be the same since the 2nd xpub derives no mainnet addresses
     """
@@ -75,7 +80,7 @@ def _check_xpub_addition_outcome(outcome, xpub):
     xpub_data = btc['xpubs'][0]
     assert xpub_data['xpub'] == xpub
     assert xpub_data['derivation_path'] is None
-    for address in EXPECTED_XPUB_ADDESSES:
+    for address in EXPECTED_XPUB_ADDRESSES:
         assert address in xpub_data['addresses']
         assert xpub_data['addresses'][address]['amount'] is not None
         assert xpub_data['addresses'][address]['usd_value'] is not None
@@ -94,7 +99,7 @@ def _check_xpub_addition_outcome(outcome, xpub):
     # in the test that it is detected as belonging to the xpub
     '1KZB7aFfuZE2skJQPHH56VhSxUpUBjouwQ',
 ]])
-def test_add_delete_xpub(rotkehlchen_api_server):
+def test_add_delete_xpub(rotkehlchen_api_server: 'APIServer') -> None:
     """This test uses real world data (queries actual BTC balances)
 
     Test data from here:
@@ -211,7 +216,7 @@ def test_add_delete_xpub(rotkehlchen_api_server):
         assert len(entry) == 6
         if entry['xpub'] == TEST_BITCOIN_XPUB_1:
             for address_data in entry['addresses']:
-                assert address_data['address'] in EXPECTED_XPUB_ADDESSES
+                assert address_data['address'] in EXPECTED_XPUB_ADDRESSES
                 assert address_data['label'] is None
                 assert address_data['tags'] == xpub1_tags
                 assert entry['blockchain'] == 'btc'
@@ -249,10 +254,10 @@ def test_add_delete_xpub(rotkehlchen_api_server):
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
-def test_add_delete_xpub_multiple_chains(rotkehlchen_api_server):
+def test_add_delete_xpub_multiple_chains(rotkehlchen_api_server: 'APIServer') -> None:
     """Test adding xpub for multiple bitcoin chains (BTC/BCH)
 
-    This test actually has a VCR cassete in test-caching. It's not used at
+    This test actually has a VCR cassette in test-caching. It's not used at
     the moment since for some weird, arcane, fucked up, demented reason
     it fails only in the CI when using VCR.
 
@@ -264,6 +269,8 @@ def test_add_delete_xpub_multiple_chains(rotkehlchen_api_server):
     # Disable caching of query results
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     rotki.chains_aggregator.cache_ttl_secs = 0
+    assert rotki.task_manager is not None
+    rotki.task_manager.should_schedule = False
 
     # Test that adding a BCH xpub works
     xpub = 'xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ'  # noqa: E501
@@ -282,27 +289,27 @@ def test_add_delete_xpub_multiple_chains(rotkehlchen_api_server):
     # Check that periodic derivation doesn't break anything
     # Testing here since test_tasks_manager.py only tests scheduling
     rotki.task_manager.last_xpub_derivation_ts = 0   # to be sure that the task will be scheduled
-    rotki.task_manager._maybe_schedule_xpub_derivation()
-    with gevent.Timeout(ASYNC_TASK_WAIT_TIMEOUT):
-        while len(rotki.task_manager.greenlet_manager.greenlets) != 0:
-            gevent.sleep(1)
+    with patch('rotkehlchen.tasks.manager.XpubManager.check_for_new_xpub_addresses') as patch_method:  # noqa: E501
+        rotki.task_manager._maybe_schedule_xpub_derivation()
+        gevent.sleep(0)
+        assert patch_method.call_count == 1
 
     # Check that bch accounts were detected while btc accounts were not affected
     assert len(rotki.chains_aggregator.accounts.bch) != 0
     assert len(rotki.chains_aggregator.accounts.btc) == 0
     with rotki.data.db.conn.read_ctx() as cursor:
-        result = rotki.data.db.get_addresses_to_xpub_mapping(
+        mapping_result = rotki.data.db.get_addresses_to_xpub_mapping(
             cursor=cursor,
             blockchain=SupportedBlockchain.BITCOIN_CASH,
             addresses=rotki.chains_aggregator.accounts.bch,
         )
-        assert len(result) == len(rotki.chains_aggregator.accounts.bch)
-        result = rotki.data.db.get_addresses_to_xpub_mapping(
+        assert len(mapping_result) == len(rotki.chains_aggregator.accounts.bch)
+        mapping_result = rotki.data.db.get_addresses_to_xpub_mapping(
             cursor=cursor,
             blockchain=SupportedBlockchain.BITCOIN,
             addresses=rotki.chains_aggregator.accounts.bch,
         )
-        assert len(result) == 0
+        assert len(mapping_result) == 0
 
     # test that adding the same xpub for BTC works
     json_data = {
@@ -317,8 +324,9 @@ def test_add_delete_xpub_multiple_chains(rotkehlchen_api_server):
     ), json=json_data)
     assert_proper_response(response)
 
+    assert len(rotki.chains_aggregator.accounts.btc) != 0, 'should be populated after api call'
     # Check that addresses that have balances on both bitcoin and bitcoin cash are stored properly
-    with rotki.data.db.conn.read_ctx() as cursor:
+    with rotki.data.db.conn.read_ctx() as cursor:  # type: ignore  # this is reachable lol mypy
         mutual_in_chains_aggregator = 0
         for btc_addr in rotki.chains_aggregator.accounts.btc:
             if btc_addr in rotki.chains_aggregator.accounts.bch:
@@ -440,7 +448,7 @@ def test_add_delete_xpub_multiple_chains(rotkehlchen_api_server):
     UNIT_BTC_ADDRESS1,
     UNIT_BTC_ADDRESS2,
 ]])
-def test_delete_nonexisting_xpub(rotkehlchen_api_server):
+def test_delete_nonexisting_xpub(rotkehlchen_api_server: 'APIServer') -> None:
     # Disable caching of query results
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     rotki.chains_aggregator.cache_ttl_secs = 0
@@ -482,7 +490,10 @@ def test_delete_nonexisting_xpub(rotkehlchen_api_server):
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
 @pytest.mark.parametrize('test_timeout', [60])  # needs longer timeout
-def test_add_xpub_with_conversion_works(rotkehlchen_api_server, test_session):
+def test_add_xpub_with_conversion_works(
+        rotkehlchen_api_server: 'APIServer',
+        test_session: 'ConfigurableSession',
+) -> None:
     """Test that an xpub is being converted to ypub/zpub if the prefix does not match"""
     # Disable caching of query results
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
@@ -523,7 +534,10 @@ def test_add_xpub_with_conversion_works(rotkehlchen_api_server, test_session):
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
-def test_xpub_addition_errors(rotkehlchen_api_server, test_session):
+def test_xpub_addition_errors(
+        rotkehlchen_api_server: 'APIServer',
+        test_session: 'ConfigurableSession',
+) -> None:
     """Test that errors at xpub addition are handled correctly"""
     # Disable caching of query results
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
@@ -531,15 +545,14 @@ def test_xpub_addition_errors(rotkehlchen_api_server, test_session):
 
     # illegal xpub type
     xpub = 'xpub6CjniigyzMWgVDHvDpgvsroPkTJeqUbrHJaLHARHmAM8zuAbCjmHpp3QhKTcnnscd6iBDrqmABCJjnpwUW42cQjtvKjaEZRcShHKEVh35Y8'  # noqa: E501
-    json_data = {
-        'xpub': xpub,
-        'xpub_type': 'whatever',
-    }
     with test_session.put(api_url_for(
         rotkehlchen_api_server,
         'btcxpubresource',
         blockchain='BTC',
-    ), json=json_data) as response:
+    ), json={
+        'xpub': xpub,
+        'xpub_type': 'whatever',
+    }) as response:
         assert_error_response(
             response=response,
             contained_in_msg='Unknown xpub type whatever found at deserialization',
@@ -549,15 +562,14 @@ def test_xpub_addition_errors(rotkehlchen_api_server, test_session):
     # invalid derivation path
     xpub = 'xpub68V4ZQQ62mea7ZUKn2urQu47Bdn2Wr7SxrBxBDDwE3kjytj361YBGSKDT4WoBrE5htrSB8eAMe59NPnKrcAbiv2veN5GQUmfdjRddD1Hxrk'  # noqa: E501
     derivation_path = "49'/0'/0'"
-    json_data = {
-        'xpub': xpub,
-        'derivation_path': derivation_path,
-    }
     with test_session.put(api_url_for(
         rotkehlchen_api_server,
         'btcxpubresource',
         blockchain='BTC',
-    ), json=json_data) as response:
+    ), json={
+        'xpub': xpub,
+        'derivation_path': derivation_path,
+    }) as response:
         assert_error_response(
             response=response,
             contained_in_msg='Derivation paths accepted by rotki should start with m',
@@ -566,12 +578,11 @@ def test_xpub_addition_errors(rotkehlchen_api_server, test_session):
 
     # not a valid xpub string
     xpub = 'foo'
-    json_data = {'xpub': xpub}
     with test_session.put(api_url_for(
         rotkehlchen_api_server,
         'btcxpubresource',
         blockchain='BTC',
-    ), json=json_data) as response:
+    ), json={'xpub': xpub}) as response:
         assert_error_response(
             response=response,
             contained_in_msg='"xpub": ["Failed to initialize an xpub due to Given XPUB foo is too small"',  # noqa: E501
@@ -580,15 +591,14 @@ def test_xpub_addition_errors(rotkehlchen_api_server, test_session):
 
     # tags empty list
     xpub = 'xpub68V4ZQQ62mea7ZUKn2urQu47Bdn2Wr7SxrBxBDDwE3kjytj361YBGSKDT4WoBrE5htrSB8eAMe59NPnKrcAbiv2veN5GQUmfdjRddD1Hxrk'  # noqa: E501
-    json_data = {
-        'xpub': xpub,
-        'tags': [],
-    }
     with test_session.put(api_url_for(
         rotkehlchen_api_server,
         'btcxpubresource',
         blockchain='BTC',
-    ), json=json_data) as response:
+    ), json={
+        'xpub': xpub,
+        'tags': [],
+    }) as response:
         assert_error_response(
             response=response,
             contained_in_msg='Provided empty list for tags. Use null',

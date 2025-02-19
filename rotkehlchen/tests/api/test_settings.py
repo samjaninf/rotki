@@ -1,11 +1,13 @@
 import dataclasses
 from dataclasses import fields
 from http import HTTPStatus
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 import requests
 
+from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.db.settings import (
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_QUERY_RETRY_LIMIT,
@@ -15,6 +17,8 @@ from rotkehlchen.db.settings import (
     DBSettings,
     ModifiableDBSettings,
 )
+from rotkehlchen.externalapis.etherscan import HasChainActivity
+from rotkehlchen.oracles.structures import CurrentPriceOracle
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -26,17 +30,27 @@ from rotkehlchen.tests.utils.constants import A_JPY
 from rotkehlchen.tests.utils.factories import make_evm_address
 from rotkehlchen.tests.utils.mock import MockWeb3
 from rotkehlchen.types import (
+    ApiKey,
     ChecksumEvmAddress,
     CostBasisMethod,
     ExchangeLocationID,
+    ExternalService,
+    ExternalServiceApiCredentials,
     Location,
     ModuleName,
     SupportedBlockchain,
 )
 
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
+
 
 @pytest.mark.parametrize('should_mock_settings', [False])
-def test_cached_settings(rotkehlchen_api_server, username, db_password):
+def test_cached_settings(
+        rotkehlchen_api_server: 'APIServer',
+        username: str,
+        db_password: str,
+    ) -> None:
     """Make sure that querying cached settings works"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
 
@@ -55,7 +69,7 @@ def test_cached_settings(rotkehlchen_api_server, username, db_password):
     assert CachedSettings().get_timeout_tuple() == (DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
 
     # update a few settings
-    data = {
+    data: dict[str, Any] = {
         'settings': {
             'query_retry_limit': 3,
             'connect_timeout': 45,
@@ -100,7 +114,7 @@ def test_cached_settings(rotkehlchen_api_server, username, db_password):
     assert rotki.user_is_logged_in is True
 
     # Cached settings and DBSettings match
-    with rotki.data.db.conn.read_ctx() as cursor:
+    with rotki.data.db.conn.read_ctx() as cursor:  # type: ignore
         db_settings = rotki.data.db.get_settings(cursor)
 
     cached_settings = CachedSettings().get_settings()
@@ -120,7 +134,7 @@ def test_cached_settings(rotkehlchen_api_server, username, db_password):
     assert json_data['result']['submit_usage_analytics'] is True
 
 
-def test_querying_settings(rotkehlchen_api_server, username):
+def test_querying_settings(rotkehlchen_api_server: 'APIServer', username: str) -> None:
     """Make sure that querying settings works for logged in user"""
     response = requests.get(api_url_for(rotkehlchen_api_server, 'settingsresource'))
     assert_proper_response(response)
@@ -149,7 +163,7 @@ def test_querying_settings(rotkehlchen_api_server, username):
     )
 
 
-def test_set_settings(rotkehlchen_api_server):
+def test_set_settings(rotkehlchen_api_server: 'APIServer') -> None:
     """Happy case settings modification test"""
     # Get the starting settings
     response = requests.get(api_url_for(rotkehlchen_api_server, 'settingsresource'))
@@ -172,7 +186,7 @@ def test_set_settings(rotkehlchen_api_server):
     for setting, raw_value in original_settings.items():
         if setting in unmodifiable_settings:
             continue
-
+        value: str | list[str | dict] | int | None = None
         if setting == 'date_display_format':
             value = '%d/%m/%Y-%H:%M:%S'
         elif setting == 'main_currency':
@@ -205,22 +219,19 @@ def test_set_settings(rotkehlchen_api_server):
             value = CostBasisMethod.LIFO.serialize()
         elif setting == 'address_name_priority':
             value = ['hardcoded_mappings', 'ethereum_tokens']
+        elif setting == 'csv_export_delimiter':
+            value = ';'
         else:
-            raise AssertionError(f'Unexpected settting {setting} encountered')
+            raise AssertionError(f'Unexpected setting {setting} encountered')
 
         new_settings[setting] = value
 
-    # modify the settings
-    block_query = patch(
-        'rotkehlchen.chain.ethereum.node_inquirer.EthereumInquirer.query_highest_block',
-        return_value=0,
-    )
     mock_web3 = patch('rotkehlchen.chain.ethereum.node_inquirer.Web3', MockWeb3)
     ksm_connect_node = patch(
         'rotkehlchen.chain.substrate.manager.SubstrateManager._connect_node',
         return_value=(True, ''),
     )
-    with block_query, mock_web3, ksm_connect_node:
+    with mock_web3, ksm_connect_node:
         response = requests.put(
             api_url_for(rotkehlchen_api_server, 'settingsresource'),
             json={'settings': new_settings},
@@ -252,10 +263,10 @@ def test_set_settings(rotkehlchen_api_server):
     ),
 ])
 def test_set_rpc_endpoint_fail_not_set_others(
-        rotkehlchen_api_server,
-        rpc_setting,
-        error_msg,
-):
+        rotkehlchen_api_server: 'APIServer',
+        rpc_setting: tuple[str, str],
+        error_msg: str,
+) -> None:
     """Test that setting a non-existing eth rpc along with other settings does not modify them"""
     rpc_endpoint = 'http://working.nodes.com:8545'
     main_currency = A_JPY
@@ -282,7 +293,7 @@ def test_set_rpc_endpoint_fail_not_set_others(
 
 
 @pytest.mark.parametrize('rpc_setting', ['ksm_rpc_endpoint'])
-def test_unset_rpc_endpoint(rotkehlchen_api_server, rpc_setting):
+def test_unset_rpc_endpoint(rotkehlchen_api_server: 'APIServer', rpc_setting: list[str]) -> None:
     """Test the rpc endpoint can be unset"""
     response = requests.get(api_url_for(rotkehlchen_api_server, 'settingsresource'))
     assert_proper_response(response)
@@ -302,7 +313,7 @@ def test_unset_rpc_endpoint(rotkehlchen_api_server, rpc_setting):
     assert result[rpc_setting] == ''
 
 
-def test_disable_taxfree_after_period(rotkehlchen_api_server):
+def test_disable_taxfree_after_period(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that providing -1 for the taxfree_after_period setting disables it """
     data = {
         'settings': {'taxfree_after_period': -1},
@@ -334,7 +345,7 @@ def test_disable_taxfree_after_period(rotkehlchen_api_server):
     )
 
 
-def test_set_unknown_settings(rotkehlchen_api_server):
+def test_set_unknown_settings(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that setting an unknown setting results in an error
 
     This is the only test for unknown arguments in marshmallow schemas after
@@ -351,14 +362,14 @@ def test_set_unknown_settings(rotkehlchen_api_server):
     )
 
 
-def test_set_settings_errors(rotkehlchen_api_server):
+def test_set_settings_errors(rotkehlchen_api_server: 'APIServer') -> None:
     """set settings errors and edge cases test"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     # set timeout to 1 second to timeout faster
-    rotki.chains_aggregator.ethereum.rpc_timeout = 1
+    rotki.chains_aggregator.ethereum.node_inquirer.rpc_timeout = 1
 
     # Invalid type for premium_should_sync
-    data = {
+    data: dict[str, Any] = {
         'settings': {'premium_should_sync': 444},
     }
     response = requests.put(api_url_for(rotkehlchen_api_server, 'settingsresource'), json=data)
@@ -520,6 +531,18 @@ def test_set_settings_errors(rotkehlchen_api_server):
         status_code=HTTPStatus.BAD_REQUEST,
     )
 
+    # setting illegal oracle in the current price oracles is an error
+    for oracle in (CurrentPriceOracle.MANUALCURRENT, CurrentPriceOracle.FIAT, CurrentPriceOracle.BLOCKCHAIN):  # noqa: E501
+        data = {
+            'settings': {'current_price_oracles': ['coingecko', str(oracle)]},
+        }
+        response = requests.put(api_url_for(rotkehlchen_api_server, 'settingsresource'), json=data)
+        assert_error_response(
+            response=response,
+            contained_in_msg=f'"current_price_oracles": ["Invalid current price oracles given: {oracle!s}. ',  # noqa: E501
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
 
 def assert_queried_addresses_match(
         result: dict[ModuleName, list[ChecksumEvmAddress]],
@@ -531,7 +554,7 @@ def assert_queried_addresses_match(
         assert set(value) == set(result[key])
 
 
-def test_queried_addresses_per_protocol(rotkehlchen_api_server):
+def test_queried_addresses_per_protocol(rotkehlchen_api_server: 'APIServer') -> None:
     # First add some queried addresses per protocol
     address1 = make_evm_address()
     data = {'module': 'aave', 'address': address1}
@@ -616,7 +639,7 @@ def test_queried_addresses_per_protocol(rotkehlchen_api_server):
     })
 
 
-def test_excluded_exchanges_settings(rotkehlchen_api_server):
+def test_excluded_exchanges_settings(rotkehlchen_api_server: 'APIServer') -> None:
     exchanges_input = {
         'settings': {
             'non_syncing_exchanges': [
@@ -651,3 +674,81 @@ def test_excluded_exchanges_settings(rotkehlchen_api_server):
         json=exchanges_bad_input,
     )
     assert response.status_code == 400
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('should_mock_settings', [False])
+def test_etherscan_unified_api_setting(
+        rotkehlchen_api_server: 'APIServer',
+    ) -> None:
+    """Test that the correct etherscan api version is used depending on the setting."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    etherscan = rotki.chains_aggregator.ethereum.node_inquirer.etherscan
+    gnosisscan = rotki.chains_aggregator.gnosis.node_inquirer.etherscan
+    original_request = etherscan.session.get
+    request_count = 0
+
+    def mock_request(url: str, params: dict[str, str], timeout: int) -> requests.Response:
+        if CachedSettings().get_settings().use_unified_etherscan_api is True:
+            assert url == 'https://api.etherscan.io/v2/api'
+            assert 'chainid' in params
+        else:
+            assert url in (
+                'https://api.etherscan.io/api',
+                'https://api.gnosisscan.io/api',
+            )
+
+        nonlocal original_request, request_count
+        request_count += 1
+        return original_request(url=url, params=params, timeout=timeout)
+
+    for i in range(2):
+        if i == 1:  # Change the setting and then do the etherscan queries again
+            response = requests.put(
+                api_url_for(rotkehlchen_api_server, 'settingsresource'),
+                json={'settings': {'use_unified_etherscan_api': True}},
+            )
+            assert_proper_response(response)
+
+        request_count = 0
+        with patch.object(etherscan.session, 'get', wraps=mock_request):
+            assert etherscan.has_activity(
+                account=string_to_evm_address('0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5'),
+            ) == HasChainActivity.TRANSACTIONS
+            assert request_count == 1  # confirm the asserts in mock_request were hit
+
+        # Check it works for an L2 chain as well (Gnosis)
+        request_count = 0
+        with patch.object(gnosisscan.session, 'get', wraps=mock_request):
+            assert gnosisscan.has_activity(
+                account=string_to_evm_address('0x95e62E8FF84ed8456fDc9739eE4A9597Bb6E4c1f'),
+            ) == HasChainActivity.TRANSACTIONS
+            assert request_count == 1  # confirm the asserts in mock_request were hit
+
+
+def test_update_oracles_order_settings(rotkehlchen_api_server: 'APIServer') -> None:
+    response = requests.put(
+        api_url_for(rotkehlchen_api_server, 'settingsresource'),
+        json={'settings': {'current_price_oracles': ['alchemy']}},
+    )
+    assert_error_response(
+        response=response,
+        contained_in_msg='You have enabled the Alchemy price oracle but you do not have an API key set',  # noqa: E501
+        status_code=HTTPStatus.CONFLICT,
+    )
+
+    # add the api key and see that if passes.
+    with rotkehlchen_api_server.rest_api.rotkehlchen.data.db.user_write() as write_cursor:
+        rotkehlchen_api_server.rest_api.rotkehlchen.data.db.add_external_service_credentials(
+            write_cursor=write_cursor,
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.ALCHEMY,
+                api_key=ApiKey('123totallyrealapikey123'),
+            )],
+        )
+    response = requests.put(
+        api_url_for(rotkehlchen_api_server, 'settingsresource'),
+        json={'settings': {'current_price_oracles': ['alchemy']}},
+    )
+    result = assert_proper_sync_response_with_result(response=response)
+    assert result['current_price_oracles'] == ['alchemy']

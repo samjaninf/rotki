@@ -1,44 +1,44 @@
 import flushPromises from 'flush-promises';
+import { afterEach, assertType, beforeAll, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useTrades } from '@/composables/history/trades';
+import { type Filters, type Matcher, useTradeFilters } from '@/composables/filters/trades';
+import type * as Vue from 'vue';
 import type { MaybeRef } from '@vueuse/core';
 import type { Collection } from '@/types/collection';
 import type { LocationQuery } from '@/types/route';
-import type { Filters, Matcher } from '@/composables/filters/trades';
-import type {
-  Trade,
-  TradeEntry,
-  TradeRequestPayload,
-} from '@/types/history/trade';
-import type Vue from 'vue';
+import type { TradeEntry, TradeRequestPayload } from '@/types/history/trade';
 
-vi.mock('vue-router/composables', () => ({
-  useRoute: vi.fn().mockReturnValue(
-    reactive({
-      query: {},
+vi.mock('vue-router', async () => {
+  const { ref } = await import('vue');
+  const { set } = await import('@vueuse/core');
+  const route = ref({
+    query: ref({}),
+  });
+  return {
+    useRoute: vi.fn().mockReturnValue(route),
+    useRouter: vi.fn().mockReturnValue({
+      push: vi.fn(({ query }) => {
+        set(route, { query });
+        return true;
+      }),
     }),
-  ),
-  useRouter: vi.fn().mockReturnValue({
-    push: vi.fn(({ query }) => {
-      useRoute().query = query;
-      return true;
-    }),
-  }),
-}));
+  };
+});
 
 vi.mock('vue', async () => {
-  const mod = await vi.importActual<Vue>('vue');
+  const mod = await vi.importActual<typeof Vue>('vue');
 
   return {
     ...mod,
-    onBeforeMount: vi.fn().mockImplementation((fn: Function) => fn()),
+    onBeforeMount: vi.fn().mockImplementation((fn: () => void) => fn()),
   };
 });
 
 describe('composables::history/filter-paginate', () => {
-  let fetchTrades: (
-    payload: MaybeRef<TradeRequestPayload>
-  ) => Promise<Collection<TradeEntry>>;
-  const locationOverview: MaybeRef<string | null> = ref('');
-  const mainPage: Ref<boolean> = ref(false);
+  let fetchTrades: (payload: MaybeRef<TradeRequestPayload>) => Promise<Collection<TradeEntry>>;
+  const locationOverview = ref<string>('');
+  const mainPage = ref<boolean>(false);
   const router = useRouter();
   const route = useRoute();
 
@@ -67,35 +67,31 @@ describe('composables::history/filter-paginate', () => {
     });
 
     it('initialize composable correctly', async () => {
-      const {
-        userAction,
-        filters,
-        sort,
-        state,
-        fetchData,
-        applyRouteFilter,
-        isLoading,
-      } = usePaginationFilters<
-        Trade,
-        TradeRequestPayload,
+      const { userAction, filters, sort, state, fetchData, isLoading } = usePaginationFilters<
         TradeEntry,
-        Collection<TradeEntry>,
+        TradeRequestPayload,
         Filters,
         Matcher
-      >(locationOverview, mainPage, useTradeFilters, fetchTrades, {
+      >(fetchTrades, {
+        history: get(mainPage) ? 'router' : false,
+        filterSchema: useTradeFilters,
+        locationOverview,
         onUpdateFilters,
         extraParams,
       });
 
-      expect(get(userAction)).toBe(true);
+      expect(get(userAction)).toBe(false);
       expect(get(isLoading)).toBe(false);
       expect(get(filters)).to.toStrictEqual({});
-      expect(get(sort)).toHaveLength(1);
+      expect(get(sort)).toStrictEqual({
+        column: 'timestamp',
+        direction: 'desc',
+      });
       expect(get(state).data).toHaveLength(0);
       expect(get(state).total).toEqual(0);
 
       set(userAction, true);
-      applyRouteFilter();
+      await nextTick();
       fetchData().catch(() => {});
       expect(get(isLoading)).toBe(true);
       await flushPromises();
@@ -104,13 +100,14 @@ describe('composables::history/filter-paginate', () => {
 
     it('check the return types', () => {
       const { isLoading, state, filters, matchers } = usePaginationFilters<
-        Trade,
-        TradeRequestPayload,
         TradeEntry,
-        Collection<TradeEntry>,
+        TradeRequestPayload,
         Filters,
         Matcher
-      >(locationOverview, mainPage, useTradeFilters, fetchTrades, {
+      >(fetchTrades, {
+        history: get(mainPage) ? 'router' : false,
+        filterSchema: useTradeFilters,
+        locationOverview,
         onUpdateFilters,
         extraParams,
       });
@@ -126,18 +123,24 @@ describe('composables::history/filter-paginate', () => {
 
     it('modify filters and fetch data correctly', async () => {
       const pushSpy = vi.spyOn(router, 'push');
-      const query = { sortBy: ['type'], sortDesc: ['true'] };
+      const query = { sort: ['type'], sortOrder: ['asc'] };
 
-      const { isLoading, state } = usePaginationFilters<
-        Trade,
-        TradeRequestPayload,
+      const { isLoading, state, sort } = usePaginationFilters<
         TradeEntry,
-        Collection<TradeEntry>,
+        TradeRequestPayload,
         Filters,
         Matcher
-      >(locationOverview, mainPage, useTradeFilters, fetchTrades, {
+      >(fetchTrades, {
+        history: get(mainPage) ? 'router' : false,
+        filterSchema: useTradeFilters,
+        locationOverview,
         onUpdateFilters,
         extraParams,
+      });
+
+      expect(get(sort)).toStrictEqual({
+        column: 'timestamp',
+        direction: 'desc',
       });
 
       await router.push({
@@ -146,7 +149,7 @@ describe('composables::history/filter-paginate', () => {
 
       expect(pushSpy).toHaveBeenCalledOnce();
       expect(pushSpy).toHaveBeenCalledWith({ query });
-      expect(route.query).toEqual(query);
+      expect(get(route).query).toEqual(query);
       expect(get(isLoading)).toBe(true);
       await flushPromises();
       expect(get(isLoading)).toBe(false);
@@ -159,6 +162,41 @@ describe('composables::history/filter-paginate', () => {
       expect(get(state).found).toEqual(210);
       expect(get(state).limit).toEqual(-1);
       expect(get(state).total).toEqual(210);
+      expect(get(sort)).toStrictEqual({
+        column: 'type',
+        direction: 'asc',
+      });
+    });
+
+    it('handles pagination correctly when limit is less than total', async () => {
+      const mockResponse: Collection<TradeEntry> = {
+        data: new Array(10).fill({}),
+        found: 300,
+        limit: 100,
+        total: 100,
+      };
+
+      const mockFetchTrades = vi.fn().mockResolvedValue(mockResponse);
+
+      const { state, pagination, fetchData } = usePaginationFilters<
+        TradeEntry,
+        TradeRequestPayload,
+        Filters,
+        Matcher
+      >(mockFetchTrades, {
+        history: get(mainPage) ? 'router' : false,
+        filterSchema: useTradeFilters,
+        locationOverview,
+        onUpdateFilters,
+        extraParams,
+      });
+
+      await fetchData();
+      await flushPromises();
+
+      expect(get(state).found).toBe(300);
+      expect(get(state).limit).toBe(100);
+      expect(get(pagination).total).toBe(100);
     });
   });
 });

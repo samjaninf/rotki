@@ -1,5 +1,14 @@
 import { TaskType } from '@/types/task-type';
 import { jsonTransformer } from '@/services/axios-tranformers';
+import { downloadFileByTextContent } from '@/utils/download';
+import { isTaskCancelled } from '@/utils';
+import { defaultCollectionState, mapCollectionResponse } from '@/utils/collection';
+import { logger } from '@/utils/logging';
+import { useMessageStore } from '@/store/message';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useAccountingApi } from '@/composables/api/settings/accounting-api';
+import { useInterop } from '@/composables/electron-interop';
 import type { MaybeRef } from '@vueuse/core';
 import type {
   AccountingRuleConflict,
@@ -11,16 +20,25 @@ import type {
 import type { Collection } from '@/types/collection';
 import type { ActionStatus } from '@/types/action';
 import type { TaskMeta } from '@/types/task';
-import type { Message } from '@rotki/common/lib/messages';
+import type { Message } from '@rotki/common';
 
-export function useAccountingSettings() {
+interface UseAccountingSettingReturn {
+  getAccountingRule: (payload: MaybeRef<AccountingRuleRequestPayload>, counterparty: string | null) => Promise<AccountingRuleEntry | undefined>;
+  getAccountingRules: (payload: MaybeRef<AccountingRuleRequestPayload>) => Promise<Collection<AccountingRuleEntry>>;
+  getAccountingRulesConflicts: (payload: MaybeRef<AccountingRuleConflictRequestPayload>) => Promise<Collection<AccountingRuleConflict>>;
+  resolveAccountingRuleConflicts: (payload: AccountingRuleConflictResolution) => Promise<ActionStatus>;
+  exportJSON: () => Promise<void>;
+  importJSON: (file: File) => Promise<ActionStatus | null>;
+}
+
+export function useAccountingSettings(): UseAccountingSettingReturn {
   const {
-    fetchAccountingRule,
-    fetchAccountingRules,
-    fetchAccountingRuleConflicts,
-    resolveAccountingRuleConflicts: resolveAccountingRuleConflictsCaller,
     exportAccountingRules,
+    fetchAccountingRule,
+    fetchAccountingRuleConflicts,
+    fetchAccountingRules,
     importAccountingRulesData,
+    resolveAccountingRuleConflicts: resolveAccountingRuleConflictsCaller,
     uploadAccountingRulesData,
   } = useAccountingApi();
 
@@ -31,23 +49,23 @@ export function useAccountingSettings() {
   const getAccountingRule = async (
     payload: MaybeRef<AccountingRuleRequestPayload>,
     counterparty: string | null,
-  ): Promise<AccountingRuleEntry | null> => {
+  ): Promise<AccountingRuleEntry | undefined> => {
     try {
-      return await fetchAccountingRule(get(payload), counterparty);
+      return await fetchAccountingRule(get(payload), counterparty) ?? undefined;
     }
     catch (error: any) {
       logger.error(error);
       const message = error?.message ?? error ?? '';
 
       notify({
-        title: t('accounting_settings.rule.fetch_error.title'),
+        display: true,
         message: t('accounting_settings.rule.fetch_error.message', {
           message,
         }),
-        display: true,
+        title: t('accounting_settings.rule.fetch_error.title'),
       });
 
-      return null;
+      return undefined;
     }
   };
 
@@ -64,11 +82,11 @@ export function useAccountingSettings() {
       const message = error?.message ?? error ?? '';
 
       notify({
-        title: t('accounting_settings.rule.fetch_error.title'),
+        display: true,
         message: t('accounting_settings.rule.fetch_error.message', {
           message,
         }),
-        display: true,
+        title: t('accounting_settings.rule.fetch_error.title'),
       });
 
       return defaultCollectionState();
@@ -88,20 +106,18 @@ export function useAccountingSettings() {
       const message = error?.message ?? error ?? '';
 
       notify({
-        title: t('accounting_settings.rule.conflicts.fetch_error.title'),
+        display: true,
         message: t('accounting_settings.rule.conflicts.fetch_error.message', {
           message,
         }),
-        display: true,
+        title: t('accounting_settings.rule.conflicts.fetch_error.title'),
       });
 
       return defaultCollectionState();
     }
   };
 
-  const resolveAccountingRuleConflicts = async (
-    payload: AccountingRuleConflictResolution,
-  ): Promise<ActionStatus> => {
+  const resolveAccountingRuleConflicts = async (payload: AccountingRuleConflictResolution): Promise<ActionStatus> => {
     try {
       await resolveAccountingRuleConflictsCaller(payload);
 
@@ -109,7 +125,7 @@ export function useAccountingSettings() {
     }
     catch (error: any) {
       logger.error(error);
-      return { success: false, message: error.message };
+      return { message: error.message, success: false };
     }
   };
 
@@ -121,14 +137,10 @@ export function useAccountingSettings() {
   ): Promise<{ result: boolean | object; message?: string } | null> => {
     try {
       const { taskId } = await exportAccountingRules(directoryPath);
-      const { result } = await awaitTask<boolean | object, TaskMeta>(
-        taskId,
-        TaskType.EXPORT_ACCOUNTING_RULES,
-        {
-          title: t('actions.accounting_rules.export.title'),
-          transformer: [jsonTransformer],
-        },
-      );
+      const { result } = await awaitTask<boolean | object, TaskMeta>(taskId, TaskType.EXPORT_ACCOUNTING_RULES, {
+        title: t('actions.accounting_rules.export.title'),
+        transformer: [jsonTransformer],
+      });
 
       return {
         result,
@@ -139,13 +151,13 @@ export function useAccountingSettings() {
         return null;
 
       return {
-        result: false,
         message: error.message,
+        result: false,
       };
     }
   };
 
-  const { appSession, openDirectory } = useInterop();
+  const { appSession, getPath, openDirectory } = useInterop();
 
   async function exportJSON(): Promise<void> {
     let message: Message | null = null;
@@ -162,34 +174,30 @@ export function useAccountingSettings() {
       if (response === null)
         return;
 
-      const { result, message: taskMessage } = response;
+      const { message: taskMessage, result } = response;
 
       if (appSession) {
         message = {
-          title: t('actions.accounting_rules.export.title'),
           description: result
             ? t('actions.accounting_rules.export.message.success')
             : t('actions.accounting_rules.export.message.failure', {
               description: taskMessage,
             }),
           success: !!result,
+          title: t('actions.accounting_rules.export.title'),
         };
       }
       else {
-        downloadFileByTextContent(
-          JSON.stringify(result, null, 2),
-          'accounting_rules.json',
-          'application/json',
-        );
+        downloadFileByTextContent(JSON.stringify(result, null, 2), 'accounting_rules.json', 'application/json');
       }
     }
     catch (error: any) {
       message = {
-        title: t('actions.accounting_rules.export.title'),
         description: t('actions.accounting_rules.export.message.failure', {
           description: error.message,
         }),
         success: false,
+        title: t('actions.accounting_rules.export.title'),
       };
     }
 
@@ -204,8 +212,9 @@ export function useAccountingSettings() {
     const taskType = TaskType.IMPORT_ACCOUNTING_RULES;
 
     try {
-      const { taskId } = appSession
-        ? await importAccountingRulesData(file.path)
+      const path = getPath(file);
+      const { taskId } = path
+        ? await importAccountingRulesData(path)
         : await uploadAccountingRulesData(file);
 
       const { result } = await awaitTask<boolean, TaskMeta>(taskId, taskType, {
@@ -221,15 +230,15 @@ export function useAccountingSettings() {
       success = false;
     }
 
-    return { success, message };
+    return { message, success };
   }
 
   return {
+    exportJSON,
     getAccountingRule,
     getAccountingRules,
     getAccountingRulesConflicts,
-    resolveAccountingRuleConflicts,
-    exportJSON,
     importJSON,
+    resolveAccountingRuleConflicts,
   };
 }

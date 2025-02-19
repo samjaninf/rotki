@@ -1,11 +1,10 @@
 import { BigNumber } from '@rotki/common';
-import { isString, isUndefined } from 'lodash-es';
+import { isString, isUndefined } from 'es-toolkit';
 
 export function chunkArray<T>(myArray: T[], size: number): T[][] {
   const results: T[][] = [];
 
-  while (myArray.length > 0)
-    results.push(myArray.splice(0, size));
+  while (myArray.length > 0) results.push(myArray.splice(0, size));
 
   return results;
 }
@@ -14,17 +13,26 @@ export function uniqueStrings<T = string>(value: T, index: number, array: T[]): 
   return array.indexOf(value) === index;
 }
 
-export function uniqueObjects<T>(arr: T[], getUniqueId: (item: T) => string) {
+export function uniqueObjects<T>(arr: T[], getUniqueId: (item: T) => string): T[] {
   return [...new Map(arr.map(item => [getUniqueId(item), item])).values()];
 }
 
 /**
  * Takes an object and returns the same object without any null values
  * or empty array properties.
- * @param object any object
- * @param removeEmptyString if set it will also remove empty string properties
+ * @param object - Any object to process
+ * @param options - Configuration options
+ * @param options.removeEmptyString - If true, empty string properties will be removed
+ * @param options.alwaysPickKeys - Array of keys that will always be included in the returned value
+ * @returns A new object with non-empty properties
  */
-export function nonEmptyProperties<T extends object>(object: T, removeEmptyString = false): Partial<NonNullable<T>> {
+export function nonEmptyProperties<T extends object>(
+  object: T,
+  { alwaysPickKeys = [], removeEmptyString = false }: {
+    removeEmptyString?: boolean;
+    alwaysPickKeys?: (keyof T)[];
+  } = {},
+): Partial<NonNullable<T>> {
   const partial: Partial<T> = {};
   const keys = Object.keys(object);
   if (object instanceof BigNumber)
@@ -33,6 +41,11 @@ export function nonEmptyProperties<T extends object>(object: T, removeEmptyStrin
   for (const obKey of keys) {
     const key = obKey as keyof T;
     const val = object[key];
+
+    if (alwaysPickKeys.includes(key)) {
+      partial[key] = val;
+    }
+
     if (removeEmptyString && val === '')
       continue;
 
@@ -66,8 +79,7 @@ export function nonEmptyProperties<T extends object>(object: T, removeEmptyStrin
 export function size(bytes: number): string {
   let i = 0;
 
-  for (i; bytes > 1024; i++)
-    bytes /= 1024;
+  for (i; bytes > 1024; i++) bytes /= 1024;
 
   const symbol = 'KMGTPEZY'[i - 1] || '';
   return `${bytes.toFixed(2)}  ${symbol}B`;
@@ -91,4 +103,15 @@ export function toRem(value?: number | string): string | undefined {
   }
 
   return `${value}rem`;
+}
+
+/**
+ * Returns a copy of the record without the key in it.
+ * @param record The record
+ * @param key The key to remove
+ */
+export function removeKey<K extends string | number | symbol, V>(record: Record<K, V>, key: K): Record<K, V> {
+  const copy = { ...record };
+  delete copy[key];
+  return copy;
 }

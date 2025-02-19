@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { Routes } from '@/router/routes';
-import type { StyleValue } from 'vue/types/jsx';
+import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import ListItem from '@/components/common/ListItem.vue';
 import type { NftAsset } from '@/types/nfts';
+import type { StyleValue } from 'vue';
+
+defineOptions({
+  inheritAttrs: false,
+});
 
 const props = withDefaults(
   defineProps<{
@@ -17,45 +24,45 @@ const props = withDefaults(
   }>(),
   {
     assetStyled: undefined,
-    opensDetails: false,
     changeable: false,
-    hideName: false,
     dense: false,
     enableAssociation: true,
-    showChain: true,
+    hideName: false,
     isCollectionParent: false,
+    opensDetails: false,
+    showChain: true,
   },
 );
 
-const { asset, opensDetails, isCollectionParent } = toRefs(props);
-const rootAttrs = useAttrs();
+const { asset, isCollectionParent, opensDetails } = toRefs(props);
 
-const symbol: ComputedRef<string> = computed(() => get(asset).symbol ?? '');
-const name: ComputedRef<string> = computed(() => get(asset).name ?? '');
+const symbol = computed<string>(() => get(asset).symbol ?? '');
+const name = computed<string>(() => get(asset).name ?? '');
 
 const router = useRouter();
 
 async function navigate() {
   if (!get(opensDetails))
     return;
-
-  const id = encodeURIComponent(get(asset).identifier);
   const collectionParent = get(isCollectionParent);
 
   await router.push({
-    path: Routes.ASSETS.replace(':identifier', id),
-    query: !collectionParent
+    name: '/assets/[identifier]',
+    params: {
+      identifier: get(asset).identifier,
+    },
+    ...(!collectionParent
       ? {}
       : {
-          collectionParent: 'true',
-        },
+          query: {
+            collectionParent: 'true',
+          },
+        }),
   });
 }
 
 const { isPending } = useAssetCacheStore();
-const loading: ComputedRef<boolean> = computed(() =>
-  get(isPending(get(asset).identifier)),
-);
+const loading = computed<boolean>(() => get(isPending(get(asset).identifier)));
 </script>
 
 <template>
@@ -63,7 +70,7 @@ const loading: ComputedRef<boolean> = computed(() =>
     no-padding
     no-hover
     class="max-w-[20rem]"
-    v-bind="rootAttrs"
+    v-bind="$attrs"
     :class="opensDetails ? 'cursor-pointer' : null"
     :size="dense ? 'sm' : 'md'"
     :loading="loading"
@@ -75,18 +82,16 @@ const loading: ComputedRef<boolean> = computed(() =>
       <AppImage
         v-if="asset.imageUrl"
         contain
-        height="26px"
-        width="26px"
-        max-width="26px"
+        size="30px"
         :src="asset.imageUrl"
       />
       <AssetIcon
         v-else
         :changeable="changeable"
-        size="26px"
+        size="30px"
         :styled="assetStyled"
         :identifier="asset.identifier"
-        :enable-association="enableAssociation"
+        :resolution-options="{ associate: enableAssociation }"
         :show-chain="showChain"
       />
     </template>

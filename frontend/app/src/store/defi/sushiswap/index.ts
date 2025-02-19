@@ -1,18 +1,20 @@
-import {
-  type XswapBalance,
-  XswapBalances,
-  XswapEvents,
-  type XswapPoolProfit,
-} from '@rotki/common/lib/defi/xswap';
+import { type XswapBalance, XswapBalances, XswapEvents, type XswapPoolProfit } from '@rotki/common';
 import { Module } from '@/types/modules';
 import { Section } from '@/types/status';
 import { TaskType } from '@/types/task-type';
+import { uniqueStrings } from '@/utils/data';
+import { getBalances, getPoolProfit, getPools } from '@/utils/defi/xswap';
+import { fetchDataAsync } from '@/utils/fetch-async';
+import { useSushiswapApi } from '@/composables/api/defi/sushiswap';
+import { useStatusUpdater } from '@/composables/status';
+import { useModules } from '@/composables/session/modules';
+import { usePremium } from '@/composables/premium';
 import type { TaskMeta } from '@/types/task';
 import type { OnError } from '@/types/fetch';
 
 export const useSushiswapStore = defineStore('defi/sushiswap', () => {
-  const balances: Ref<XswapBalances> = ref<XswapBalances>({});
-  const events: Ref<XswapEvents> = ref({});
+  const balances = ref<XswapBalances>({});
+  const events = ref<XswapEvents>({});
 
   const isPremium = usePremium();
   const { activeModules } = useModules();
@@ -23,45 +25,40 @@ export const useSushiswapStore = defineStore('defi/sushiswap', () => {
     computed(() => getBalances(get(balances), addresses));
   const poolProfit = (addresses: string[]): ComputedRef<XswapPoolProfit[]> =>
     computed(() => getPoolProfit(get(events), addresses));
-  const addresses = computed(() =>
-    Object.keys(get(balances)).concat(
-      Object.keys(get(events)).filter(uniqueStrings),
-    ),
-  );
+  const addresses = computed(() => Object.keys(get(balances)).concat(Object.keys(get(events)).filter(uniqueStrings)));
   const pools = computed(() => getPools(get(balances), get(events)));
 
   const fetchBalances = async (refresh = false): Promise<void> => {
     const meta: TaskMeta = {
-      title: t('actions.defi.sushiswap_balances.task.title').toString(),
+      title: t('actions.defi.sushiswap_balances.task.title'),
     };
 
     const onError: OnError = {
-      title: t('actions.defi.sushiswap_balances.error.title').toString(),
-      error: message =>
-        t('actions.defi.sushiswap_balances.error.description', {
-          message,
-        }).toString(),
+      error: message => t('actions.defi.sushiswap_balances.error.description', {
+        message,
+      }),
+      title: t('actions.defi.sushiswap_balances.error.title'),
     };
 
     await fetchDataAsync(
       {
-        task: {
-          type: TaskType.SUSHISWAP_BALANCES,
-          section: Section.DEFI_SUSHISWAP_BALANCES,
-          meta,
-          query: async () => await fetchSushiswapBalances(),
-          parser: data => XswapBalances.parse(data),
-          onError,
+        refresh,
+        requires: {
+          module: Module.SUSHISWAP,
+          premium: true,
         },
         state: {
-          isPremium,
           activeModules,
+          isPremium,
         },
-        requires: {
-          premium: true,
-          module: Module.SUSHISWAP,
+        task: {
+          meta,
+          onError,
+          parser: data => XswapBalances.parse(data),
+          query: async () => fetchSushiswapBalances(),
+          section: Section.DEFI_SUSHISWAP_BALANCES,
+          type: TaskType.SUSHISWAP_BALANCES,
         },
-        refresh,
       },
       balances,
     );
@@ -69,36 +66,36 @@ export const useSushiswapStore = defineStore('defi/sushiswap', () => {
 
   const fetchEvents = async (refresh = false): Promise<void> => {
     const meta: TaskMeta = {
-      title: t('actions.defi.sushiswap_events.task.title').toString(),
+      title: t('actions.defi.sushiswap_events.task.title'),
     };
 
     const onError: OnError = {
-      title: t('actions.defi.sushiswap_events.error.title').toString(),
       error: message =>
         t('actions.defi.sushiswap_events.error.description', {
           message,
-        }).toString(),
+        }),
+      title: t('actions.defi.sushiswap_events.error.title'),
     };
 
     await fetchDataAsync(
       {
-        task: {
-          type: TaskType.SUSHISWAP_EVENTS,
-          section: Section.DEFI_SUSHISWAP_EVENTS,
-          meta,
-          query: async () => await fetchSushiswapEvents(),
-          parser: data => XswapEvents.parse(data),
-          onError,
-        },
-        state: {
-          isPremium,
-          activeModules,
-        },
+        refresh,
         requires: {
           module: Module.SUSHISWAP,
           premium: true,
         },
-        refresh,
+        state: {
+          activeModules,
+          isPremium,
+        },
+        task: {
+          meta,
+          onError,
+          parser: data => XswapEvents.parse(data),
+          query: async () => fetchSushiswapEvents(),
+          section: Section.DEFI_SUSHISWAP_EVENTS,
+          type: TaskType.SUSHISWAP_EVENTS,
+        },
       },
       events,
     );
@@ -113,14 +110,14 @@ export const useSushiswapStore = defineStore('defi/sushiswap', () => {
   };
 
   return {
+    addresses,
+    balanceList,
     balances,
     events,
-    addresses,
-    pools,
-    balanceList,
-    poolProfit,
     fetchBalances,
     fetchEvents,
+    poolProfit,
+    pools,
     reset,
   };
 });

@@ -28,29 +28,31 @@ class CurrentPriceOracleInterface(abc.ABC):
 
     def __init__(self, oracle_name: str) -> None:
         self.name = oracle_name
+        self.last_rate_limit = 0
 
-    @abc.abstractmethod
+    def __str__(self) -> str:
+        return self.name
+
     def rate_limited_in_last(
             self,
             seconds: int | None = None,
     ) -> bool:
         """Denotes if the oracles has been rate limited in the last ``seconds``"""
+        if seconds is None:
+            return False
+
+        return ts_now() - self.last_rate_limit <= seconds
 
     @abc.abstractmethod
     def query_current_price(
             self,
             from_asset: AssetWithOracles,
             to_asset: AssetWithOracles,
-            match_main_currency: bool,
-    ) -> tuple[Price, bool]:
-        """
-        Accepts a pair of assets to find price for and a flag. If `match_main_currency` is True
-        and there is a manual latest price that has value in `main_currency`, then it will be
-        returned without the conversion to `to_asset`.
+    ) -> Price:
+        """Query current price between two assets using oracle data.
+
         Returns:
-        1. The price of from_asset at the current timestamp
-        for the current oracle
-        2. Whether returned price is in main currency
+            Current price between from_asset and to_asset using this oracle's data
         """
 
 

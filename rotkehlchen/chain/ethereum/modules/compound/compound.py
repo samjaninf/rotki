@@ -16,6 +16,7 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType
 from rotkehlchen.history.price import query_usd_price_zero_if_error
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.premium.premium import has_premium_check
 from rotkehlchen.types import ChecksumEvmAddress, Timestamp
 from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.misc import ts_ms_to_sec
@@ -71,7 +72,11 @@ class Compound(EthereumModule, CompoundV2, CompoundV3):
             given_defi_balances: 'GIVEN_DEFI_BALANCES',
             given_eth_balances: 'GIVEN_ETH_BALANCES',
     ) -> tuple[ADDRESS_TO_ASSETS, ADDRESS_TO_ASSETS, ADDRESS_TO_ASSETS, ADDRESS_TO_ASSETS]:
-        """Processes all events and returns a dictionary of earned balances totals"""
+        """Processes all events and returns a dictionary of earned balances totals
+
+        This function queries the value of the events on each call. This is for Compound
+        in the defi section that will be deprecated.
+        """
         assets: ADDRESS_TO_ASSETS = defaultdict(lambda: defaultdict(Balance))
         loss_assets: ADDRESS_TO_ASSETS = defaultdict(lambda: defaultdict(Balance))
         rewards_assets: ADDRESS_TO_ASSETS = defaultdict(lambda: defaultdict(Balance))
@@ -85,17 +90,23 @@ class Compound(EthereumModule, CompoundV2, CompoundV3):
             given_eth_balances=given_eth_balances,
         )
         for event in events:
+            usd_price = query_usd_price_zero_if_error(
+                asset=event.asset,
+                time=event.get_timestamp_in_sec(),
+                location=f'comp repay event {event.tx_hash!r} processing',
+            )
             address = ChecksumEvmAddress(event.location_label)  # type: ignore[arg-type]  # location label is not none here
-            if event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET:
-                assets[address][event.asset] -= event.balance
+            event_balance = Balance(amount=event.amount, usd_value=event.amount * usd_price)
+            if event.event_subtype == HistoryEventSubType.DEPOSIT_FOR_WRAPPED:
+                assets[address][event.asset] -= event_balance
             elif event.event_subtype == HistoryEventSubType.GENERATE_DEBT:
-                loss_assets[address][event.asset] -= event.balance
+                loss_assets[address][event.asset] -= event_balance
             elif event.event_subtype == HistoryEventSubType.REWARD:
-                rewards_assets[address][event.asset] += event.balance
-            elif event.event_subtype == HistoryEventSubType.REMOVE_ASSET:
+                rewards_assets[address][event.asset] += event_balance
+            elif event.event_subtype == HistoryEventSubType.REDEEM_WRAPPED:
                 profit_amount = (
                     assets[address][event.asset].amount +
-                    event.balance.amount -
+                    event.amount -
                     profit_so_far[address][event.asset].amount
                 )
                 profit: Balance | None
@@ -111,29 +122,23 @@ class Compound(EthereumModule, CompoundV2, CompoundV3):
                 else:
                     profit = None
 
-                assets[address][event.asset] = event.balance
+                assets[address][event.asset] = event_balance
             elif event.event_subtype == HistoryEventSubType.PAYBACK_DEBT:
                 loss_amount = (
                     loss_assets[address][event.asset].amount +
-                    event.balance.amount -
+                    event.amount -
                     loss_so_far[address][event.asset].amount
                 )
                 if loss_amount >= 0:
-                    usd_price = query_usd_price_zero_if_error(
-                        asset=event.asset,
-                        time=ts_ms_to_sec(event.timestamp),
-                        location=f'comp repay event {event.tx_hash!r} processing',
-                        msg_aggregator=self.msg_aggregator,
-                    )
                     loss = Balance(loss_amount, loss_amount * usd_price)
                     loss_so_far[address][event.asset] += loss
                 else:
                     loss = None
 
-                loss_assets[address][event.asset] = event.balance
+                loss_assets[address][event.asset] = event_balance
             elif event.event_subtype == HistoryEventSubType.LIQUIDATE:
-                loss_assets[address][event.asset] += event.balance
-                liquidation_profit[address][event.asset] += event.balance
+                loss_assets[address][event.asset] += event_balance
+                liquidation_profit[address][event.asset] += event_balance
 
         for address, balance_entry in balances.items():
             # iterate the lending balances to calculate profit based on the current status
@@ -193,10 +198,10 @@ class Compound(EthereumModule, CompoundV2, CompoundV3):
             counterparties=[CPT_COMPOUND],
             location_labels=addresses,  # type: ignore[arg-type]
             event_subtypes=[
-                HistoryEventSubType.DEPOSIT_ASSET,
+                HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
                 HistoryEventSubType.GENERATE_DEBT,
                 HistoryEventSubType.REWARD,
-                HistoryEventSubType.REMOVE_ASSET,
+                HistoryEventSubType.REDEEM_WRAPPED,
                 HistoryEventSubType.LIQUIDATE,
                 HistoryEventSubType.PAYBACK_DEBT,
             ],
@@ -208,7 +213,7 @@ class Compound(EthereumModule, CompoundV2, CompoundV3):
             events = db.get_history_events(
                 cursor=cursor,
                 filter_query=query_filter,
-                has_premium=self.premium is not None,
+                has_premium=has_premium_check(self.premium),
                 group_by_event_ids=False,
             )
         profit, loss, liquidation, rewards = self._process_events(

@@ -1,22 +1,28 @@
 import { NumericString } from '@rotki/common';
 import { z } from 'zod';
 import { BalanceType } from '@/types/balances';
+import type { PaginationRequestPayload } from '@/types/common';
 
-export const ManualBalance = z.object({
-  identifier: z.number().positive(),
-  asset: z.string(),
-  label: z.string(),
+const RawManualBalance = z.object({
   amount: NumericString,
+  asset: z.string(),
+  balanceType: z.nativeEnum(BalanceType),
+  label: z.string(),
   location: z.string(),
   tags: z.array(z.string()).nullable(),
-  balanceType: z.nativeEnum(BalanceType),
 });
+
+export type RawManualBalance = z.infer<typeof RawManualBalance>;
+
+export const ManualBalance = z
+  .object({
+    identifier: z.number().positive(),
+  })
+  .merge(RawManualBalance);
 
 export type ManualBalance = z.infer<typeof ManualBalance>;
 
-export const ManualBalanceWithValue = ManualBalance.merge(
-  z.object({ usdValue: NumericString }),
-);
+export const ManualBalanceWithValue = ManualBalance.merge(z.object({ usdValue: NumericString }));
 
 export type ManualBalanceWithValue = z.infer<typeof ManualBalanceWithValue>;
 
@@ -25,3 +31,14 @@ export const ManualBalances = z.object({
 });
 
 export type ManualBalances = z.infer<typeof ManualBalances>;
+
+const ManualBalanceWithPrice = ManualBalanceWithValue.merge(z.object({ usdPrice: NumericString.optional() }));
+
+export type ManualBalanceWithPrice = z.infer<typeof ManualBalanceWithPrice>;
+
+export interface ManualBalanceRequestPayload extends PaginationRequestPayload<ManualBalanceWithValue> {
+  readonly tags?: string[];
+  readonly label?: string;
+  readonly asset?: string;
+  readonly location?: string;
+}

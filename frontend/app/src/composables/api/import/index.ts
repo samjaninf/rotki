@@ -1,22 +1,23 @@
 import { snakeCaseTransformer } from '@/services/axios-tranformers';
 import { handleResponse, validStatus } from '@/services/utils';
 import { api } from '@/services/rotkehlchen-api';
-import type { ActionResult } from '@rotki/common/lib/data';
+import type { ActionResult } from '@rotki/common';
 import type { PendingTask } from '@/types/task';
 
-export function useImportDataApi() {
-  const importDataFrom = async (
-    source: string,
-    file: string,
-    timestampFormat: string | null,
-  ): Promise<PendingTask> => {
+interface UseImportDataApiReturn {
+  importDataFrom: (source: string, file: string, timestampFormat: string | null) => Promise<PendingTask>;
+  importFile: (data: FormData) => Promise<PendingTask>;
+}
+
+export function useImportDataApi(): UseImportDataApiReturn {
+  const importDataFrom = async (source: string, file: string, timestampFormat: string | null): Promise<PendingTask> => {
     const response = await api.instance.put<ActionResult<PendingTask>>(
       '/import',
       snakeCaseTransformer({
-        source,
-        file,
-        timestampFormat,
         asyncQuery: true,
+        file,
+        source,
+        timestampFormat,
       }),
       {
         validateStatus: validStatus,
@@ -27,16 +28,12 @@ export function useImportDataApi() {
   };
 
   const importFile = async (data: FormData): Promise<PendingTask> => {
-    const response = await api.instance.post<ActionResult<PendingTask>>(
-      '/import',
-      data,
-      {
-        validateStatus: validStatus,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+    const response = await api.instance.post<ActionResult<PendingTask>>('/import', data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
       },
-    );
+      validateStatus: validStatus,
+    });
 
     return handleResponse(response);
   };

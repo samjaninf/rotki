@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { CURRENCY_USD } from '@/types/currencies';
+import { useAssetPageNavigation } from '@/composables/assets/navigation';
+import { useRefMap } from '@/composables/utils/useRefMap';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
 import type { HistoryEventEntry } from '@/types/history/events';
 
 const props = defineProps<{
@@ -9,16 +14,13 @@ const props = defineProps<{
 const { event } = toRefs(props);
 const { assetSymbol } = useAssetInfoRetrieval();
 
-const { getEventType } = useHistoryEventMappings();
-
-const showBalance = computed<boolean>(() => {
-  const type = get(getEventType(event));
-  return !type || !['approval', 'informational'].includes(type);
-});
+const showBalance = computed<boolean>(() => get(event).eventType !== 'informational');
 
 const eventAsset = useRefMap(event, ({ asset }) => asset);
 
-const symbol = assetSymbol(eventAsset);
+const symbol = assetSymbol(eventAsset, {
+  collectionParent: false,
+});
 const { navigateToDetails } = useAssetPageNavigation(eventAsset);
 </script>
 
@@ -27,6 +29,9 @@ const { navigateToDetails } = useAssetPageNavigation(eventAsset);
     <AssetIcon
       size="32px"
       :identifier="event.asset"
+      :resolution-options="{
+        collectionParent: false,
+      }"
       @click="navigateToDetails()"
     />
     <div
@@ -34,13 +39,16 @@ const { navigateToDetails } = useAssetPageNavigation(eventAsset);
       class="flex flex-col"
     >
       <AmountDisplay
-        :value="event.balance.amount"
+        :value="event.amount"
         :asset="event.asset"
+        :resolution-options="{
+          collectionParent: false,
+        }"
       />
       <AmountDisplay
         :key="event.timestamp"
-        :amount="event.balance.amount"
-        :value="event.balance.usdValue"
+        :amount="event.amount"
+        :value="Zero"
         :price-asset="event.asset"
         :fiat-currency="CURRENCY_USD"
         class="text-rui-text-secondary"
@@ -48,8 +56,11 @@ const { navigateToDetails } = useAssetPageNavigation(eventAsset);
         milliseconds
       />
     </div>
-    <template v-else>
+    <div
+      v-else
+      class="text-truncate"
+    >
       {{ symbol }}
-    </template>
+    </div>
   </div>
 </template>

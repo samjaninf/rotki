@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { useSupportedChains } from '@/composables/info/chains';
 import type { MatchedKeyword, SearchMatcher } from '@/types/filtering';
+import type { FilterSchema } from '@/composables/use-pagination-filter/types';
 
 enum AssetFilterKeys {
   SYMBOL = 'symbol',
@@ -19,65 +21,60 @@ export type Matcher = SearchMatcher<AssetFilterKeys, AssetFilterValueKeys>;
 
 export type Filters = MatchedKeyword<AssetFilterValueKeys>;
 
-export function useAssetFilter() {
-  const filters: Ref<Filters> = ref({});
+export function useAssetFilter(): FilterSchema<Filters, Matcher> {
+  const filters = ref<Filters>({});
 
   const { allEvmChains } = useSupportedChains();
   const { t } = useI18n();
 
-  const matchers: ComputedRef<Matcher[]> = computed(() => [
+  const matchers = computed<Matcher[]>(() => [
     {
-      key: AssetFilterKeys.SYMBOL,
-      keyValue: AssetFilterValueKeys.SYMBOL,
       description: t('assets.filter.symbol'),
       hint: t('assets.filter.symbol_hint'),
+      key: AssetFilterKeys.SYMBOL,
+      keyValue: AssetFilterValueKeys.SYMBOL,
       string: true,
-      suggestions: () => [],
-      validate: () => true,
+      suggestions: (): string[] => [],
+      validate: (): true => true,
     },
     {
-      key: AssetFilterKeys.NAME,
-      keyValue: AssetFilterValueKeys.NAME,
       description: t('assets.filter.name'),
       hint: t('assets.filter.name_hint'),
+      key: AssetFilterKeys.NAME,
+      keyValue: AssetFilterValueKeys.NAME,
       string: true,
-      suggestions: () => [],
-      validate: () => true,
+      suggestions: (): string[] => [],
+      validate: (): true => true,
     },
     {
+      description: t('assets.filter.chain'),
       key: AssetFilterKeys.EVM_CHAIN,
       keyValue: AssetFilterValueKeys.EVM_CHAIN,
-      description: t('assets.filter.chain'),
       string: true,
-      suggestions: () => get(allEvmChains).map(x => x.name),
-      validate: (chain: string) => !!chain,
+      suggestions: (): string[] => get(allEvmChains).map(x => x.name),
+      validate: (chain: string): boolean => !!chain,
     },
     {
+      description: t('assets.filter.address'),
       key: AssetFilterKeys.ADDRESS,
       keyValue: AssetFilterValueKeys.ADDRESS,
-      description: t('assets.filter.address'),
       string: true,
-      suggestions: () => [],
-      validate: (address: string) => isValidEthAddress(address),
+      suggestions: (): string[] => [],
+      validate: (address: string): boolean => isValidEthAddress(address),
     },
   ]);
 
-  const updateFilter = (newFilters: Filters) => {
-    set(filters, newFilters);
-  };
-
   const OptionalString = z.string().optional();
   const RouteFilterSchema = z.object({
-    [AssetFilterValueKeys.SYMBOL]: OptionalString,
-    [AssetFilterValueKeys.NAME]: OptionalString,
-    [AssetFilterValueKeys.EVM_CHAIN]: OptionalString,
     [AssetFilterValueKeys.ADDRESS]: OptionalString,
+    [AssetFilterValueKeys.EVM_CHAIN]: OptionalString,
+    [AssetFilterValueKeys.NAME]: OptionalString,
+    [AssetFilterValueKeys.SYMBOL]: OptionalString,
   });
 
   return {
     filters,
     matchers,
-    updateFilter,
     RouteFilterSchema,
   };
 }

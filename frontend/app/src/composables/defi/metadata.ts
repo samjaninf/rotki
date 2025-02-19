@@ -1,4 +1,8 @@
-import { camelCase } from 'lodash-es';
+import { camelCase } from 'es-toolkit';
+import { useMainStore } from '@/store/main';
+import { useRefMap } from '@/composables/utils/useRefMap';
+import { useValueOrDefault } from '@/composables/utils/useValueOrDefault';
+import { useDefiApi } from '@/composables/api/defi';
 import type { MaybeRef } from '@vueuse/core';
 import type { ProtocolMetadata } from '@/types/defi';
 
@@ -7,56 +11,49 @@ export const useDefiMetadata = createSharedComposable(() => {
 
   const { connected } = toRefs(useMainStore());
 
-  const metadata: Ref<ProtocolMetadata[]> = asyncComputed<
-    ProtocolMetadata[]
-  >(() => {
-    if (get(connected))
-      return fetchDefiMetadata();
+  const loading = ref<boolean>(false);
 
-    return [];
-  }, []);
+  const metadata: Ref<ProtocolMetadata[]> = asyncComputed<ProtocolMetadata[]>(
+    async () => {
+      if (get(connected))
+        return fetchDefiMetadata();
 
-  const getDefiData = (
-    identifier: MaybeRef<string>,
-  ): ComputedRef<ProtocolMetadata | undefined> =>
-    useArrayFind(
-      metadata,
-      item => camelCase(item.identifier) === camelCase(get(identifier)),
-    );
+      return [];
+    },
+    [],
+    { evaluating: loading },
+  );
 
-  const getDefiDataByName = (
-    name: MaybeRef<string>,
-  ): ComputedRef<ProtocolMetadata | undefined> =>
-    useArrayFind<ProtocolMetadata>(
-      metadata,
-      item => decodeHtmlEntities(item.name) === decodeHtmlEntities(get(name)),
-    );
+  const getDefiData = (identifier: MaybeRef<string>): ComputedRef<ProtocolMetadata | undefined> =>
+    useArrayFind(metadata, item => camelCase(item.identifier) === camelCase(get(identifier)));
+
+  const getDefiDataByName = (name: MaybeRef<string>): ComputedRef<ProtocolMetadata | undefined> =>
+    useArrayFind<ProtocolMetadata>(metadata, item => decodeHtmlEntities(item.name) === decodeHtmlEntities(get(name)));
 
   const getDefiName = (identifier: MaybeRef<string>): ComputedRef<string> =>
     useValueOrDefault(
-      useRefMap(getDefiData(identifier), i => i?.name),
+      useRefMap(getDefiData(identifier), i => i?.name && decodeHtmlEntities(i?.name)),
       identifier,
     );
 
   const getDefiImage = (identifier: MaybeRef<string>): ComputedRef<string> =>
-    useValueOrDefault(
-      useRefMap(getDefiData(identifier), i => i?.icon),
-      computed(() => `${get(identifier)}.svg`),
-    );
+    computed(() => {
+      const imageName = get(getDefiData(identifier))?.icon || `${get(identifier)}.svg`;
+      return `./assets/images/protocols/${imageName}`;
+    });
 
-  const getDefiIdentifierByName = (
-    name: MaybeRef<string>,
-  ): ComputedRef<string> =>
+  const getDefiIdentifierByName = (name: MaybeRef<string>): ComputedRef<string> =>
     useValueOrDefault(
       useRefMap(getDefiDataByName(name), i => i?.identifier),
       name,
     );
 
   return {
-    metadata,
     getDefiData,
-    getDefiName,
-    getDefiImage,
     getDefiIdentifierByName,
+    getDefiImage,
+    getDefiName,
+    loading,
+    metadata,
   };
 });

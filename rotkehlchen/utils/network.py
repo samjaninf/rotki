@@ -6,6 +6,8 @@ from typing import Any, Literal, overload
 
 import gevent
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 from rotkehlchen.constants import GLOBAL_REQUESTS_TIMEOUT
 from rotkehlchen.db.settings import CachedSettings
@@ -14,6 +16,30 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+
+def create_session() -> requests.Session:
+    """Create a requests session with the configuration to retry a maximum
+    of 3 times on connection errors or DNS resolution errors.
+
+    From the requests docs about max_retries:
+    The maximum number of retries each connection should attempt. Note, this applies only
+    to failed DNS lookups, socket connections and connection timeouts, never to requests
+    where data has made it to the server.
+    """
+    session = requests.Session()
+    # we don't use total in the adapter because it seems to trigger on certain bad status codes
+    # like too many requests even when status_forcelist is set to an empty list. This
+    # configuration worked fine for what we could test in real scenarios in the e2e tests.
+    adapter = HTTPAdapter(max_retries=Retry(
+        connect=3,
+        read=2,
+        status=0,
+        status_forcelist=[],  # by default urllib retries on 413, 429 (rate limit) and 503
+    ))
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
 
 
 def request_get(
@@ -80,7 +106,7 @@ def retry_calls(
         **kwargs: Any,
 ) -> Any:
     """Calls a function that deals with external apis for a given number of times
-    untils it fails or until it succeeds.
+    until it fails or until it succeeds.
 
     If it fails with an acceptable error then we wait for a bit until the next try.
 

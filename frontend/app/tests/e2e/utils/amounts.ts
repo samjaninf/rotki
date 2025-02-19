@@ -1,5 +1,4 @@
-import { bigNumberify } from '@/utils/bignumbers';
-import type { BigNumber } from '@rotki/common';
+import { type BigNumber, bigNumberify } from '@rotki/common';
 
 /**
  * Removes the separator (comma) from a given amount.
@@ -41,11 +40,7 @@ export function parseBigNumber(text: string): BigNumber {
  *
  * @return {void} - Returns nothing.
  */
-export function updateLocationBalance(
-  amount: string,
-  balances: Map<string, BigNumber>,
-  location: string,
-): void {
+export function updateLocationBalance(amount: string, balances: Map<string, BigNumber>, location: string): void {
   const balance = parseBigNumber(amount);
   const locationBalance = balances.get(location);
   if (!locationBalance)

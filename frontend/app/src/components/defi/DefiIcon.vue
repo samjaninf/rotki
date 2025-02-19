@@ -1,25 +1,46 @@
 <script setup lang="ts">
+import AppImage from '@/components/common/AppImage.vue';
+
 interface Item {
-  icon: string;
+  icon?: string;
   name: string;
 }
 
-withDefaults(defineProps<{ item: Item; size?: string }>(), { size: '1.5rem' });
+defineOptions({
+  inheritAttrs: false,
+});
+
+withDefaults(
+  defineProps<{
+    item: Item;
+    size?: string;
+    vertical?: boolean;
+  }>(),
+  {
+    size: '1.5rem',
+    vertical: false,
+  },
+);
 </script>
 
 <template>
   <div
     v-bind="$attrs"
-    class="flex flex-row items-center gap-2"
+    class="flex items-center"
+    :class="vertical ? 'flex-col gap-1' : 'flex-row gap-2'"
   >
     <AppImage
       class="icon-bg"
       :src="item.icon"
       :size="size"
+      :loading="!item.icon"
       contain
     />
-    <div class="capitalize text-rui-text-secondary">
-      {{ item.name }}
+    <div
+      class="text-rui-text-secondary"
+      :class="{ '-mb-1 text-center': vertical }"
+    >
+      {{ toSentenceCase(item.name) }}
     </div>
   </div>
 </template>

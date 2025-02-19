@@ -1,9 +1,9 @@
 <script lang="ts" setup>
-import type {
-  SavedFilterLocation,
-  SearchMatcher,
-  Suggestion,
-} from '@/types/filtering';
+import { isEqual } from 'es-toolkit';
+import { useMessageStore } from '@/store/message';
+import { useSavedFilter } from '@/composables/filters/saved';
+import SuggestedItem from '@/components/table-filter/SuggestedItem.vue';
+import type { SavedFilterLocation, SearchMatcher, Suggestion } from '@/types/filtering';
 
 const props = defineProps<{
   matchers: SearchMatcher<any>[];
@@ -17,19 +17,18 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const css = useCssModule();
 
-const { selection, location, matchers } = toRefs(props);
+const { location, matchers, selection } = toRefs(props);
 
-const open: Ref<boolean> = ref(false);
+const open = ref<boolean>(false);
 
 function applyFilter(filter: Suggestion[]) {
   emit('update:matches', filter);
   set(open, false);
 }
 
-const added: Ref<boolean> = ref(false);
-const { start, stop, isPending } = useTimeoutFn(
+const added = ref<boolean>(false);
+const { isPending, start, stop } = useTimeoutFn(
   () => {
     set(added, false);
   },
@@ -51,10 +50,24 @@ function isAsset(searchKey: string): boolean {
   return !!found && 'asset' in found;
 }
 
-const { savedFilters, addFilter, deleteFilter } = useSavedFilter(
-  location,
-  isAsset,
-);
+const { addFilter, deleteFilter, savedFilters } = useSavedFilter(location, isAsset);
+
+const filtersList = computed(() => {
+  const matcherKeys = get(matchers).map(item => item.key);
+  return get(savedFilters)
+    // Filter out keys that doesn't supported in the matchers list
+    .map(filters => filters.filter(filter => matcherKeys.includes(filter.key)))
+    .filter((filter, index, self) => {
+      if (filter.length === 0)
+        return false;
+      // Sort the current filter array for consistent comparison
+      const sortedFilter = filter.slice().sort((a, b) => a.key.localeCompare(b.key));
+      // Check if this is the first occurrence of this filter combination
+      return index === self.findIndex(f =>
+        isEqual(sortedFilter, f.slice().sort((a, b) => a.key.localeCompare(b.key))),
+      );
+    });
+});
 
 const { setMessage } = useMessageStore();
 
@@ -69,9 +82,9 @@ async function addToSavedFilter() {
   }
   else {
     setMessage({
-      title: t('table_filter.saved_filters.saving.title').toString(),
       description: status.message,
       success: false,
+      title: t('table_filter.saved_filters.saving.title'),
     });
   }
 }
@@ -94,13 +107,13 @@ async function addToSavedFilter() {
         >
           <RuiIcon
             size="20"
-            name="play-list-add-line"
+            name="lu-list-plus"
           />
         </RuiButton>
       </template>
       <div
         class="text-center"
-        :class="css['add-tooltip']"
+        :class="$style['add-tooltip']"
       >
         <div
           class="h-4 transition-all"
@@ -121,7 +134,7 @@ async function addToSavedFilter() {
       :popper="{ placement: 'bottom-end' }"
       menu-class="max-w-[25rem] max-h-[32rem]"
     >
-      <template #activator="{ on }">
+      <template #activator="{ attrs }">
         <RuiTooltip
           :popper="{ placement: 'top' }"
           :open-delay="400"
@@ -133,11 +146,11 @@ async function addToSavedFilter() {
               color="primary"
               variant="text"
               icon
-              v-on="on"
+              v-bind="attrs"
             >
               <RuiIcon
                 size="20"
-                name="filter-line"
+                name="lu-filter"
               />
             </RuiButton>
           </template>
@@ -145,11 +158,11 @@ async function addToSavedFilter() {
         </RuiTooltip>
       </template>
       <div
-        v-if="savedFilters.length > 0"
+        v-if="filtersList.length > 0"
         class="py-2"
       >
         <div
-          v-for="(filters, index) in savedFilters"
+          v-for="(filters, index) in filtersList"
           :key="index"
         >
           <RuiDivider
@@ -187,7 +200,7 @@ async function addToSavedFilter() {
                   >
                     <RuiIcon
                       size="16"
-                      name="corner-left-up-line"
+                      name="lu-corner-left-up"
                     />
                   </RuiButton>
                 </template>
@@ -211,7 +224,7 @@ async function addToSavedFilter() {
                   >
                     <RuiIcon
                       size="16"
-                      name="delete-bin-5-line"
+                      name="lu-trash-2"
                     />
                   </RuiButton>
                 </template>
@@ -227,7 +240,7 @@ async function addToSavedFilter() {
         v-else
         class="p-4"
       >
-        <i18n path="table_filter.saved_filters.empty">
+        <i18n-t keypath="table_filter.saved_filters.empty">
           <template #button>
             <RuiButton
               color="secondary"
@@ -238,11 +251,11 @@ async function addToSavedFilter() {
             >
               <RuiIcon
                 size="16"
-                name="play-list-add-line"
+                name="lu-list-plus"
               />
             </RuiButton>
           </template>
-        </i18n>
+        </i18n-t>
       </div>
     </RuiMenu>
   </div>

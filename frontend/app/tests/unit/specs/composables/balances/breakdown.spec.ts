@@ -1,3 +1,7 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { useBalancesBreakdown } from '@/composables/balances/breakdown';
+
 vi.mock('@/composables/assets/retrieval', () => ({
   useAssetInfoRetrieval: vi.fn().mockReturnValue({
     assetInfo: vi.fn().mockImplementation((identifier) => {
@@ -11,14 +15,16 @@ vi.mock('@/composables/assets/retrieval', () => ({
         collectionId,
       };
     }),
+    assetSymbol: vi.fn().mockImplementation(identifier => identifier),
   }),
 }));
 
-vi.mock('@/store/balances/manual', () => ({
-  useManualBalancesStore: vi.fn().mockReturnValue({
-    manualBalanceByLocation: ref([]),
-    getBreakdown: vi.fn().mockReturnValue(
-      computed(() => [
+vi.mock('@/store/balances/manual', async () => {
+  const { ref, computed } = await import('vue');
+  return {
+    useManualBalancesStore: vi.fn().mockReturnValue({
+      manualBalanceByLocation: ref([]),
+      assetBreakdown: vi.fn().mockReturnValue(computed(() => [
         {
           location: 'external',
           amount: bigNumberify(1000),
@@ -33,10 +39,8 @@ vi.mock('@/store/balances/manual', () => ({
           address: '',
           tags: null,
         },
-      ]),
-    ),
-    getLocationBreakdown: vi.fn().mockReturnValue(
-      computed(() => ({
+      ])),
+      getLocationBreakdown: vi.fn().mockReturnValue(computed(() => ({
         ETH: {
           amount: bigNumberify(1000),
           usdValue: bigNumberify(1000),
@@ -49,26 +53,23 @@ vi.mock('@/store/balances/manual', () => ({
           amount: bigNumberify(1000),
           usdValue: bigNumberify(1000),
         },
-      })),
-    ),
-  }),
-}));
+      }))),
+    }),
+  };
+});
 
-vi.mock('@/store/balances/exchanges', () => ({
-  useExchangeBalancesStore: vi.fn().mockReturnValue({
-    getBreakdown: vi.fn().mockReturnValue(
-      computed(() => [
-        {
-          location: 'kraken',
-          amount: bigNumberify(1000),
-          usdValue: bigNumberify(1000),
-          address: '',
-          tags: null,
-        },
-      ]),
-    ),
-    getLocationBreakdown: vi.fn().mockReturnValue(
-      computed(() => ({
+vi.mock('@/store/balances/exchanges', async () => {
+  const { computed } = await import('vue');
+  return {
+    useExchangeBalancesStore: vi.fn().mockReturnValue({
+      getBreakdown: vi.fn().mockReturnValue(computed(() => [{
+        location: 'kraken',
+        amount: bigNumberify(1000),
+        usdValue: bigNumberify(1000),
+        address: '',
+        tags: null,
+      }])),
+      getLocationBreakdown: vi.fn().mockReturnValue(computed(() => ({
         ETH: {
           amount: bigNumberify(1000),
           usdValue: bigNumberify(1000),
@@ -81,16 +82,17 @@ vi.mock('@/store/balances/exchanges', () => ({
           amount: bigNumberify(1000),
           usdValue: bigNumberify(1000),
         },
-      })),
-    ),
-    getByLocationBalances: vi.fn(),
-  }),
-}));
+      }))),
+      getByLocationBalances: vi.fn(),
+    }),
+  };
+});
 
-vi.mock('@/store/blockchain/index', () => ({
-  useBlockchainStore: vi.fn().mockReturnValue({
-    getBreakdown: vi.fn().mockReturnValue(
-      computed(() => [
+vi.mock('@/store/blockchain/index', async () => {
+  const { computed } = await import('vue');
+  return {
+    useBlockchainStore: vi.fn().mockReturnValue({
+      assetBreakdown: vi.fn().mockReturnValue(computed(() => [
         {
           location: 'ethereum',
           address: '0xaddress1',
@@ -105,10 +107,10 @@ vi.mock('@/store/blockchain/index', () => ({
           usdValue: bigNumberify(2000),
           tags: null,
         },
-      ]),
-    ),
-  }),
-}));
+      ])),
+    }),
+  };
+});
 
 describe('composables::balances/breakdown', () => {
   setActivePinia(createPinia());
@@ -160,12 +162,13 @@ describe('composables::balances/breakdown', () => {
       USDC: {
         name: 'USDC',
         symbol: 'USDC',
+        mainAsset: 'USDC',
       },
     });
     const locationBreakdown = balancesBreakdown.locationBreakdown('kraken');
     const expectedResult = [
       {
-        asset: 'aUSDC',
+        asset: 'USDC',
         amount: bigNumberify(6000),
         usdValue: bigNumberify(6000),
         usdPrice: bigNumberify(-1),

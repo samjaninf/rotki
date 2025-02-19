@@ -5,6 +5,9 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
+from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.utils import get_or_create_evm_token
+from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR, A_USD
 from rotkehlchen.fval import FVal
@@ -18,7 +21,7 @@ from rotkehlchen.tests.utils.api import (
     assert_proper_response_with_result,
     assert_proper_sync_response_with_result,
 )
-from rotkehlchen.types import ChecksumEvmAddress, Price
+from rotkehlchen.types import ChainID, ChecksumEvmAddress, Price
 from rotkehlchen.utils.misc import timestamp_to_date
 
 if TYPE_CHECKING:
@@ -29,7 +32,7 @@ if TYPE_CHECKING:
     ('BTC', 'USD'): (FVal('33183.98'), CurrentPriceOracle.BLOCKCHAIN),
     ('GBP', 'USD'): (FVal('1.367'), CurrentPriceOracle.FIAT),
 }])
-def test_get_current_assets_price_in_usd(rotkehlchen_api_server):
+def test_get_current_assets_price_in_usd(rotkehlchen_api_server: 'APIServer') -> None:
     async_query = random.choice([False, True])
     response = requests.post(
         api_url_for(
@@ -49,9 +52,9 @@ def test_get_current_assets_price_in_usd(rotkehlchen_api_server):
     )
 
     assert len(result) == 3
-    assert result['assets']['BTC'] == ['33183.98', CurrentPriceOracle.BLOCKCHAIN.value, False]
-    assert result['assets']['GBP'] == ['1.367', CurrentPriceOracle.FIAT.value, False]
-    assert result['assets']['USD'] == ['1', CurrentPriceOracle.BLOCKCHAIN.value, False]
+    assert result['assets']['BTC'] == ['33183.98', CurrentPriceOracle.BLOCKCHAIN.value]
+    assert result['assets']['GBP'] == ['1.367', CurrentPriceOracle.FIAT.value]
+    assert result['assets']['USD'] == ['1', CurrentPriceOracle.BLOCKCHAIN.value]
     assert result['target_asset'] == 'USD'
     assert result['oracles'] == {str(oracle): oracle.value for oracle in CurrentPriceOracle}
 
@@ -60,7 +63,7 @@ def test_get_current_assets_price_in_usd(rotkehlchen_api_server):
     ('USD', 'BTC'): (FVal('0.00003013502298398202988309419184'), CurrentPriceOracle.COINGECKO),
     ('GBP', 'BTC'): (FVal('0.00004119457641910343485018976024'), CurrentPriceOracle.COINGECKO),
 }])
-def test_get_current_assets_price_in_btc(rotkehlchen_api_server):
+def test_get_current_assets_price_in_btc(rotkehlchen_api_server: 'APIServer') -> None:
 
     async_query = random.choice([False, True])
     response = requests.post(
@@ -81,19 +84,44 @@ def test_get_current_assets_price_in_btc(rotkehlchen_api_server):
     )
 
     assert len(result) == 3
-    assert result['assets']['BTC'] == ['1', CurrentPriceOracle.BLOCKCHAIN.value, False]
-    assert result['assets']['GBP'] == ['0.00004119457641910343485018976024', CurrentPriceOracle.COINGECKO.value, False]  # noqa: E501
-    assert result['assets']['USD'] == ['0.00003013502298398202988309419184', CurrentPriceOracle.COINGECKO.value, False]  # noqa: E501
+    assert result['assets']['BTC'] == ['1', CurrentPriceOracle.BLOCKCHAIN.value]
+    assert result['assets']['GBP'] == ['0.00004119457641910343485018976024', CurrentPriceOracle.COINGECKO.value]  # noqa: E501
+    assert result['assets']['USD'] == ['0.00003013502298398202988309419184', CurrentPriceOracle.COINGECKO.value]  # noqa: E501
     assert result['target_asset'] == 'BTC'
 
 
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_add_manual_latest_price(rotkehlchen_api_server):
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+def test_add_manual_latest_price(rotkehlchen_api_server: 'APIServer') -> None:
     """Check that addition of manual current prices work fine."""
-    GlobalDBHandler.add_manual_latest_price(
-        from_asset=A_ETH,
-        to_asset=A_EUR,
-        price=Price(FVal(100)),
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    get_or_create_evm_token(  # create a specific token in base
+        userdb=rotki.data.db,
+        evm_address=string_to_evm_address('0xe66E3A37C3274Ac24FE8590f7D84A2427194DC17'),
+        chain_id=ChainID.BASE,
+    )
+    response = requests.put(  # add a latest price for it
+        api_url_for(
+            rotkehlchen_api_server,
+            'latestassetspriceresource',
+        ),
+        json={
+            'from_asset': 'eip155:8453/erc20:0xe66E3A37C3274Ac24FE8590f7D84A2427194DC17',
+            'to_asset': A_ETH.identifier,
+            'price': '42',
+        },
+    )  # make sure it's there
+    assert GlobalDBHandler.get_manual_current_price(Asset('eip155:8453/erc20:0xe66E3A37C3274Ac24FE8590f7D84A2427194DC17')) == (A_ETH, Price(FVal(42)))  # noqa: E501
+    response = requests.put(  # now
+        api_url_for(
+            rotkehlchen_api_server,
+            'latestassetspriceresource',
+        ),
+        json={
+            'from_asset': A_ETH.identifier,
+            'to_asset': A_EUR.identifier,
+            'price': '100',
+        },
     )
     response = requests.post(
         api_url_for(
@@ -106,7 +134,7 @@ def test_add_manual_latest_price(rotkehlchen_api_server):
         },
     )
     result = assert_proper_sync_response_with_result(response)
-    assert result['assets']['ETH'] == ['100', CurrentPriceOracle.MANUALCURRENT.value, True]  # check that manual current price was used  # noqa: E501
+    assert result['assets']['ETH'] == ['100', CurrentPriceOracle.MANUALCURRENT.value]  # check that manual current price was used  # noqa: E501
     assert result['assets']['USD'][0] != '100'
 
     response = requests.post(
@@ -149,12 +177,26 @@ def test_add_manual_latest_price(rotkehlchen_api_server):
         },
     )
     result = assert_proper_sync_response_with_result(response)
-    assert result['assets']['ETH'] == ['100', CurrentPriceOracle.MANUALCURRENT.value, True]
-    assert result['assets']['USD'] == ['23', CurrentPriceOracle.MANUALCURRENT.value, True]
+    assert result['assets']['ETH'] == ['100', CurrentPriceOracle.MANUALCURRENT.value]
+    assert result['assets']['USD'] == ['23', CurrentPriceOracle.MANUALCURRENT.value]
+
+    # check that if the from and to assets are the same, an error is thrown.
+    response = requests.put(
+        api_url_for(
+            rotkehlchen_api_server,
+            'latestassetspriceresource',
+        ),
+        json={
+            'from_asset': A_EUR.identifier,
+            'to_asset': A_EUR.identifier,
+            'price': '23',
+        },
+    )
+    assert_error_response(response, 'The from and to assets must be different')
 
 
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_edit_manual_current_price(rotkehlchen_api_server):
+def test_edit_manual_current_price(rotkehlchen_api_server: 'APIServer') -> None:
     GlobalDBHandler.add_manual_latest_price(
         from_asset=A_ETH,
         to_asset=A_EUR,
@@ -206,7 +248,7 @@ def test_edit_manual_current_price(rotkehlchen_api_server):
         from_asset=A_ETH,
         to_asset=A_EUR,
         timestamp=manual_current_timestamp,
-        price=ONE,
+        price=Price(ONE),
         source=HistoricalPriceOracle.MANUAL,
     ))
     response = requests.put(
@@ -228,7 +270,7 @@ def test_edit_manual_current_price(rotkehlchen_api_server):
 
 
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_remove_manual_current_price(rotkehlchen_api_server):
+def test_remove_manual_current_price(rotkehlchen_api_server: 'APIServer') -> None:
     GlobalDBHandler.add_manual_latest_price(
         from_asset=A_ETH,
         to_asset=A_EUR,
@@ -281,9 +323,9 @@ def test_remove_manual_current_price(rotkehlchen_api_server):
     assert (A_BTC, A_ETH) not in Inquirer()._cached_current_price
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_manual_current_prices_loop(inquirer: 'Inquirer'):
+def test_manual_current_prices_loop(inquirer: 'Inquirer') -> None:
     """Check that if we got a loop of manual current prices
     (e.g. 1 ETH costs 2 BTC and 1 BTC costs 5 ETH), it is handled properly.
 
@@ -310,14 +352,11 @@ def test_manual_current_prices_loop(inquirer: 'Inquirer'):
         to_asset=A_EUR.resolve_to_asset_with_oracles(),
     )
     assert price == FVal('1570.92')  # it must be equal to the mocked price at the time
-    warnings = inquirer._msg_aggregator.consume_warnings()
-    assert len(warnings) == 1
-    assert 'from ETH(Ethereum) to EUR(Euro) since your manual latest' in warnings[0]
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ignore_mocked_prices_for', ['ETH'])
-def test_inquirer_oracles_does_not_affect_manual_price(inquirer):
+def test_inquirer_oracles_does_not_affect_manual_price(inquirer: 'Inquirer') -> None:
     """Checks that change of oracles order does not affect manual current price usage.
 
     This test is mocked because we were seeing cases of tests failing due to
@@ -333,12 +372,12 @@ def test_inquirer_oracles_does_not_affect_manual_price(inquirer):
         oracles=[CurrentPriceOracle.COINGECKO, CurrentPriceOracle.MANUALCURRENT],
     )
     assert inquirer.find_usd_price(A_ETH) == 3  # Should remain the same since cache should be hit
-    inquirer.remove_cached_current_price_entry(cache_key=(A_ETH, A_USD))
+    Inquirer._cached_current_price.remove((A_ETH, A_USD))
     assert inquirer.find_usd_price(A_ETH) == 3  # manual price is still prioritized
 
 
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_get_all_current_prices(rotkehlchen_api_server):
+def test_get_all_current_prices(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that the endpoint to fetch all manual input returns the correct prices results"""
     # Check that when there are no entries in the database the result is empty
     response = requests.post(
@@ -370,7 +409,8 @@ def test_get_all_current_prices(rotkehlchen_api_server):
     # Check that the old ETH -> EUR price has become historical
     with GlobalDBHandler().conn.read_ctx() as cursor:
         cursor.execute(
-            'SELECT source_type FROM price_history WHERE from_asset="ETH" AND price="10"',
+            'SELECT source_type FROM price_history WHERE from_asset=? AND price=?',
+            ('ETH', '10'),
         )
         assert cursor.fetchone()[0] == HistoricalPriceOracle.MANUAL.serialize_for_db()
 
@@ -433,7 +473,7 @@ def test_get_all_current_prices(rotkehlchen_api_server):
 
 
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_prices_cache_invalidation_for_manual_prices(rotkehlchen_api_server):
+def test_prices_cache_invalidation_for_manual_prices(rotkehlchen_api_server: 'APIServer') -> None:
     """
     Check that the prices cache are properly invalidated upon addition
     and deletion of manual prices.

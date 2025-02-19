@@ -1,9 +1,12 @@
+import { startPromise } from '@shared/utils';
 import { api } from '@/services/rotkehlchen-api';
-import type { Nullable } from '@/types';
+import { logger } from '@/utils/logging';
+import { useMessageHandling } from '@/composables/message-handling';
+import type { Nullable } from '@rotki/common';
 
 export const useWebsocketStore = defineStore('websocket', () => {
-  const connection: Ref<Nullable<WebSocket>> = ref(null);
-  const connected: Ref<boolean> = ref(false);
+  const connection = ref<Nullable<WebSocket>>(null);
+  const connected = ref<boolean>(false);
 
   const { handleMessage } = useMessageHandling();
 
@@ -18,7 +21,7 @@ export const useWebsocketStore = defineStore('websocket', () => {
     }
   };
 
-  function connect(): Promise<boolean> {
+  async function connect(): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       if (get(connected)) {
         resolve(true);
@@ -27,25 +30,20 @@ export const useWebsocketStore = defineStore('websocket', () => {
       const serverUrl = api.serverUrl;
       let protocol = 'ws';
       const location = window.location;
-      if (
-        serverUrl?.startsWith('https')
-        || location.protocol.startsWith('https')
-      )
+      if (serverUrl?.startsWith('https') || location.protocol.startsWith('https'))
         protocol = 'wss';
 
       const urlSegments = serverUrl.split('://');
       let baseUrl: string;
       if (urlSegments.length > 1)
         baseUrl = urlSegments[1];
-      else
-        baseUrl = `${location.host}${location.pathname}`;
+      else baseUrl = `${location.host}${location.pathname}`;
 
       const url = `${protocol}://${baseUrl}/ws/`;
       logger.debug(`preparing to connect to ${url}`);
       const ws = new WebSocket(url);
       set(connection, ws);
-      ws.onmessage = async (event): Promise<void> =>
-        await handleMessage(event.data);
+      ws.onmessage = async (event): Promise<void> => handleMessage(event.data);
       ws.addEventListener('open', (): void => {
         logger.debug('websocket connected');
         set(connected, true);
@@ -76,8 +74,8 @@ export const useWebsocketStore = defineStore('websocket', () => {
   };
 
   return {
-    connected,
     connect,
+    connected,
     disconnect,
   };
 });

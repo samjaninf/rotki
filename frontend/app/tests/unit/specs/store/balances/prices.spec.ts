@@ -1,5 +1,9 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CURRENCY_USD, useCurrencies } from '@/types/currencies';
 import { PriceOracle } from '@/types/settings/price-oracle';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useTaskStore } from '@/store/tasks';
+import { usePriceApi } from '@/composables/api/balances/price';
 import { updateGeneralSettings } from '../../../utils/general-settings';
 
 vi.mock('@/store/tasks', () => ({
@@ -11,8 +15,7 @@ vi.mock('@/store/tasks', () => ({
 
 describe('store::balances/manual', () => {
   setActivePinia(createPinia());
-  const store: ReturnType<typeof useBalancePricesStore>
-    = useBalancePricesStore();
+  const store: ReturnType<typeof useBalancePricesStore> = useBalancePricesStore();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -22,7 +25,7 @@ describe('store::balances/manual', () => {
     it('first call', async () => {
       const mockPricesResponse = {
         assets: {
-          DAI: [1, 0, false],
+          DAI: [1, 0],
         },
         targetAsset: CURRENCY_USD,
         oracles: {
@@ -41,18 +44,13 @@ describe('store::balances/manual', () => {
         selectedAssets: ['DAI'],
       });
 
-      expect(usePriceApi().queryPrices).toHaveBeenCalledWith(
-        ['DAI'],
-        CURRENCY_USD,
-        false,
-      );
+      expect(usePriceApi().queryPrices).toHaveBeenCalledWith(['DAI'], CURRENCY_USD, false);
 
       const { prices } = storeToRefs(store);
       expect(get(prices)).toMatchObject({
         DAI: {
           value: bigNumberify(1),
           isManualPrice: false,
-          isCurrentCurrency: false,
         },
       });
     });
@@ -60,7 +58,7 @@ describe('store::balances/manual', () => {
     it('second call', async () => {
       const mockPricesResponse = {
         assets: {
-          ETH: [2, 1, true],
+          ETH: [2, 1],
         },
         targetAsset: CURRENCY_USD,
         oracles: {
@@ -79,23 +77,17 @@ describe('store::balances/manual', () => {
         selectedAssets: ['ETH'],
       });
 
-      expect(usePriceApi().queryPrices).toHaveBeenCalledWith(
-        ['ETH'],
-        CURRENCY_USD,
-        false,
-      );
+      expect(usePriceApi().queryPrices).toHaveBeenCalledWith(['ETH'], CURRENCY_USD, false);
 
       const { prices } = storeToRefs(store);
       expect(get(prices)).toMatchObject({
         DAI: {
           value: bigNumberify(1),
           isManualPrice: false,
-          isCurrentCurrency: false,
         },
         ETH: {
           value: bigNumberify(2),
           isManualPrice: true,
-          isCurrentCurrency: true,
         },
       });
     });
@@ -180,11 +172,7 @@ describe('store::balances/manual', () => {
         timestamp,
       });
 
-      expect(usePriceApi().queryHistoricalRate).toHaveBeenCalledWith(
-        'DAI',
-        'USD',
-        timestamp,
-      );
+      expect(usePriceApi().queryHistoricalRate).toHaveBeenCalledWith('DAI', 'USD', timestamp);
 
       expect(price).toEqual(bigNumberify(10));
     });
@@ -236,7 +224,7 @@ describe('store::balances/manual', () => {
   describe('isAssetPriceInCurrentCurrency', () => {
     it('default', () => {
       expect(get(store.isAssetPriceInCurrentCurrency('DAI'))).toEqual(false);
-      expect(get(store.isAssetPriceInCurrentCurrency('ETH'))).toEqual(true);
+      expect(get(store.isAssetPriceInCurrentCurrency('ETH'))).toEqual(false);
     });
   });
 });

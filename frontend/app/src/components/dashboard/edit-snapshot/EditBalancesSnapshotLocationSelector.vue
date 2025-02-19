@@ -1,30 +1,26 @@
 <script setup lang="ts">
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import LocationSelector from '@/components/helper/LocationSelector.vue';
 import type { BigNumber } from '@rotki/common';
 
-const props = withDefaults(
+const model = defineModel<string>({ default: '', required: true });
+
+withDefaults(
   defineProps<{
-    value?: string;
     locations?: string[];
     previewLocationBalance?: Record<string, BigNumber> | null;
     optionalShowExisting?: boolean;
   }>(),
   {
-    value: '',
     locations: () => [],
-    previewLocationBalance: null,
     optionalShowExisting: false,
+    previewLocationBalance: null,
   },
 );
 
-const emit = defineEmits<{
-  (e: 'input', location: string): void;
-}>();
-
-const model = useSimpleVModel(props, emit);
-
 const { t } = useI18n();
 
-const showOnlyExisting: Ref<boolean> = ref(true);
+const showOnlyExisting = ref<boolean>(true);
 </script>
 
 <template>
@@ -51,8 +47,9 @@ const showOnlyExisting: Ref<boolean> = ref(true);
       :items="showOnlyExisting ? locations : []"
       class="edit-balances-snapshot__location"
       clearable
-      :persistent-hint="!value"
-      :hide-details="!!value"
+      :menu-options="{ menuClass: 'z-[10001]' }"
+      :persistent-hint="!modelValue"
+      :hide-details="!!modelValue"
       :hint="t('dashboard.snapshot.edit.dialog.balances.hints.location')"
       :label="t('common.location')"
     />
@@ -74,7 +71,7 @@ const showOnlyExisting: Ref<boolean> = ref(true);
           />
         </div>
         <div class="px-8 text-rui-text-secondary">
-          <RuiIcon name="arrow-right-line" />
+          <RuiIcon name="lu-arrow-right" />
         </div>
         <div>
           <div class="text-overline text-rui-text-secondary -mb-2">

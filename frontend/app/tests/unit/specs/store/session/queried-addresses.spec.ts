@@ -1,8 +1,9 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Module } from '@/types/modules';
-import type {
-  QueriedAddressPayload,
-  QueriedAddresses,
-} from '@/types/session';
+import { useMessageStore } from '@/store/message';
+import { useQueriedAddressesStore } from '@/store/session/queried-addresses';
+import { useQueriedAddressApi } from '@/composables/api/session/queried-addresses';
+import type { QueriedAddressPayload, QueriedAddresses } from '@/types/session';
 
 describe('session:queried addresses store', () => {
   setActivePinia(createPinia());
@@ -18,7 +19,7 @@ describe('session:queried addresses store', () => {
     expect.assertions(2);
 
     const response: QueriedAddresses = {
-      makerdao_dsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
+      makerdaoDsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
     };
 
     api.queriedAddresses = vi.fn().mockResolvedValue(response);
@@ -34,7 +35,7 @@ describe('session:queried addresses store', () => {
     await store.fetchQueriedAddresses();
     expect(api.queriedAddresses).toHaveBeenCalledTimes(1);
     expect(store.queriedAddresses).toMatchObject({});
-    expect(messageStore.message.description).toBeTruthy();
+    expect(messageStore.message?.description).toBeTruthy();
   });
 
   it('addQueriedAddress', async () => {
@@ -44,7 +45,7 @@ describe('session:queried addresses store', () => {
       address: '0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5',
     };
     const response: QueriedAddresses = {
-      makerdao_dsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
+      makerdaoDsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
     };
     api.addQueriedAddress = vi.fn().mockResolvedValue(response);
     await store.addQueriedAddress(payload);
@@ -64,14 +65,14 @@ describe('session:queried addresses store', () => {
     await store.addQueriedAddress(payload);
     expect(api.addQueriedAddress).toHaveBeenCalledWith(payload);
     expect(store.queriedAddresses).toMatchObject({});
-    expect(messageStore.message.description).toBeTruthy();
+    expect(messageStore.message?.description).toBeTruthy();
   });
 
   it('deletedQueriedAddress', async () => {
     expect.assertions(2);
 
     const originalState: QueriedAddresses = {
-      makerdao_dsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
+      makerdaoDsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
     };
     Object.assign(store.queriedAddresses, originalState);
     const payload: QueriedAddressPayload = {
@@ -90,7 +91,7 @@ describe('session:queried addresses store', () => {
     const messageStore = useMessageStore();
 
     const originalState: QueriedAddresses = {
-      makerdao_dsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
+      makerdaoDsr: ['0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5'],
     };
     Object.assign(store.queriedAddresses, originalState);
     const payload: QueriedAddressPayload = {
@@ -102,6 +103,6 @@ describe('session:queried addresses store', () => {
     await store.deleteQueriedAddress(payload);
     expect(api.deleteQueriedAddress).toHaveBeenCalledWith(payload);
     expect(store.queriedAddresses).toMatchObject(originalState);
-    expect(messageStore.message.description).toBeTruthy();
+    expect(messageStore.message?.description).toBeTruthy();
   });
 });

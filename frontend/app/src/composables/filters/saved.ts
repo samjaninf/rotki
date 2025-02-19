@@ -1,40 +1,46 @@
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import type { MaybeRef } from '@vueuse/core';
-import type {
-  BaseSuggestion,
-  SavedFilterLocation,
-  Suggestion,
-} from '@/types/filtering';
+import type { BaseSuggestion, SavedFilterLocation, Suggestion } from '@/types/filtering';
 import type { ActionStatus } from '@/types/action';
+import type { ComputedRef } from 'vue';
 
 const LIMIT_PER_LOCATION = 10;
 
-export function useSavedFilter(location: MaybeRef<SavedFilterLocation>, isAsset: (key: string) => boolean) {
+interface UseSavedFilterReturn {
+  savedFilters: ComputedRef<Suggestion[][]>;
+  addFilter: (newFilter: Suggestion[]) => Promise<ActionStatus>;
+  deleteFilter: (index: number) => Promise<void>;
+  saveFilters: (filters: BaseSuggestion[][]) => Promise<ActionStatus>;
+}
+
+export function useSavedFilter(
+  location: MaybeRef<SavedFilterLocation>,
+  isAsset: (key: string) => boolean,
+): UseSavedFilterReturn {
   const frontendStore = useFrontendSettingsStore();
   const { updateSetting } = frontendStore;
 
   const { savedFilters: allSavedFilters } = storeToRefs(frontendStore);
 
-  const savedFilters: ComputedRef<Suggestion[][]> = computed(() => {
+  const savedFilters = computed<Suggestion[][]>(() => {
     const baseSuggestions = get(allSavedFilters)[get(location)] || [];
 
     return baseSuggestions.map(suggestions =>
       suggestions.map(suggestion => ({
         ...suggestion,
+        asset: isAsset(suggestion.key),
         index: 0,
         total: 1,
-        asset: isAsset(suggestion.key),
       })),
     );
   });
 
   const { t } = useI18n();
 
-  const saveFilters = async (
-    filters: BaseSuggestion[][],
-  ): Promise<ActionStatus> => {
+  const saveFilters = async (filters: BaseSuggestion[][]): Promise<ActionStatus> => {
     const allSaved = { ...get(allSavedFilters) };
     allSaved[get(location)] = filters;
-    return await updateSetting({
+    return updateSetting({
       savedFilters: allSaved,
     });
   };
@@ -54,18 +60,15 @@ export function useSavedFilter(location: MaybeRef<SavedFilterLocation>, isAsset:
     const newFilters = [
       ...currentFilters,
       newFilter.map(item => ({
-        key: item.key,
-        value:
-          !item.asset || typeof item.value === 'string'
-            ? item.value
-            : item.value.identifier,
         exclude: item.exclude,
+        key: item.key,
+        value: !item.asset || typeof item.value === 'string' ? item.value : item.value.identifier,
       })),
     ];
-    return await saveFilters(newFilters);
+    return saveFilters(newFilters);
   };
 
-  const deleteFilter = async (index: number) => {
+  const deleteFilter = async (index: number): Promise<void> => {
     const newFilters = [...get(savedFilters)];
     newFilters.splice(index, 1);
 
@@ -73,9 +76,9 @@ export function useSavedFilter(location: MaybeRef<SavedFilterLocation>, isAsset:
   };
 
   return {
-    savedFilters,
     addFilter,
     deleteFilter,
+    savedFilters,
     saveFilters,
   };
 }

@@ -41,8 +41,8 @@ class BalancesTestSetup(NamedTuple):
     binance_balances: dict[AssetWithOracles, FVal]
     poloniex_balances: dict[AssetWithOracles, FVal]
     manually_tracked_balances: list[ManuallyTrackedBalance]
-    poloniex_patch: _patch
-    binance_patch: _patch
+    poloniex_patch: _patch | None
+    binance_patch: _patch | None
     etherscan_patch: _patch
     beaconchain_patch: _patch
     evmtokens_max_chunks_patch: _patch
@@ -51,8 +51,10 @@ class BalancesTestSetup(NamedTuple):
     defichad_query_balances_patch: _patch | None
 
     def enter_all_patches(self, stack: ExitStack):
-        stack.enter_context(self.poloniex_patch)
-        stack.enter_context(self.binance_patch)
+        if self.poloniex_patch:
+            stack.enter_context(self.poloniex_patch)
+        if self.binance_patch:
+            stack.enter_context(self.binance_patch)
         self.enter_blockchain_patches(stack)
         return stack
 
@@ -203,9 +205,9 @@ def setup_balances(
         btc_map[btc_acc] = btc_balances[idx]
 
     binance = try_get_first_exchange(rotki.exchange_manager, Location.BINANCE)
-    binance_patch = patch_binance_balances_query(binance) if binance else None  # type: ignore
+    binance_patch = patch_binance_balances_query(binance) if binance else None
     poloniex = try_get_first_exchange(rotki.exchange_manager, Location.POLONIEX)
-    poloniex_patch = patch_poloniex_balances_query(poloniex) if poloniex else None  # type: ignore
+    poloniex_patch = patch_poloniex_balances_query(poloniex) if poloniex else None
     etherscan_patch = mock_etherscan_query(
         eth_map=eth_map,
         etherscan=rotki.chains_aggregator.ethereum.node_inquirer.etherscan,

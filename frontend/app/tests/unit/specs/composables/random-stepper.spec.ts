@@ -1,4 +1,6 @@
-import type Vue from 'vue';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { useRandomStepper } from '@/composables/random-stepper';
+import type * as Vue from 'vue';
 
 describe('composables::random-stepper', () => {
   beforeAll(() => {
@@ -7,11 +9,11 @@ describe('composables::random-stepper', () => {
     setActivePinia(pinia);
 
     vi.mock('vue', async () => {
-      const mod = await vi.importActual<Vue>('vue');
+      const mod = await vi.importActual<typeof Vue>('vue');
 
       return {
         ...mod,
-        onMounted: vi.fn().mockImplementation((fn: Function) => fn()),
+        onMounted: vi.fn().mockImplementation((fn: () => void) => fn()),
       };
     });
   });
@@ -83,7 +85,7 @@ describe('composables::random-stepper', () => {
     expect(get(steps)).toEqual(5);
 
     vi.advanceTimersByTime(900);
-    onNavigate(2);
+    await onNavigate(2);
 
     expect(get(step)).toEqual(2);
 
@@ -96,7 +98,7 @@ describe('composables::random-stepper', () => {
     vi.advanceTimersByTime(1100);
     expect(get(step)).not.toEqual(2);
 
-    onNavigate(2);
+    await onNavigate(2);
     expect(get(step)).toEqual(2);
   });
 });

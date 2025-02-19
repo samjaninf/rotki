@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.data_import.importers.binance import BinanceImporter
 from rotkehlchen.data_import.importers.bisq_trades import BisqTradesImporter
@@ -9,6 +9,7 @@ from rotkehlchen.data_import.importers.bitstamp import BitstampTransactionsImpor
 from rotkehlchen.data_import.importers.bittrex import BittrexImporter
 from rotkehlchen.data_import.importers.blockfi_trades import BlockfiTradesImporter
 from rotkehlchen.data_import.importers.blockfi_transactions import BlockfiTransactionsImporter
+from rotkehlchen.data_import.importers.blockpit import BlockpitImporter
 from rotkehlchen.data_import.importers.cointracking import CointrackingImporter
 from rotkehlchen.data_import.importers.cryptocom import CryptocomImporter
 from rotkehlchen.data_import.importers.kucoin import KucoinImporter
@@ -17,9 +18,11 @@ from rotkehlchen.data_import.importers.rotki_events import RotkiGenericEventsImp
 from rotkehlchen.data_import.importers.rotki_trades import RotkiGenericTradesImporter
 from rotkehlchen.data_import.importers.shapeshift_trades import ShapeshiftTradesImporter
 from rotkehlchen.data_import.importers.uphold_transactions import UpholdTransactionsImporter
-from rotkehlchen.data_import.utils import BaseExchangeImporter
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.utils.mixins.enums import SerializableEnumNameMixin
+
+if TYPE_CHECKING:
+    from rotkehlchen.data_import.utils import BaseExchangeImporter
 
 
 class DataImportSource(SerializableEnumNameMixin):
@@ -39,41 +42,7 @@ class DataImportSource(SerializableEnumNameMixin):
     BITSTAMP = 14
     BITTREX = 15
     KUCOIN = 16
-
-    def get_importer_type(self) -> type[BaseExchangeImporter]:
-        if self == DataImportSource.COINTRACKING:
-            return CointrackingImporter
-        if self == DataImportSource.CRYPTOCOM:
-            return CryptocomImporter
-        if self == DataImportSource.BLOCKFI_TRANSACTIONS:
-            return BlockfiTransactionsImporter
-        if self == DataImportSource.BLOCKFI_TRADES:
-            return BlockfiTradesImporter
-        if self == DataImportSource.NEXO:
-            return NexoImporter
-        if self == DataImportSource.SHAPESHIFT_TRADES:
-            return ShapeshiftTradesImporter
-        if self == DataImportSource.UPHOLD_TRANSACTIONS:
-            return UpholdTransactionsImporter
-        if self == DataImportSource.BISQ_TRADES:
-            return BisqTradesImporter
-        if self == DataImportSource.BINANCE:
-            return BinanceImporter
-        if self == DataImportSource.ROTKI_TRADES:
-            return RotkiGenericTradesImporter
-        if self == DataImportSource.ROTKI_EVENTS:
-            return RotkiGenericEventsImporter
-        if self == DataImportSource.BITCOIN_TAX:
-            return BitcoinTaxImporter
-        if self == DataImportSource.BITMEX_WALLET_HISTORY:
-            return BitMEXImporter
-        if self == DataImportSource.BITSTAMP:
-            return BitstampTransactionsImporter
-        if self == DataImportSource.BITTREX:
-            return BittrexImporter
-        if self == DataImportSource.KUCOIN:
-            return KucoinImporter
-        raise AssertionError(f'Unknown DataImportSource value {self}')
+    BLOCKPIT = 17
 
 
 class CSVDataImporter:
@@ -89,7 +58,44 @@ class CSVDataImporter:
     ) -> tuple[bool, str]:
         """Imports csv data from `filepath`.`source` determines the format of the file.
         Returns (True, '') if imported successfully and (False, message) otherwise."""
-        importer_type = source.get_importer_type()
-        importer = importer_type(db=self.db)
+        importer: BaseExchangeImporter
+
+        if source == DataImportSource.COINTRACKING:
+            importer = CointrackingImporter(db=self.db)
+        elif source == DataImportSource.CRYPTOCOM:
+            importer = CryptocomImporter(db=self.db)
+        elif source == DataImportSource.BLOCKFI_TRANSACTIONS:
+            importer = BlockfiTransactionsImporter(db=self.db)
+        elif source == DataImportSource.BLOCKFI_TRADES:
+            importer = BlockfiTradesImporter(db=self.db)
+        elif source == DataImportSource.NEXO:
+            importer = NexoImporter(db=self.db)
+        elif source == DataImportSource.SHAPESHIFT_TRADES:
+            importer = ShapeshiftTradesImporter(db=self.db)
+        elif source == DataImportSource.UPHOLD_TRANSACTIONS:
+            importer = UpholdTransactionsImporter(db=self.db)
+        elif source == DataImportSource.BISQ_TRADES:
+            importer = BisqTradesImporter(db=self.db)
+        elif source == DataImportSource.BINANCE:
+            importer = BinanceImporter(db=self.db)
+        elif source == DataImportSource.ROTKI_TRADES:
+            importer = RotkiGenericTradesImporter(db=self.db)
+        elif source == DataImportSource.ROTKI_EVENTS:
+            importer = RotkiGenericEventsImporter(db=self.db)
+        elif source == DataImportSource.BITCOIN_TAX:
+            importer = BitcoinTaxImporter(db=self.db)
+        elif source == DataImportSource.BITMEX_WALLET_HISTORY:
+            importer = BitMEXImporter(db=self.db)
+        elif source == DataImportSource.BITSTAMP:
+            importer = BitstampTransactionsImporter(db=self.db)
+        elif source == DataImportSource.BITTREX:
+            importer = BittrexImporter(db=self.db)
+        elif source == DataImportSource.KUCOIN:
+            importer = KucoinImporter(db=self.db)
+        elif source == DataImportSource.BLOCKPIT:
+            importer = BlockpitImporter(db=self.db)
+        else:
+            raise AssertionError(f'Unknown DataImportSource value {source}')
+
         success, msg = importer.import_csv(filepath=filepath, **kwargs)
         return success, msg

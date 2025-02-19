@@ -1,7 +1,7 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ title?: string; medium?: boolean }>(), {
-  title: '',
   medium: true,
+  title: '',
 });
 </script>
 
@@ -13,7 +13,9 @@ withDefaults(defineProps<{ title?: string; medium?: boolean }>(), {
     }"
   >
     <div>
-      {{ title }}
+      <slot name="title">
+        {{ title }}
+      </slot>
     </div>
     <div>
       <slot />

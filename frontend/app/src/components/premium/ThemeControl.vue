@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ThemeSwitch } from '@/premium/premium';
+import { usePremium } from '@/composables/premium';
+import ThemeSwitchLock from '@/components/premium/ThemeSwitchLock.vue';
 
 withDefaults(
   defineProps<{
@@ -11,13 +13,13 @@ withDefaults(
   },
 );
 
-const { showComponents } = storeToRefs(usePremiumStore());
+const premium = usePremium();
 </script>
 
 <template>
   <div>
     <ThemeSwitch
-      v-if="showComponents"
+      v-if="premium"
       :dark-mode-enabled="darkModeEnabled"
       :in-menu="menu"
     >

@@ -1,4 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createBlockie } from '@/utils/blockie';
+import { useBlockie } from '@/composables/accounts/blockie';
 
 describe('composables::accounts/blockie', () => {
   setActivePinia(createPinia());
@@ -25,8 +28,7 @@ describe('composables::accounts/blockie', () => {
   it('should stop caching blockie after cache limit is reached', () => {
     expect(cache.size).toEqual(1);
     expect(cache.has(address)).toBeTruthy();
-    for (let i = 0; i < 100; i++)
-      getBlockie(i.toString());
+    for (let i = 0; i < 100; i++) getBlockie(i.toString());
 
     expect(cache.size).toEqual(100);
     expect(cache.has(address)).toBeFalsy();

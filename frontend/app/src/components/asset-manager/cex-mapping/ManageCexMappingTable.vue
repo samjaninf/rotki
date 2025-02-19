@@ -1,52 +1,60 @@
 <script setup lang="ts">
-import type { CexMapping } from '@/types/asset';
+import RowActions from '@/components/helper/RowActions.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import CollectionHandler from '@/components/helper/CollectionHandler.vue';
+import ExchangeInput from '@/components/inputs/ExchangeInput.vue';
+import HintMenuIcon from '@/components/HintMenuIcon.vue';
+import type { DataTableColumn, TablePaginationData } from '@rotki/ui-library';
 import type { Collection } from '@/types/collection';
-import type { DataTableColumn, TablePaginationData } from '@rotki/ui-library-compat';
+import type { CexMapping } from '@/types/asset';
 
-const props = withDefaults(defineProps<{
-  collection: Collection<CexMapping>;
-  location: string;
-  symbol?: string;
-  loading: boolean;
-  pagination: TablePaginationData;
-}>(), { symbol: undefined });
+const locationModel = defineModel<string | undefined>('location', { required: true });
+
+const paginationModel = defineModel<TablePaginationData>('pagination', { required: true });
+
+withDefaults(
+  defineProps<{
+    collection: Collection<CexMapping>;
+    symbol?: string;
+    loading: boolean;
+  }>(),
+  {
+    symbol: undefined,
+  },
+);
 
 const emit = defineEmits<{
-  (e: 'update:location', location: string): void;
   (e: 'update:symbol', symbol?: string): void;
-  (e: 'update:pagination', pagination: TablePaginationData): void;
   (e: 'edit', mapping: CexMapping): void;
   (e: 'delete', mapping: CexMapping): void;
 }>();
 
 const { t } = useI18n();
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const tableHeaders = computed<DataTableColumn<CexMapping>[]>(() => [
   {
-    label: t('asset_management.cex_mapping.exchange'),
+    align: 'center',
+    cellClass: 'py-3',
     key: 'location',
-    align: 'center',
-    cellClass: 'py-3',
+    label: t('asset_management.cex_mapping.exchange'),
   },
   {
-    label: t('asset_management.cex_mapping.location_symbol'),
+    align: 'center',
+    cellClass: 'py-3',
     key: 'locationSymbol',
-    align: 'center',
-    cellClass: 'py-3',
+    label: t('asset_management.cex_mapping.location_symbol'),
   },
   {
-    label: t('asset_management.cex_mapping.recognized_as'),
-    key: 'asset',
-    class: 'border-x border-default',
     cellClass: 'py-0 border-x border-default',
+    class: 'border-x border-default',
+    key: 'asset',
+    label: t('asset_management.cex_mapping.recognized_as'),
   },
   {
-    label: '',
     key: 'actions',
+    label: '',
   },
 ]);
-
-const locationModel = useVModel(props, 'location', emit);
-const paginationModel = useVModel(props, 'pagination', emit);
 
 const edit = (mapping: CexMapping) => emit('edit', mapping);
 const deleteMapping = (mapping: CexMapping) => emit('delete', mapping);
@@ -76,7 +84,7 @@ function setPage(page: number) {
           clearable
         />
         <RuiTextField
-          :value="symbol"
+          :model-value="symbol"
           class="w-full sm:max-w-72"
           variant="outlined"
           color="primary"
@@ -84,7 +92,7 @@ function setPage(page: number) {
           clearable
           hide-details
           dense
-          @input="onSymbolChange($event)"
+          @update:model-value="onSymbolChange($event)"
         />
       </div>
     </div>
@@ -94,15 +102,14 @@ function setPage(page: number) {
     >
       <template #default="{ data }">
         <RuiDataTable
+          v-model:pagination.external="paginationModel"
           :rows="data"
           dense
           striped
           :loading="loading"
           :cols="tableHeaders"
-          :pagination.sync="paginationModel"
-          :pagination-modifiers="{ external: true }"
           :sticky-offset="64"
-          row-attr=""
+          row-attr="location"
           outlined
         >
           <template #item.location="{ row }">
@@ -112,7 +119,7 @@ function setPage(page: number) {
             >
               <div class="icon-bg">
                 <RuiIcon
-                  name="exchange-dollar-line"
+                  name="lu-building-2"
                   color="secondary"
                 />
               </div>

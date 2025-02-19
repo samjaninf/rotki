@@ -127,14 +127,15 @@ from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_int_from_str
 from rotkehlchen.types import ChecksumEvmAddress, ExternalService
-from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
+from rotkehlchen.utils.network import create_session
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.premium.premium import Premium
+    from rotkehlchen.user_messages import MessagesAggregator
 
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
     def __init__(
             self,
             database: 'DBHandler',
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
             ethereum_inquirer: 'EthereumInquirer',  # pylint: disable=unused-argument
             premium: Optional['Premium'],  # pylint: disable=unused-argument
     ) -> None:
@@ -162,7 +163,7 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
         LockableQueryMixIn.__init__(self)
         api_key = self._get_api_key()
         self.msg_aggregator = msg_aggregator
-        self.session = requests.session()
+        self.session = create_session()
         if api_key:
             self.session.headers.update({'X-API-KEY': api_key})
         self.base_url = 'https://api3.loopring.io/api/v3/'
@@ -401,8 +402,8 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
         - RemoteError if there is a problem querying the loopring api or if the format
         of the response does not match expectations or if there is no account id.
         """
-        db = DBLoopring(self.db)  # type: ignore # we always know self.db is not None
-        with self.db.conn.read_ctx() as cursor:  # type: ignore # self.db is not None here
+        db = DBLoopring(self.db)
+        with self.db.conn.read_ctx() as cursor:
             account_id = db.get_accountid_mapping(cursor=cursor, address=l1_address)
         if account_id:
             return account_id
@@ -415,7 +416,7 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
                 f'the account_id key',
             )
 
-        with self.db.user_write() as write_cursor:  # type: ignore # self.db is not None here
+        with self.db.user_write() as write_cursor:
             db.add_accountid_mapping(write_cursor=write_cursor, address=l1_address, account_id=account_id)  # noqa: E501
 
         return account_id

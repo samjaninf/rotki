@@ -1,11 +1,7 @@
-import { omit } from 'lodash-es';
+import { omit } from 'es-toolkit';
 import { snakeCaseTransformer } from '@/services/axios-tranformers';
 import { api } from '@/services/rotkehlchen-api';
-import {
-  handleResponse,
-  validStatus,
-  validWithSessionAndExternalService,
-} from '@/services/utils';
+import { handleResponse, validStatus, validWithSessionAndExternalService } from '@/services/utils';
 import {
   AddressBookCollectionResponse,
   type AddressBookEntries,
@@ -15,20 +11,30 @@ import {
   type AddressBookSimplePayload,
   EthNames,
 } from '@/types/eth-names';
-import type { ActionResult } from '@rotki/common/lib/data';
+import { mapCollectionResponse } from '@/utils/collection';
+import type { ActionResult } from '@rotki/common';
 import type { PendingTask } from '@/types/task';
 import type { Collection, CollectionResponse } from '@/types/collection';
 
-export function useAddressesNamesApi() {
-  const internalEnsNames = async <T>(
-    ethereumAddresses: string[],
-    asyncQuery = false,
-  ): Promise<T> => {
+interface UseAddressesNamesApiReturn {
+  getEnsNamesTask: (ethAddresses: string[]) => Promise<PendingTask>;
+  getEnsNames: (ethAddresses: string[]) => Promise<EthNames>;
+  fetchAddressBook: (location: AddressBookLocation, payload: AddressBookRequestPayload) => Promise<Collection<AddressBookEntry>>;
+  addAddressBook: (location: AddressBookLocation, entries: AddressBookEntries) => Promise<boolean>;
+  updateAddressBook: (location: AddressBookLocation, entries: AddressBookEntries) => Promise<boolean>;
+  deleteAddressBook: (location: AddressBookLocation, addresses: AddressBookSimplePayload[]) => Promise<boolean>;
+  getAddressesNames: (addresses: AddressBookSimplePayload[]) => Promise<AddressBookEntries>;
+  ensAvatarUrl: (ens: string, timestamp?: number) => string;
+  clearEnsAvatarCache: (listEns: string[] | null) => Promise<boolean>;
+}
+
+export function useAddressesNamesApi(): UseAddressesNamesApiReturn {
+  const internalEnsNames = async <T>(ethereumAddresses: string[], asyncQuery = false): Promise<T> => {
     const response = await api.instance.post<ActionResult<T>>(
       '/names/ens/reverse',
       snakeCaseTransformer({
-        ethereumAddresses,
         asyncQuery,
+        ethereumAddresses,
         ignoreCache: asyncQuery,
       }),
       {
@@ -39,10 +45,8 @@ export function useAddressesNamesApi() {
     return handleResponse(response);
   };
 
-  const getEnsNamesTask = async (
-    ethAddresses: string[],
-  ): Promise<PendingTask> =>
-    await internalEnsNames<PendingTask>(ethAddresses, true);
+  const getEnsNamesTask = async (ethAddresses: string[]): Promise<PendingTask> =>
+    internalEnsNames<PendingTask>(ethAddresses, true);
 
   const getEnsNames = async (ethAddresses: string[]): Promise<EthNames> => {
     const response = await internalEnsNames<EthNames>(ethAddresses);
@@ -56,9 +60,7 @@ export function useAddressesNamesApi() {
   ): Promise<Collection<AddressBookEntry>> => {
     const payloadVal = get(payload);
     const filteredPayload = omit(payloadVal, ['address']);
-    const response = await api.instance.post<
-      ActionResult<CollectionResponse<AddressBookEntry>>
-    >(
+    const response = await api.instance.post<ActionResult<CollectionResponse<AddressBookEntry>>>(
       `/names/addressbook/${location}`,
       snakeCaseTransformer({
         ...filteredPayload,
@@ -69,15 +71,10 @@ export function useAddressesNamesApi() {
       },
     );
 
-    return mapCollectionResponse(
-      AddressBookCollectionResponse.parse(handleResponse(response)),
-    );
+    return mapCollectionResponse(AddressBookCollectionResponse.parse(handleResponse(response)));
   };
 
-  const addAddressBook = async (
-    location: AddressBookLocation,
-    entries: AddressBookEntries,
-  ): Promise<boolean> => {
+  const addAddressBook = async (location: AddressBookLocation, entries: AddressBookEntries): Promise<boolean> => {
     const response = await api.instance.put<ActionResult<boolean>>(
       `/names/addressbook/${location}`,
       { entries },
@@ -89,10 +86,7 @@ export function useAddressesNamesApi() {
     return handleResponse(response);
   };
 
-  const updateAddressBook = async (
-    location: AddressBookLocation,
-    entries: AddressBookEntries,
-  ): Promise<boolean> => {
+  const updateAddressBook = async (location: AddressBookLocation, entries: AddressBookEntries): Promise<boolean> => {
     const response = await api.instance.patch<ActionResult<boolean>>(
       `/names/addressbook/${location}`,
       { entries },
@@ -108,20 +102,15 @@ export function useAddressesNamesApi() {
     location: AddressBookLocation,
     addresses: AddressBookSimplePayload[],
   ): Promise<boolean> => {
-    const response = await api.instance.delete<ActionResult<boolean>>(
-      `/names/addressbook/${location}`,
-      {
-        data: snakeCaseTransformer({ addresses }),
-        validateStatus: validWithSessionAndExternalService,
-      },
-    );
+    const response = await api.instance.delete<ActionResult<boolean>>(`/names/addressbook/${location}`, {
+      data: snakeCaseTransformer({ addresses }),
+      validateStatus: validWithSessionAndExternalService,
+    });
 
     return handleResponse(response);
   };
 
-  const getAddressesNames = async (
-    addresses: AddressBookSimplePayload[],
-  ): Promise<AddressBookEntries> => {
+  const getAddressesNames = async (addresses: AddressBookSimplePayload[]): Promise<AddressBookEntries> => {
     const response = await api.instance.post<ActionResult<AddressBookEntries>>(
       '/names',
       { addresses },
@@ -142,9 +131,7 @@ export function useAddressesNamesApi() {
     return url;
   };
 
-  const clearEnsAvatarCache = async (
-    listEns: string[] | null,
-  ): Promise<boolean> => {
+  const clearEnsAvatarCache = async (listEns: string[] | null): Promise<boolean> => {
     const response = await api.instance.post<ActionResult<boolean>>(
       '/cache/avatars/clear',
       { entries: listEns },
@@ -157,14 +144,14 @@ export function useAddressesNamesApi() {
   };
 
   return {
-    getEnsNamesTask,
-    getEnsNames,
-    fetchAddressBook,
     addAddressBook,
-    updateAddressBook,
-    deleteAddressBook,
-    getAddressesNames,
-    ensAvatarUrl,
     clearEnsAvatarCache,
+    deleteAddressBook,
+    ensAvatarUrl,
+    fetchAddressBook,
+    getAddressesNames,
+    getEnsNames,
+    getEnsNamesTask,
+    updateAddressBook,
   };
 }

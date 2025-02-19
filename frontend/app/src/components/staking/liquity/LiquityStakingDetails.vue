@@ -1,16 +1,30 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
+import {
+  type AssetBalance,
+  type Balance,
+  Blockchain,
+  HistoryEventEntryType,
+  type LiquityPoolDetailEntry,
+  type LiquityPoolDetails,
+  type LiquityStakingDetailEntry,
+  type LiquityStakingDetails,
+  type LiquityStatisticDetails,
+} from '@rotki/common';
 import { Section } from '@/types/status';
+import { zeroBalance } from '@/utils/bignumbers';
+import { uniqueStrings } from '@/utils/data';
+import { balanceSum } from '@/utils/calculation';
+import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
+import { useLiquityStore } from '@/store/defi/liquity';
+import { useStatusStore } from '@/store/status';
+import HistoryEventsView from '@/components/history/events/HistoryEventsView.vue';
+import LiquityStatistics from '@/components/staking/liquity/LiquityStatistics.vue';
+import LiquityStake from '@/components/staking/liquity/LiquityStake.vue';
+import LiquityPools from '@/components/staking/liquity/LiquityPools.vue';
+import HashLink from '@/components/helper/HashLink.vue';
+import BlockchainAccountSelector from '@/components/helper/BlockchainAccountSelector.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import type { AddressData, BlockchainAccount } from '@/types/blockchain/accounts';
-import type {
-  LiquityPoolDetailEntry,
-  LiquityPoolDetails,
-  LiquityStakingDetailEntry,
-  LiquityStakingDetails,
-  LiquityStatisticDetails,
-} from '@rotki/common/lib/liquity';
-import type { AssetBalance, Balance } from '@rotki/common';
 
 const emit = defineEmits<{
   (e: 'refresh', refresh: boolean): void;
@@ -32,20 +46,15 @@ const accountFilter = useArrayMap(selectedAccounts, account => ({
   chain: account.chain,
 }));
 
-const aggregatedStake: ComputedRef<LiquityStakingDetailEntry | null> = computed(() => {
+const aggregatedStake = computed<LiquityStakingDetailEntry | null>(() => {
   const allStakes: LiquityStakingDetails = get(staking);
-  const selectedAddresses = get(selectedAccounts).map(
-    account => getAccountAddress(account),
-  );
+  const selectedAddresses = get(selectedAccounts).map(account => getAccountAddress(account));
 
   const filteredStakes: LiquityStakingDetailEntry[] = [];
 
   for (const address in allStakes) {
     const stake = allStakes[address];
-    if (
-      selectedAddresses.length > 0
-      && !selectedAddresses.includes(address)
-    )
+    if (selectedAddresses.length > 0 && !selectedAddresses.includes(address))
       continue;
 
     if (stake.balances)
@@ -81,10 +90,7 @@ const aggregatedStakingPool = computed<LiquityPoolDetailEntry | null>(() => {
 
   for (const address in allPools) {
     const pool = allPools[address];
-    if (
-      selectedAddresses.length > 0
-      && !selectedAddresses.includes(address)
-    )
+    if (selectedAddresses.length > 0 && !selectedAddresses.includes(address))
       continue;
 
     if (pool.balances)
@@ -118,20 +124,13 @@ const proxyInformation = computed<Record<string, string[]> | null>(() => {
   const allStakes: LiquityStakingDetails = get(staking);
   const allPools: LiquityPoolDetails = get(stakingPools);
 
-  const selectedAddresses = get(selectedAccounts).map(
-    account => getAccountAddress(account),
-  );
+  const selectedAddresses = get(selectedAccounts).map(account => getAccountAddress(account));
 
   const addToProxies = (mainAddress: string, proxyAddresses: string[]) => {
-    if (!proxies[mainAddress]) {
+    if (!proxies[mainAddress])
       proxies[mainAddress] = proxyAddresses;
-    }
-    else {
-      proxies[mainAddress] = [
-        ...proxies[mainAddress],
-        ...proxyAddresses,
-      ].filter(uniqueStrings);
-    }
+    else
+      proxies[mainAddress] = [...proxies[mainAddress], ...proxyAddresses].filter(uniqueStrings);
   };
 
   selectedAddresses.forEach((address) => {
@@ -180,42 +179,27 @@ const aggregatedStatistic = computed<LiquityStatisticDetails | null>(() => {
       aggregatedStatistic = { ...statistic };
     }
     else {
-      const { stakingGains, stabilityPoolGains, ...remaining } = statistic;
+      const { stabilityPoolGains, stakingGains, ...remaining } = statistic;
 
       let key: keyof typeof remaining;
 
-      for (key in remaining) {
-        aggregatedStatistic[key] = aggregatedStatistic[key].plus(
-          remaining[key],
-        );
-      }
+      for (key in remaining)
+        aggregatedStatistic[key] = aggregatedStatistic[key].plus(remaining[key]);
 
-      const mergeAssetBalances = (
-        items1: AssetBalance[],
-        items2: AssetBalance[],
-      ) => {
+      const mergeAssetBalances = (items1: AssetBalance[], items2: AssetBalance[]) => {
         const aggregated = [...items1, ...items2];
 
-        const uniqueAssets = aggregated
-          .map(({ asset }) => asset)
-          .filter(uniqueStrings);
+        const uniqueAssets = aggregated.map(({ asset }) => asset).filter(uniqueStrings);
 
         return uniqueAssets.map(asset => ({
           asset,
           ...aggregated
             .filter((item: AssetBalance) => asset === item.asset)
-            .reduce(
-              (previous: Balance, current: Balance) =>
-                balanceSum(previous, current),
-              zeroBalance(),
-            ),
+            .reduce((previous: Balance, current: Balance) => balanceSum(previous, current), zeroBalance()),
         }));
       };
 
-      aggregatedStatistic.stakingGains = mergeAssetBalances(
-        aggregatedStatistic.stakingGains,
-        stakingGains,
-      );
+      aggregatedStatistic.stakingGains = mergeAssetBalances(aggregatedStatistic.stakingGains, stakingGains);
       aggregatedStatistic.stabilityPoolGains = mergeAssetBalances(
         aggregatedStatistic.stabilityPoolGains,
         stabilityPoolGains,
@@ -227,17 +211,12 @@ const aggregatedStatistic = computed<LiquityStatisticDetails | null>(() => {
 });
 
 const availableAddresses = computed(() =>
-  [...Object.keys(get(staking)), ...Object.keys(get(stakingPools))].filter(
-    uniqueStrings,
-  ),
+  [...Object.keys(get(staking)), ...Object.keys(get(stakingPools))].filter(uniqueStrings),
 );
 
 function refresh() {
   emit('refresh', true);
 }
-
-const css = useCssModule();
-const slots = useSlots();
 </script>
 
 <template>
@@ -247,7 +226,7 @@ const slots = useSlots();
   >
     <template #buttons>
       <div class="flex items-center gap-3">
-        <div v-if="slots.modules">
+        <div v-if="$slots.modules">
           <slot name="modules" />
         </div>
         <RuiTooltip :open-delay="400">
@@ -259,7 +238,7 @@ const slots = useSlots();
               @click="refresh()"
             >
               <template #prepend>
-                <RuiIcon name="refresh-line" />
+                <RuiIcon name="lu-refresh-ccw" />
               </template>
               {{ t('common.refresh') }}
             </RuiButton>
@@ -276,7 +255,6 @@ const slots = useSlots();
         class="md:w-[25rem]"
         dense
         outlined
-        no-padding
         :usable-addresses="availableAddresses"
       />
 
@@ -285,14 +263,14 @@ const slots = useSlots();
         :popper="{ placement: 'right-start' }"
         menu-class="max-w-[25rem]"
       >
-        <template #activator="{ on }">
+        <template #activator="{ attrs }">
           <RuiButton
             variant="text"
             class="!p-2"
             icon
-            v-on="on"
+            v-bind="attrs"
           >
-            <RuiIcon name="information-line" />
+            <RuiIcon name="lu-info" />
           </RuiButton>
         </template>
         <div class="p-3 px-4">
@@ -315,13 +293,13 @@ const slots = useSlots();
             </div>
             <div
               class="ml-3 pl-4 pt-2"
-              :class="css['proxies-wrapper']"
+              :class="$style['proxies-wrapper']"
             >
               <div
                 v-for="proxy in proxies"
                 :key="proxy"
                 class="mb-1 flex"
-                :class="css['proxies-item']"
+                :class="$style['proxies-item']"
               >
                 <HashLink
                   :text="proxy"
@@ -367,6 +345,13 @@ const slots = useSlots();
 
 <style lang="scss" module>
 .proxies {
+  &-wrapper,
+  &-item {
+    &::before {
+      @apply border-rui-grey-200;
+    }
+  }
+
   &-wrapper {
     @apply relative;
 
@@ -374,7 +359,6 @@ const slots = useSlots();
       @apply absolute top-0 left-0 border-l;
       content: '';
       height: calc(100% - 0.8rem);
-      border-color: var(--border-color);
     }
   }
 
@@ -384,7 +368,17 @@ const slots = useSlots();
     &::before {
       @apply absolute w-4 right-full top-1/2 border-t;
       content: '';
-      border-color: var(--border-color);
+    }
+  }
+}
+
+:global(.dark) {
+  .proxies {
+    &-wrapper,
+    &-item {
+      &::before {
+        @apply border-rui-grey-800;
+      }
     }
   }
 }

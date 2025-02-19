@@ -1,15 +1,18 @@
 import { api } from '@/services/rotkehlchen-api';
 import { handleResponse, validWithoutSessionStatus } from '@/services/utils';
-import type { ActionResult } from '@rotki/common/lib/data';
+import type { ActionResult } from '@rotki/common';
 
-export function useAssetWhitelistApi() {
+interface UseAssetWhitelistApiReturn {
+  getWhitelistedAssets: () => Promise<string[]>;
+  addAssetToWhitelist: (token: string) => Promise<boolean>;
+  removeAssetFromWhitelist: (token: string) => Promise<boolean>;
+}
+
+export function useAssetWhitelistApi(): UseAssetWhitelistApiReturn {
   const getWhitelistedAssets = async (): Promise<string[]> => {
-    const response = await api.instance.get<ActionResult<string[]>>(
-      '/assets/ignored/whitelist',
-      {
-        validateStatus: validWithoutSessionStatus,
-      },
-    );
+    const response = await api.instance.get<ActionResult<string[]>>('/assets/ignored/whitelist', {
+      validateStatus: validWithoutSessionStatus,
+    });
 
     return handleResponse(response);
   };
@@ -29,20 +32,17 @@ export function useAssetWhitelistApi() {
   };
 
   const removeAssetFromWhitelist = async (token: string): Promise<boolean> => {
-    const response = await api.instance.delete<ActionResult<boolean>>(
-      '/assets/ignored/whitelist',
-      {
-        data: { token },
-        validateStatus: validWithoutSessionStatus,
-      },
-    );
+    const response = await api.instance.delete<ActionResult<boolean>>('/assets/ignored/whitelist', {
+      data: { token },
+      validateStatus: validWithoutSessionStatus,
+    });
 
     return handleResponse(response);
   };
 
   return {
-    getWhitelistedAssets,
     addAssetToWhitelist,
+    getWhitelistedAssets,
     removeAssetFromWhitelist,
   };
 }

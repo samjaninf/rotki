@@ -1,7 +1,6 @@
 import logging
 from collections.abc import Callable
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
     DEFAULT_DECODING_OUTPUT,
@@ -10,13 +9,10 @@ from rotkehlchen.chain.evm.decoding.structures import (
 )
 from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.utils.misc import (
-    hex_or_bytes_to_address,
-    hex_or_bytes_to_int,
-    hex_or_bytes_to_str,
-)
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import CPT_SAFE_MULTISIG
 
@@ -26,17 +22,17 @@ log = RotkehlchenLogsAdapter(logger)
 
 class SafemultisigDecoder(DecoderInterface):
     def _decode_added_owner(self, context: DecoderContext) -> DecodingOutput:
-        address = hex_or_bytes_to_address(context.tx_log.data[:32])
+        address = bytes_to_address(context.tx_log.data[:32])
         if not self.base.any_tracked([address, context.transaction.from_address, context.tx_log.address]):  # noqa: E501
             return DEFAULT_DECODING_OUTPUT
 
-        event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
-            timestamp=context.transaction.timestamp,
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(),
+            amount=ZERO,
             location_label=context.transaction.from_address,
             notes=f'Add owner {address} to multisig {context.tx_log.address}',
             counterparty=CPT_SAFE_MULTISIG,
@@ -45,17 +41,17 @@ class SafemultisigDecoder(DecoderInterface):
         return DecodingOutput(event=event)
 
     def _decode_removed_owner(self, context: DecoderContext) -> DecodingOutput:
-        address = hex_or_bytes_to_address(context.tx_log.data[:32])
+        address = bytes_to_address(context.tx_log.data[:32])
         if not self.base.any_tracked([address, context.transaction.from_address, context.tx_log.address]):  # noqa: E501
             return DEFAULT_DECODING_OUTPUT
 
-        event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
-            timestamp=context.transaction.timestamp,
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(),
+            amount=ZERO,
             location_label=context.transaction.from_address,
             notes=f'Remove owner {address} from multisig {context.tx_log.address}',
             counterparty=CPT_SAFE_MULTISIG,
@@ -64,17 +60,17 @@ class SafemultisigDecoder(DecoderInterface):
         return DecodingOutput(event=event)
 
     def _decode_changed_threshold(self, context: DecoderContext) -> DecodingOutput:
-        threshold = hex_or_bytes_to_int(context.tx_log.data[:32])
+        threshold = int.from_bytes(context.tx_log.data[:32])
         if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
             return DEFAULT_DECODING_OUTPUT
 
-        event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
-            timestamp=context.transaction.timestamp,
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(),
+            amount=ZERO,
             location_label=context.transaction.from_address,
             notes=f'Change signers threshold to {threshold} for multisig {context.tx_log.address}',
             counterparty=CPT_SAFE_MULTISIG,
@@ -93,14 +89,14 @@ class SafemultisigDecoder(DecoderInterface):
         if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
             return DEFAULT_DECODING_OUTPUT
 
-        safe_tx_hash = hex_or_bytes_to_str(context.tx_log.data[:32])
-        event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
-            timestamp=context.transaction.timestamp,
+        safe_tx_hash = context.tx_log.data[:32].hex()
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(),
+            amount=ZERO,
             location_label=context.transaction.from_address,
             notes=f'Successfully executed safe transaction 0x{safe_tx_hash} for multisig {context.tx_log.address}',  # noqa: E501
             counterparty=CPT_SAFE_MULTISIG,
@@ -119,19 +115,19 @@ class SafemultisigDecoder(DecoderInterface):
         threshold = 0
         for index, entry in enumerate(reversed([context.tx_log.data[i:i + 32] for i in range(0, len(context.tx_log.data), 32)])):  # noqa: E501
             if index < num_owners:
-                owners.append(hex_or_bytes_to_address(entry))
+                owners.append(bytes_to_address(entry))
             elif index == num_owners:
-                threshold = hex_or_bytes_to_int(entry)
+                threshold = int.from_bytes(entry)
             else:
                 break
 
-        event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
-            timestamp=context.transaction.timestamp,
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.CREATE,
             asset=A_ETH,
-            balance=Balance(),
+            amount=ZERO,
             location_label=context.transaction.from_address,
             notes=f'Create a new safe with a threshold of {threshold} and owners {",".join(owners)}',  # noqa: E501
             counterparty=CPT_SAFE_MULTISIG,
@@ -143,14 +139,14 @@ class SafemultisigDecoder(DecoderInterface):
         if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
             return DEFAULT_DECODING_OUTPUT
 
-        safe_tx_hash = hex_or_bytes_to_str(context.tx_log.data[:32])
-        event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
-            timestamp=context.transaction.timestamp,
+        safe_tx_hash = context.tx_log.data[:32].hex()
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(),
+            amount=ZERO,
             location_label=context.transaction.from_address,
             notes=f'Failed to execute safe transaction 0x{safe_tx_hash} for multisig {context.tx_log.address}',  # noqa: E501
             counterparty=CPT_SAFE_MULTISIG,

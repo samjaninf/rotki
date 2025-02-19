@@ -1,37 +1,40 @@
 <script setup lang="ts">
 import {
-  type Module,
+  type PurgeableModule,
+  PurgeableOnlyModule,
   SUPPORTED_MODULES,
   type SupportedModule,
 } from '@/types/modules';
+import DefiIcon from '@/components/defi/DefiIcon.vue';
+
+type PurgeableModuleEntry = Omit<SupportedModule, 'identifier'> & { identifier: PurgeableModule };
 
 defineOptions({
   inheritAttrs: false,
 });
 
-const props = withDefaults(
-  defineProps<{
-    value?: string;
-    items?: Module[];
-  }>(),
-  {
-    value: '',
-    items: () => [],
-  },
-);
+const model = defineModel<string | undefined>({ required: true });
 
-const emit = defineEmits<{
-  (e: 'input', value: string): void;
-}>();
+const props = withDefaults(defineProps<{
+  items?: PurgeableModule[];
+}>(), {
+  items: () => [],
+});
 
-const model = useSimpleVModel(props, emit);
-
-const modules = computed<SupportedModule[]>(() => {
+const modules = computed<PurgeableModuleEntry[]>(() => {
   const items = props.items;
 
-  return SUPPORTED_MODULES.filter(item =>
-    items && items.length > 0 ? items.includes(item.identifier) : true,
-  );
+  const modules: PurgeableModuleEntry[] = [...SUPPORTED_MODULES, {
+    icon: './assets/images/protocols/cowswap.jpg',
+    identifier: PurgeableOnlyModule.COWSWAP,
+    name: 'Cowswap',
+  }, {
+    icon: './assets/images/protocols/gnosis_pay.png',
+    identifier: PurgeableOnlyModule.GNOSIS_PAY,
+    name: 'Gnosis Pay',
+  }];
+
+  return modules.filter(item => (items && items.length > 0 ? items.includes(item.identifier) : true));
 });
 </script>
 
@@ -47,10 +50,6 @@ const modules = computed<SupportedModule[]>(() => {
     clearable
     variant="outlined"
     :item-height="52"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
   >
     <template #selection="{ item }">
       <DefiIcon :item="item" />

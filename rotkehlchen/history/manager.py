@@ -5,20 +5,19 @@ from typing import TYPE_CHECKING, Literal
 
 from rotkehlchen.constants import ZERO
 from rotkehlchen.db.filtering import (
-    AssetMovementsFilterQuery,
     EvmTransactionsFilterQuery,
     HistoryEventFilterQuery,
     TradesFilterQuery,
 )
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.exchanges.data_structures import AssetMovement, Trade
+from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.exchanges.manager import SUPPORTED_EXCHANGES, ExchangeManager
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryEvent
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.premium.premium import has_premium_check
 from rotkehlchen.tasks.manager import TaskManager
-from rotkehlchen.tasks.utils import query_missing_prices_of_base_entries
 from rotkehlchen.types import EVM_CHAINS_WITH_TRANSACTIONS, Location, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import timestamp_to_date
@@ -141,7 +140,7 @@ class HistoryQueryingManager:
         if only_cache is False:
             self._query_services_for_trades(filter_query=filter_query)
 
-        has_premium = self.chains_aggregator.premium is not None
+        has_premium = has_premium_check(self.chains_aggregator.premium)
         with self.db.conn.read_ctx() as cursor:
             trades, filter_total_found = self.db.get_trades_and_limit_info(
                 cursor=cursor,
@@ -177,61 +176,6 @@ class HistoryQueryingManager:
                     end_ts=to_ts,
                     only_cache=False,
                 )
-
-    def _query_services_for_asset_movements(self, filter_query: AssetMovementsFilterQuery) -> None:
-        """Queries all services requested for asset movements and writes them to the DB"""
-        location = filter_query.location
-        from_ts = filter_query.from_ts
-        to_ts = filter_query.to_ts
-
-        if location is None:
-            # query all CEXes
-            for exchange in self.exchange_manager.iterate_exchanges():
-                exchange.query_deposits_withdrawals(
-                    start_ts=from_ts,
-                    end_ts=to_ts,
-                    only_cache=False,
-                )
-            return
-
-        if location not in SUPPORTED_EXCHANGES:
-            return  # nothing to do
-
-        # otherwise it's a single connected exchange and we need to query it
-        exchanges_list = self.exchange_manager.connected_exchanges.get(location)
-        if exchanges_list is None:
-            return
-
-        for exchange in exchanges_list:
-            exchange.query_deposits_withdrawals(
-                start_ts=from_ts,
-                end_ts=to_ts,
-                only_cache=False,
-            )
-
-    def query_asset_movements(
-            self,
-            filter_query: AssetMovementsFilterQuery,
-            only_cache: bool,
-    ) -> tuple[list[AssetMovement], int]:
-        """Queries AssetMovements for the given filter
-
-        If only_cache is True then only what is already in the DB is returned.
-        Otherwise we query all services requested by the filter, populate the DB
-        and then return.
-
-        May raise:
-        - RemoteError: If there are problems connecting to any of the remote exchanges
-        """
-        if only_cache is False:
-            self._query_services_for_asset_movements(filter_query=filter_query)
-
-        has_premium = self.chains_aggregator.premium is not None
-        asset_movements, filter_total_found = self.db.get_asset_movements_and_limit_info(
-            filter_query=filter_query,
-            has_premium=has_premium,
-        )
-        return asset_movements, filter_total_found
 
     def query_history_events(
             self,
@@ -271,17 +215,8 @@ class HistoryQueryingManager:
                     f'{",".join(exchange_names)}',
                 )
 
-        # After 3865 we have a recurring task that queries for missing prices, but
-        # we make sure that the returned values have their correct value calculated
         db = DBHistoryEvents(self.db)
-        if task_manager is not None:
-            entries = db.get_base_entries_missing_prices(filter_query)
-            query_missing_prices_of_base_entries(
-                database=task_manager.database,
-                entries_missing_prices=entries,
-                base_entries_ignore_set=task_manager.base_entries_ignore_set,
-            )
-        has_premium = self.chains_aggregator.premium is not None
+        has_premium = has_premium_check(self.chains_aggregator.premium)
         events, filter_total_found, _ = db.get_history_events_and_limit_info(
             cursor=cursor,
             filter_query=filter_query,
@@ -348,14 +283,6 @@ class HistoryQueryingManager:
                 has_premium=True,  # we need all trades for accounting -- limit happens later
             )
             history.extend(trades)
-
-            # Include all asset movements
-            asset_movements = self.db.get_asset_movements(
-                cursor,
-                filter_query=AssetMovementsFilterQuery.make(to_ts=end_ts),
-                has_premium=True,  # we need all trades for accounting -- limit happens later
-            )
-            history.extend(asset_movements)
 
             # Include all margin positions
             margin_positions = self.db.get_margin_positions(cursor, to_ts=end_ts)

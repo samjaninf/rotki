@@ -1,12 +1,11 @@
-import {
-  type ThisTypedMountOptions,
-  type Wrapper,
-  mount,
-} from '@vue/test-utils';
+import { type ComponentMountingOptions, type VueWrapper, mount } from '@vue/test-utils';
 import { type Pinia, createPinia, setActivePinia } from 'pinia';
-import Vuetify from 'vuetify';
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { HistoryEventEntryType } from '@rotki/common';
 import EthWithdrawalEventForm from '@/components/history/events/forms/EthWithdrawalEventForm.vue';
+import { setupDayjs } from '@/utils/date';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useAssetInfoApi } from '@/composables/api/assets/info';
 import type { AssetMap } from '@/types/asset';
 import type { EthWithdrawalEvent } from '@/types/history/events';
 
@@ -17,8 +16,7 @@ vi.mock('@/store/balances/prices', () => ({
 }));
 
 describe('ethWithdrawalEventForm.vue', () => {
-  setupDayjs();
-  let wrapper: Wrapper<EthWithdrawalEventForm>;
+  let wrapper: VueWrapper<InstanceType<typeof EthWithdrawalEventForm>>;
   let pinia: Pinia;
 
   const asset = {
@@ -41,118 +39,91 @@ describe('ethWithdrawalEventForm.vue', () => {
     timestamp: 1697517629000,
     location: 'ethereum',
     asset: asset.symbol,
-    balance: {
-      amount: bigNumberify('2.5'),
-      usdValue: bigNumberify('3973.525'),
-    },
+    amount: bigNumberify('2.5'),
     eventType: 'staking',
     eventSubtype: 'remove asset',
     locationLabel: '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12',
-    notes: 'Exited validator 123 with 2.5 ETH',
+    notes: 'Exit validator 123 with 2.5 ETH',
     validatorIndex: 123,
     isExit: true,
   };
 
-  beforeEach(() => {
-    vi.useFakeTimers();
+  beforeAll(() => {
+    setupDayjs();
     pinia = createPinia();
     setActivePinia(pinia);
+    vi.useFakeTimers();
+  });
+
+  beforeEach(() => {
     vi.mocked(useAssetInfoApi().assetMapping).mockResolvedValue(mapping);
     vi.mocked(useBalancePricesStore().getHistoricPrice).mockResolvedValue(One);
   });
 
-  const createWrapper = (options: ThisTypedMountOptions<any> = {}) => {
-    const vuetify = new Vuetify();
-    return mount(EthWithdrawalEventForm, {
-      pinia,
-      vuetify,
+  afterEach(() => {
+    wrapper.unmount();
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
+  const createWrapper = (options: ComponentMountingOptions<typeof EthWithdrawalEventForm> = {}) =>
+    mount(EthWithdrawalEventForm, {
+      global: {
+        plugins: [pinia],
+      },
       ...options,
     });
-  };
 
   describe('should prefill the fields based on the props', () => {
     it('no `groupHeader`, nor `editableItem` are passed', async () => {
       wrapper = createWrapper();
-      await nextTick();
+      vi.advanceTimersToNextTimer();
 
-      expect(
-        (
-          wrapper.find('[data-cy=validatorIndex] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe('');
+      expect((wrapper.find('[data-cy=validatorIndex] input').element as HTMLInputElement).value).toBe('');
 
-      expect(
-        (
-          wrapper.find('[data-cy=withdrawalAddress] .input-value')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe('');
+      expect((wrapper.find('[data-cy=withdrawalAddress] .input-value').element as HTMLInputElement).value).toBe('');
 
-      expect(
-        (wrapper.find('[data-cy=isExited] input').element as HTMLInputElement)
-          .checked,
-      ).toBeFalsy();
+      expect((wrapper.find('[data-cy=isExited] input').element as HTMLInputElement).checked).toBeFalsy();
     });
 
     it('`groupHeader` passed', async () => {
       wrapper = createWrapper();
-      await nextTick();
+      vi.advanceTimersToNextTimer();
       await wrapper.setProps({ groupHeader });
 
-      expect(
-        (
-          wrapper.find('[data-cy=validatorIndex] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe(groupHeader.validatorIndex.toString());
+      expect((wrapper.find('[data-cy=validatorIndex] input').element as HTMLInputElement).value).toBe(
+        groupHeader.validatorIndex.toString(),
+      );
 
-      expect(
-        (
-          wrapper.find('[data-cy=withdrawalAddress] .input-value')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe(groupHeader.locationLabel);
+      expect((wrapper.find('[data-cy=withdrawalAddress] .input-value').element as HTMLInputElement).value).toBe(
+        groupHeader.locationLabel,
+      );
 
-      expect(
-        (wrapper.find('[data-cy=amount] input').element as HTMLInputElement)
-          .value,
-      ).toBe('');
+      expect((wrapper.find('[data-cy=amount] input').element as HTMLInputElement).value).toBe('0');
 
-      expect(
-        (wrapper.find('[data-cy=isExited] input').element as HTMLInputElement)
-          .checked,
-      ).toBeFalsy();
+      expect((wrapper.find('[data-cy=isExited] input').element as HTMLInputElement).checked).toBeFalsy();
     });
 
     it('`groupHeader` and `editableItem` are passed', async () => {
       wrapper = createWrapper();
-      await nextTick();
+      vi.advanceTimersToNextTimer();
       await wrapper.setProps({ groupHeader, editableItem: groupHeader });
 
-      expect(
-        (
-          wrapper.find('[data-cy=validatorIndex] input')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe(groupHeader.validatorIndex.toString());
+      expect((wrapper.find('[data-cy=validatorIndex] input').element as HTMLInputElement).value).toBe(
+        groupHeader.validatorIndex.toString(),
+      );
 
-      expect(
-        (
-          wrapper.find('[data-cy=withdrawalAddress] .input-value')
-            .element as HTMLInputElement
-        ).value,
-      ).toBe(groupHeader.locationLabel);
+      expect((wrapper.find('[data-cy=withdrawalAddress] .input-value').element as HTMLInputElement).value).toBe(
+        groupHeader.locationLabel,
+      );
 
-      expect(
-        (wrapper.find('[data-cy=amount] input').element as HTMLInputElement)
-          .value,
-      ).toBe(groupHeader.balance.amount.toString());
+      expect((wrapper.find('[data-cy=amount] input').element as HTMLInputElement).value).toBe(
+        groupHeader.amount.toString(),
+      );
 
-      expect(
-        (wrapper.find('[data-cy=isExited] input').element as HTMLInputElement)
-          .checked,
-      ).toBeTruthy();
+      expect((wrapper.find('[data-cy=isExited] input').element as HTMLInputElement).checked).toBeTruthy();
     });
   });
 });

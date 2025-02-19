@@ -419,7 +419,7 @@ class SubstrateManager:
         return BlockNumber(last_block)
 
     def _get_node_endpoint(self, node: NodeName) -> str:
-        if node.value == 0:  # KusamaNodeName/PolkadotNodeName.OWN
+        if node.is_owned():
             return self._format_own_rpc_endpoint(self.own_rpc_endpoint)
         return node.endpoint()
 
@@ -505,7 +505,7 @@ class SubstrateManager:
         node_attributes_map = self.available_node_attributes_map.copy()
         own_node_attributes = node_attributes_map.pop(own_node, None)
         available_nodes_call_order = sorted(
-            cast(Iterable, node_attributes_map.items()),
+            cast('Iterable', node_attributes_map.items()),
             key=lambda item: -item[1].weight_block,
         )
         if own_node_attributes is not None:
@@ -533,6 +533,9 @@ class SubstrateManager:
 
     def attempt_connections(self) -> None:
         for node in self.connect_at_start:
+            if node.is_owned() and len(self.own_rpc_endpoint) == 0:
+                continue
+
             self.greenlet_manager.spawn_and_track(
                 after_seconds=None,
                 task_name=f'{self.chain} manager connection to {node} node',
@@ -569,11 +572,7 @@ class SubstrateManager:
         - RemoteError: `request_available_nodes()` fails to request after
         trying with all the available nodes.
         """
-        balances: dict[SubstrateAddress, FVal] = {}
-        for account in accounts:
-            balances[account] = self.get_account_balance(account)
-
-        return balances
+        return {account: self.get_account_balance(account) for account in accounts}
 
     @request_available_nodes
     def get_chain_id(

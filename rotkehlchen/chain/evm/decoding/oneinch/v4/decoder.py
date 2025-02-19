@@ -2,14 +2,17 @@ from abc import ABC
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from rotkehlchen.chain.ethereum.modules.balancer.v2.constants import (
-    V2_SWAP as BALANCER_V2_SWAP_SIGNATURE,
-)
 from rotkehlchen.chain.ethereum.modules.oneinch.constants import CPT_ONEINCH_V4
 from rotkehlchen.chain.ethereum.modules.uniswap.v2.constants import (
     SWAP_SIGNATURE as UNISWAP_V2_SWAP_SIGNATURE,
 )
+from rotkehlchen.chain.evm.decoding.balancer.v2.constants import (
+    V2_SWAP as BALANCER_V2_SWAP_SIGNATURE,
+)
+from rotkehlchen.chain.evm.decoding.curve.constants import TOKEN_EXCHANGE
+from rotkehlchen.chain.evm.decoding.kyber.constants import KYBER_AGGREGATOR_SWAPPED
 from rotkehlchen.chain.evm.decoding.oneinch.decoder import OneinchCommonDecoder
+from rotkehlchen.chain.evm.decoding.oneinch.v4.constants import ORDERFILLED_RFQ
 from rotkehlchen.chain.evm.decoding.structures import (
     DEFAULT_DECODING_OUTPUT,
     DecoderContext,
@@ -54,6 +57,9 @@ class Oneinchv3n4DecoderBase(OneinchCommonDecoder, ABC):
                 UNISWAP_V3_SWAP_SIGNATURE,
                 UNISWAP_V2_SWAP_SIGNATURE,  # uniswap v2 is also used by sushiswap
                 BALANCER_V2_SWAP_SIGNATURE,
+                ORDERFILLED_RFQ,
+                TOKEN_EXCHANGE,  # curve is also used by 1inch
+                KYBER_AGGREGATOR_SWAPPED,
             ],
             counterparty=counterparty,
         )
@@ -126,7 +132,7 @@ class Oneinchv3n4DecoderBase(OneinchCommonDecoder, ABC):
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
                 event.counterparty = self.counterparty
-                event.notes = f'Receive {event.balance.amount} {event.asset.symbol_or_name()} as a result of a {self.counterparty} swap'  # noqa: E501
+                event.notes = f'Receive {event.amount} {event.asset.symbol_or_name()} as a result of a {self.counterparty} swap'  # noqa: E501
                 event.address = self.router_address
                 in_event = event
             elif (
@@ -139,7 +145,7 @@ class Oneinchv3n4DecoderBase(OneinchCommonDecoder, ABC):
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.SPEND
                 event.counterparty = self.counterparty
-                event.notes = f'Swap {event.balance.amount} {event.asset.symbol_or_name()} in {self.counterparty}'  # noqa: E501
+                event.notes = f'Swap {event.amount} {event.asset.symbol_or_name()} in {self.counterparty}'  # noqa: E501
                 event.address = self.router_address
                 out_event = event
 

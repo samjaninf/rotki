@@ -6,10 +6,11 @@ import operator
 import re
 import sys
 import time
+from binascii import unhexlify
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from itertools import zip_longest
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from eth_utils import is_hexstr
 from eth_utils.address import to_checksum_address
@@ -43,7 +44,7 @@ def ts_ms_to_sec(ts: TimestampMS) -> Timestamp:
 
 def create_timestamp(datestr: str, formatstr: str) -> Timestamp:
     """
-    Connvert datestr to unix timestamp (int) depending on the given formatstr.
+    Convert datestr to unix timestamp (int) depending on the given formatstr.
     Example format str: '%Y-%m-%d %H:%M:%S. More details here:
     https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior
 
@@ -145,7 +146,7 @@ K = TypeVar('K')
 V = TypeVar('V')
 
 
-@overload  # type: ignore [overload-overlap]
+@overload
 def combine_dicts(a: dict[K, V], b: dict[K, V], op: Callable = operator.add) -> dict[K, V]:
     ...
 
@@ -172,24 +173,6 @@ def combine_dicts(
         new_dict.update(b)
     new_dict.update([(k, op(a[k], b[k])) for k in set(b) & set(a)])
     return new_dict
-
-
-def _add_entries(a: dict[str, FVal], b: dict[str, FVal]) -> dict[str, FVal]:
-    return {
-        'amount': a['amount'] + b['amount'],
-        'usd_value': a['usd_value'] + b['usd_value'],
-    }
-
-
-def combine_stat_dicts(list_of_dicts: list[dict]) -> dict:
-    if len(list_of_dicts) == 0:
-        return {}
-
-    combined_dict = list_of_dicts[0]
-    for d in list_of_dicts[1:]:
-        combined_dict = combine_dicts(combined_dict, d, _add_entries)
-
-    return combined_dict
 
 
 def convert_to_int(
@@ -246,58 +229,47 @@ def hexstr_to_int(value: str) -> int:
     return int_value
 
 
-def hex_or_bytes_to_int(
-        value: bytes | str,
-        signed: bool = False,
-        byteorder: Literal['little', 'big'] = 'big',
-) -> int:
-    """Turns a bytes/HexBytes or a hexstring into an int
+def bytes_to_hexstr(value: bytes) -> str:
+    """Turns bytes into a hexstr
 
     May raise:
-    - ConversionError if it can't convert a value to an int or if an unexpected
+    - DeserializationError if it can't convert a value to hextstrt or if an unexpected
     type is given.
     """
-    if isinstance(value, bytes):
-        int_value = int.from_bytes(value, byteorder=byteorder, signed=signed)
-    elif isinstance(value, str):
-        int_value = hexstr_to_int(value)
-    else:
-        raise ConversionError(f'Unexpected type {type(value)} given to hex_or_bytes_to_int()')
-
-    return int_value
-
-
-def hex_or_bytes_to_str(value: bytes | str) -> str:
-    """Turns a bytes/HexBytes or a hexstring into an hex string"""
-    if isinstance(value, bytes):
+    try:
         hexstr = value.hex()
-    else:
-        hexstr = value.removeprefix('0x')
+    except (ConversionError, AttributeError) as e:
+        raise DeserializationError(f'Could not turn {value!r} to hex') from e
 
-    return hexstr
+    return '0x' + hexstr
 
 
-def hex_or_bytes_to_address(value: bytes | str) -> ChecksumEvmAddress:
-    """Turns a 32bit bytes/HexBytes or a hexstring into an address
+def bytes_to_address(value: bytes) -> ChecksumEvmAddress:
+    """Turns 32 bytes/hexbytes into a checksummed EVM address
 
     May raise:
     - DeserializationError if it can't convert a value to an int or if an unexpected
     type is given.
     """
+    return bytes32hexstr_to_address(bytes_to_hexstr(value))
+
+
+def address_to_bytes32_hexstr(address: ChecksumEvmAddress) -> str:
+    return '0x' + 24 * '0' + address.lower()[2:]
+
+
+def address_to_bytes32(address: ChecksumEvmAddress) -> bytes:
+    return unhexlify(24 * '0' + address.lower()[2:])
+
+
+def bytes32hexstr_to_address(hexstr: str) -> ChecksumEvmAddress:
+    """Turns a 32bit 0x hexstring to checksum evm address"""
     try:
-        hexstr = hex_or_bytes_to_str(value)
-    except ConversionError as e:
-        raise DeserializationError(f'Could not turn {value!r} to an ethereum address') from e
-    try:
-        return ChecksumEvmAddress(to_checksum_address('0x' + hexstr[24:]))
+        return ChecksumEvmAddress(to_checksum_address(hexstr[26:]))
     except ValueError as e:
         raise DeserializationError(
             f'Invalid ethereum address: {hexstr[24:]}',
         ) from e
-
-
-def address_to_bytes32(address: ChecksumEvmAddress) -> str:
-    return '0x' + 24 * '0' + address.lower()[2:]
 
 
 T = TypeVar('T')
@@ -330,7 +302,7 @@ def rgetattr(obj: Any, attr: str, *args: Any) -> Any:
 
 
 def pairwise(iterable: Iterable[Any]) -> Iterator:
-    """ Takes an iteratable and returns an iterator that iterates over two of its
+    """ Takes an iterable and returns an iterator that iterates over two of its
     elements in each iteration.
 
     IMPORTANT: If an ODD number of elements is given then the last one is not iterated.
@@ -341,7 +313,7 @@ def pairwise(iterable: Iterable[Any]) -> Iterator:
 
 
 def pairwise_longest(iterable: Iterable[Any]) -> Iterator:
-    """ Takes an iteratable and returns an iterator that iterates over two of its
+    """ Takes an iterable and returns an iterator that iterates over two of its
     elements in each iteration.
 
     If an odd number of elements is passed then the last elements is None.

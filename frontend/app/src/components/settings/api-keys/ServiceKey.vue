@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useRefMap } from '@/composables/utils/useRefMap';
+
 const props = withDefaults(
   defineProps<{
     apiKey: string;
@@ -8,13 +10,15 @@ const props = withDefaults(
     hint?: string;
     label?: string;
     status?: { message: string; success?: boolean };
+    hideActions?: boolean;
   }>(),
   {
-    status: undefined,
-    loading: false,
-    tooltip: '',
+    hideActions: false,
     hint: '',
     label: '',
+    loading: false,
+    status: undefined,
+    tooltip: '',
   },
 );
 
@@ -24,7 +28,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { apiKey, status } = toRefs(props);
+const { apiKey, hideActions, status } = toRefs(props);
 
 const currentValue = ref<string>('');
 const editMode = ref<boolean>(false);
@@ -33,14 +37,12 @@ const cancellable = ref<boolean>(false);
 const errorMessages = useRefMap(status, (status) => {
   if (!status || status.success)
     return [];
-
   return [status.message];
 });
 
 const successMessages = useRefMap(status, (status) => {
   if (!status || !status.success)
     return [];
-
   return [status.message];
 });
 
@@ -57,13 +59,16 @@ function updateStatus() {
 }
 
 function saveHandler() {
-  if (get(editMode)) {
+  if (get(editMode) || get(hideActions)) {
     emit('save', {
-      name: props.name,
       apiKey: get(currentValue),
+      name: props.name,
     });
-    set(editMode, false);
-    set(cancellable, true);
+
+    if (!get(status) || get(status)?.success) {
+      set(editMode, false);
+      set(cancellable, true);
+    }
   }
   else {
     set(editMode, true);
@@ -83,7 +88,15 @@ watch(apiKey, () => {
   updateStatus();
 });
 
-const slots = useSlots();
+watch(status, (newStatus) => {
+  if (newStatus && !newStatus.success)
+    set(editMode, true);
+});
+
+defineExpose({
+  currentValue,
+  saveHandler,
+});
 </script>
 
 <template>
@@ -98,16 +111,17 @@ const slots = useSlots();
         color="primary"
         class="grow"
         data-cy="service-key__api-key"
-        :text-color="!editMode ? 'success' : undefined"
+        :text-color="!editMode && !hideActions && errorMessages.length === 0 ? 'success' : undefined"
         :error-messages="errorMessages"
         :success-messages="successMessages"
         :hint="currentValue ? '' : hint"
-        :disabled="!editMode"
+        :disabled="!editMode && !hideActions"
         :label="label"
-        prepend-icon="key-line"
+        prepend-icon="lu-key"
       />
 
       <RuiTooltip
+        v-if="!hideActions"
         :open-delay="400"
         :popper="{ placement: 'top' }"
       >
@@ -121,7 +135,7 @@ const slots = useSlots();
             color="primary"
             @click="emit('delete-key', name)"
           >
-            <RuiIcon name="delete-bin-line" />
+            <RuiIcon name="lu-trash-2" />
           </RuiButton>
         </template>
         {{ tooltip }}
@@ -129,7 +143,8 @@ const slots = useSlots();
     </div>
 
     <div
-      class="pt-4 flex gap-2"
+      v-if="!hideActions"
+      class="flex gap-2"
       data-cy="service-key__buttons"
     >
       <RuiButton
@@ -151,6 +166,6 @@ const slots = useSlots();
         {{ editMode ? t('common.actions.save') : t('common.actions.edit') }}
       </RuiButton>
     </div>
-    <slot v-if="slots.default" />
+    <slot v-if="$slots.default" />
   </div>
 </template>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import type { Blockchain } from '@rotki/common/lib/blockchain';
+import { useTransactionQueryStatus } from '@/composables/history/events/query-status/tx-query-status';
+import HistoryQueryStatusCurrent from '@/components/history/events/HistoryQueryStatusCurrent.vue';
+import type { Blockchain } from '@rotki/common';
 
 const props = withDefaults(
   defineProps<{
@@ -14,8 +16,7 @@ const { onlyChains } = toRefs(props);
 
 const { t } = useI18n();
 
-const { queryingLength, length, isAllFinished }
-  = useTransactionQueryStatus(onlyChains);
+const { isAllFinished, length, queryingLength } = useTransactionQueryStatus(onlyChains);
 </script>
 
 <template>
@@ -25,9 +26,7 @@ const { queryingLength, length, isAllFinished }
     </template>
 
     <template #running>
-      {{
-        t('transactions.query_status.group', queryingLength)
-      }}
+      {{ t('transactions.query_status.group', queryingLength) }}
     </template>
   </HistoryQueryStatusCurrent>
 </template>

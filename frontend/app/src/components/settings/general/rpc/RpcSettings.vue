@@ -1,37 +1,41 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import type { AsyncComponent } from 'vue';
+import { Blockchain } from '@rotki/common';
+import { isOfEnum } from '@/utils';
+import { useSupportedChains } from '@/composables/info/chains';
+import AppImage from '@/components/common/AppImage.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
+import type { Component } from 'vue';
+import type EvmRpcNodeManager from '@/components/settings/general/rpc/EvmRpcNodeManager.vue';
+import type SimpleRpcNodeManager from '@/components/settings/general/rpc/simple/SimpleRpcNodeManager.vue';
 
 const { t } = useI18n();
 
 interface ChainRpcSettingTab {
   chain: Blockchain;
-  component: AsyncComponent;
+  component: Component;
+  setting?: string;
 }
 
 interface CustomRpcSettingTab {
   id: string;
   name: string;
   image: string;
-  component: AsyncComponent;
+  component: Component;
+  setting?: string;
 }
 
 type RpcSettingTab = ChainRpcSettingTab | CustomRpcSettingTab;
 
-function isChain(item: RpcSettingTab): item is ChainRpcSettingTab {
-  return 'chain' in item;
-}
-
-const rpcSettingTab: Ref<number> = ref(0);
+const rpcSettingTab = ref<number>(0);
+const evmRpcNodeManagerRef = ref<InstanceType<typeof EvmRpcNodeManager | typeof SimpleRpcNodeManager>[]>();
 
 const { txEvmChains } = useSupportedChains();
 const evmChainTabs = useArrayMap(txEvmChains, (chain) => {
   assert(isOfEnum(Blockchain)(chain.id));
   return {
     chain: chain.id,
-    component: defineAsyncComponent(
-      () => import('@/components/settings/general/rpc/EvmRpcNodeManager.vue'),
-    ),
+    component: defineAsyncComponent(() => import('@/components/settings/general/rpc/EvmRpcNodeManager.vue')),
   } satisfies RpcSettingTab;
 });
 
@@ -39,34 +43,61 @@ const rpcSettingTabs = computed<RpcSettingTab[]>(() => [
   ...get(evmChainTabs),
   {
     chain: Blockchain.KSM,
-    component: defineAsyncComponent(
-      () => import('@/components/settings/general/rpc/KsmRpcSetting.vue'),
-    ),
+    component: defineAsyncComponent(() => import('@/components/settings/general/rpc/simple/SimpleRpcNodeManager.vue')),
+    setting: 'ksmRpcEndpoint',
   },
   {
     chain: Blockchain.DOT,
-    component: defineAsyncComponent(
-      () => import('@/components/settings/general/rpc/DotRpcSetting.vue'),
-    ),
+    component: defineAsyncComponent(() => import('@/components/settings/general/rpc/simple/SimpleRpcNodeManager.vue')),
+    setting: 'dotRpcEndpoint',
   },
   {
+    component: defineAsyncComponent(() => import('@/components/settings/general/rpc/simple/SimpleRpcNodeManager.vue')),
     id: 'eth_consensus_layer',
-    name: 'ETH Beacon Node',
     image: './assets/images/protocols/ethereum.svg',
-    component: defineAsyncComponent(
-      () => import('@/components/settings/general/rpc/BeaconchainRpcSetting.vue'),
-    ),
+    name: 'ETH Beacon Node',
+    setting: 'beaconRpcEndpoint',
   },
 ]);
+
+function isChain(item: RpcSettingTab): item is ChainRpcSettingTab {
+  return 'chain' in item;
+}
+
+function addNodeClick() {
+  const refElement = get(evmRpcNodeManagerRef);
+  if (refElement?.[0]) {
+    refElement[0].addNewRpcNode();
+  }
+}
 </script>
 
 <template>
-  <RuiCard class="mt-8">
-    <template #header>
-      {{ t('general_settings.rpc_node_setting.title') }}
-    </template>
-
-    <div>
+  <div>
+    <div class="pb-5 border-b border-default flex flex-wrap gap-4 items-center justify-between">
+      <SettingCategoryHeader>
+        <template #title>
+          {{ t('general_settings.rpc_node_setting.title') }}
+        </template>
+        <template #subtitle>
+          {{ t('general_settings.rpc_node_setting.subtitle') }}
+        </template>
+      </SettingCategoryHeader>
+      <RuiButton
+        color="primary"
+        data-cy="add-node"
+        @click="addNodeClick()"
+      >
+        <template #prepend>
+          <RuiIcon
+            name="lu-plus"
+            size="16"
+          />
+        </template>
+        {{ t('evm_rpc_node_manager.add_button') }}
+      </RuiButton>
+    </div>
+    <div class="pt-6">
       <RuiTabs
         v-model="rpcSettingTab"
         color="primary"
@@ -75,25 +106,26 @@ const rpcSettingTabs = computed<RpcSettingTab[]>(() => [
         <RuiTab
           v-for="tab in rpcSettingTabs"
           :key="isChain(tab) ? tab.chain : tab.id"
-          class="!pb-3"
         >
           <LocationDisplay
             v-if="isChain(tab)"
             :open-details="false"
             :identifier="tab.chain"
+            horizontal
+            size="16px"
           />
 
           <div
             v-else
-            class="flex flex-col items-center gap-1"
+            class="flex items-center gap-1"
           >
             <AppImage
               :src="tab.image"
-              size="24px"
+              size="16px"
               contain
               class="icon-bg"
             />
-            <span class="capitalize text-rui-text-secondary -mb-1">
+            <span class="capitalize text-rui-text-secondary">
               {{ tab.name }}
             </span>
           </div>
@@ -101,28 +133,24 @@ const rpcSettingTabs = computed<RpcSettingTab[]>(() => [
       </RuiTabs>
       <RuiDivider class="mb-4" />
       <RuiTabItems v-model="rpcSettingTab">
-        <template #default>
-          <template
-            v-for="tab in rpcSettingTabs"
-          >
-            <RuiTabItem
-              :key="isChain(tab) ? tab.chain : tab.id"
-            >
-              <template #default>
-                <Component
-                  :is="tab.component"
-                  v-if="isChain(tab)"
-                  :chain="tab.chain"
-                />
-                <Component
-                  :is="tab.component"
-                  v-else
-                />
-              </template>
-            </RuiTabItem>
-          </template>
-        </template>
+        <RuiTabItem
+          v-for="tab in rpcSettingTabs"
+          :key="isChain(tab) ? tab.chain : tab.id"
+        >
+          <Component
+            :is="tab.component"
+            v-if="!tab.setting && 'chain' in tab"
+            ref="evmRpcNodeManagerRef"
+            :chain="tab.chain"
+          />
+          <Component
+            :is="tab.component"
+            v-else
+            ref="evmRpcNodeManagerRef"
+            :setting="tab.setting"
+          />
+        </RuiTabItem>
       </RuiTabItems>
     </div>
-  </RuiCard>
+  </div>
 </template>

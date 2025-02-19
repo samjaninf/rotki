@@ -1,7 +1,7 @@
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
-from typing import Any, Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Optional
 
 from rotkehlchen.assets.asset import Asset, AssetWithOracles
 from rotkehlchen.constants.assets import A_USD
@@ -24,9 +24,11 @@ from rotkehlchen.types import (
     SupportedBlockchain,
     Timestamp,
 )
-from rotkehlchen.user_messages import MessagesAggregator
 
-ROTKEHLCHEN_DB_VERSION = 42
+if TYPE_CHECKING:
+    from rotkehlchen.user_messages import MessagesAggregator
+
+ROTKEHLCHEN_DB_VERSION = 47
 ROTKEHLCHEN_TRANSIENT_DB_VERSION = 1
 DEFAULT_TAXFREE_AFTER_PERIOD = YEAR_IN_SECONDS
 DEFAULT_INCLUDE_CRYPTO2CRYPTO = True
@@ -38,7 +40,6 @@ DEFAULT_MAIN_CURRENCY = A_USD
 DEFAULT_DATE_DISPLAY_FORMAT = '%d/%m/%Y %H:%M:%S %Z'
 DEFAULT_SUBMIT_USAGE_ANALYTICS = True
 DEFAULT_ACTIVE_MODULES = tuple(set(AVAILABLE_MODULES_MAP.keys()) - DEFAULT_OFF_MODULES)
-DEFAULT_ACCOUNT_FOR_ASSETS_MOVEMENTS = True
 DEFAULT_BTC_DERIVATION_GAP_LIMIT = 20
 DEFAULT_CALCULATE_PAST_COST_BASIS = True
 DEFAULT_DISPLAY_DATE_IN_LOCALTIME = True
@@ -61,6 +62,9 @@ DEFAULT_ORACLE_PENALTY_DURATION = 1800
 DEFAULT_AUTO_DELETE_CALENDAR_ENTRIES = True
 DEFAULT_AUTO_CREATE_CALENDAR_REMINDERS = True
 DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY = True
+DEFAULT_AUTO_DETECT_TOKENS = True
+DEFAULT_CSV_EXPORT_DELIMITER = ','
+DEFAULT_USE_UNIFIED_ETHERSCAN_API = False
 
 JSON_KEYS = (
     'current_price_oracles',
@@ -74,7 +78,6 @@ BOOLEAN_KEYS = (
     'include_gas_costs',
     'premium_should_sync',
     'submit_usage_analytics',
-    'account_for_assets_movements',
     'calculate_past_cost_basis',
     'display_date_in_localtime',
     'pnl_csv_with_formulas',
@@ -86,6 +89,8 @@ BOOLEAN_KEYS = (
     'auto_delete_calendar_entries',
     'auto_create_calendar_reminders',
     'ask_user_upon_size_discrepancy',
+    'auto_detect_tokens',
+    'use_unified_etherscan_api',
 )
 INTEGER_KEYS = (
     'version',
@@ -106,6 +111,7 @@ STRING_KEYS = (
     'beacon_rpc_endpoint',
     'date_display_format',
     'frontend_settings',
+    'csv_export_delimiter',
 )
 
 UPDATE_TYPES_VERSIONS = {x.serialize() for x in UpdateType}
@@ -127,7 +133,6 @@ CachedDBSettingsFieldNames = Literal[
     'submit_usage_analytics',
     'active_modules',
     'frontend_settings',
-    'account_for_assets_movements',
     'btc_derivation_gap_limit',
     'calculate_past_cost_basis',
     'display_date_in_localtime',
@@ -188,7 +193,6 @@ class DBSettings:
     submit_usage_analytics: bool = DEFAULT_SUBMIT_USAGE_ANALYTICS
     active_modules: Sequence[ModuleName] = field(default=DEFAULT_ACTIVE_MODULES)  # type: ignore
     frontend_settings: str = ''
-    account_for_assets_movements: bool = DEFAULT_ACCOUNT_FOR_ASSETS_MOVEMENTS
     btc_derivation_gap_limit: int = DEFAULT_BTC_DERIVATION_GAP_LIMIT
     calculate_past_cost_basis: bool = DEFAULT_CALCULATE_PAST_COST_BASIS
     display_date_in_localtime: bool = DEFAULT_DISPLAY_DATE_IN_LOCALTIME
@@ -214,6 +218,9 @@ class DBSettings:
     auto_delete_calendar_entries: bool = DEFAULT_AUTO_DELETE_CALENDAR_ENTRIES
     auto_create_calendar_reminders: bool = DEFAULT_AUTO_CREATE_CALENDAR_REMINDERS
     ask_user_upon_size_discrepancy: bool = DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY
+    auto_detect_tokens: bool = DEFAULT_AUTO_DETECT_TOKENS
+    csv_export_delimiter: str = DEFAULT_CSV_EXPORT_DELIMITER
+    use_unified_etherscan_api: bool = DEFAULT_USE_UNIFIED_ETHERSCAN_API
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -248,7 +255,6 @@ class ModifiableDBSettings(NamedTuple):
     submit_usage_analytics: bool | None = None
     active_modules: list[ModuleName] | None = None
     frontend_settings: str | None = None
-    account_for_assets_movements: bool | None = None
     btc_derivation_gap_limit: int | None = None
     calculate_past_cost_basis: bool | None = None
     display_date_in_localtime: bool | None = None
@@ -273,6 +279,9 @@ class ModifiableDBSettings(NamedTuple):
     auto_delete_calendar_entries: bool | None = None
     auto_create_calendar_reminders: bool | None = None
     ask_user_upon_size_discrepancy: bool | None = None
+    auto_detect_tokens: bool | None = None
+    csv_export_delimiter: str | None = None
+    use_unified_etherscan_api: bool | None = None
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -301,7 +310,7 @@ def read_boolean(value: str | bool) -> bool:
 
 def db_settings_from_dict(
         settings_dict: dict[str, Any],
-        msg_aggregator: MessagesAggregator,
+        msg_aggregator: 'MessagesAggregator',
 ) -> DBSettings:
     specified_args: dict[str, Any] = {}
     for key, value in settings_dict.items():
@@ -419,7 +428,7 @@ class CachedSettings:
         return CachedSettings.__instance
 
     def initialize(self, settings: DBSettings) -> None:
-        """Intialize with saved DB settings
+        """Initialize with saved DB settings
 
         This overwrites the default db settings set at class instantiation"""
         self._settings = settings
@@ -445,8 +454,8 @@ class CachedSettings:
     # commonly used settings with their own get function
     def get_timeout_tuple(self) -> tuple[int, int]:
         conn_timeout = self.get_entry('connect_timeout')
-        read_timout = self.get_entry('read_timeout')
-        return conn_timeout, read_timout  # type: ignore
+        read_timeout = self.get_entry('read_timeout')
+        return conn_timeout, read_timeout  # type: ignore
 
     def get_query_retry_limit(self) -> int:
         return self.get_entry('query_retry_limit')  # type: ignore

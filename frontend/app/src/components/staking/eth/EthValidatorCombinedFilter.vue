@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import {
-  type MatchedKeyword,
-  type SearchMatcher,
-  dateDeserializer,
-  dateSerializer,
-  dateValidator,
-} from '@/types/filtering';
-import type { EthStakingCombinedFilter } from '@rotki/common/lib/staking/eth2';
+import { getDateInputISOFormat } from '@/utils/date';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import TableFilter from '@/components/table-filter/TableFilter.vue';
+import { dateDeserializer, dateSerializer, dateValidator } from '@/utils/assets';
+import type {
+  MatchedKeyword,
+  SearchMatcher,
 
-const props = defineProps<{
-  filter: EthStakingCombinedFilter | undefined;
-}>();
+} from '@/types/filtering';
+import type { EthStakingCombinedFilter } from '@rotki/common';
+
+const props = withDefaults(
+  defineProps<{
+    filter?: EthStakingCombinedFilter;
+    disableStatus?: boolean;
+  }>(),
+  {
+    disableStatus: false,
+  },
+);
 
 const emit = defineEmits<{
   (e: 'update:filter', value?: EthStakingCombinedFilter): void;
@@ -28,16 +36,13 @@ enum Eth2StakingFilterValueKeys {
   STATUS = 'status',
 }
 
-export type Matcher = SearchMatcher<
-  Eth2StakingFilterKeys,
-  Eth2StakingFilterValueKeys
->;
+export type Matcher = SearchMatcher<Eth2StakingFilterKeys, Eth2StakingFilterValueKeys>;
 
 export type Filters = MatchedKeyword<Eth2StakingFilterValueKeys>;
 
 const validStatuses = ['exited', 'active', 'all'] as const;
 
-function isValidStatus(status: string): status is typeof validStatuses[number] {
+function isValidStatus(status: string): status is (typeof validStatuses)[number] {
   return Array.prototype.includes.call(validStatuses, status);
 }
 
@@ -48,47 +53,48 @@ const { dateInputFormat } = storeToRefs(useFrontendSettingsStore());
 const { t } = useI18n();
 
 const matchers = computed<Matcher[]>(
-  () => [
-    {
-      key: Eth2StakingFilterKeys.START,
-      keyValue: Eth2StakingFilterValueKeys.START,
-      description: t('closed_trades.filter.start_date'),
-      string: true,
-      suggestions: () => [],
-      hint: t('closed_trades.filter.date_hint', {
-        format: getDateInputISOFormat(get(dateInputFormat)),
-      }),
-      validate: dateValidator(dateInputFormat),
-      serializer: dateSerializer(dateInputFormat),
-      deserializer: dateDeserializer(dateInputFormat),
-    },
-    {
-      key: Eth2StakingFilterKeys.END,
-      keyValue: Eth2StakingFilterValueKeys.END,
-      description: t('closed_trades.filter.end_date'),
-      string: true,
-      suggestions: () => [],
-      hint: t('closed_trades.filter.date_hint', {
-        format: getDateInputISOFormat(get(dateInputFormat)),
-      }),
-      validate: dateValidator(dateInputFormat),
-      serializer: dateSerializer(dateInputFormat),
-      deserializer: dateDeserializer(dateInputFormat),
-    },
-    {
-      key: Eth2StakingFilterKeys.STATUS,
-      keyValue: Eth2StakingFilterValueKeys.STATUS,
-      description: t('eth_validator_combined_filter.status'),
-      string: true,
-      suggestions: () => validStatuses.filter(x => x !== 'all'),
-      validate: (status: string) => isValidStatus(status),
-    },
-  ] satisfies Matcher[],
+  () =>
+    [
+      {
+        description: t('common.filter.start_date'),
+        deserializer: dateDeserializer(dateInputFormat),
+        hint: t('common.filter.date_hint', {
+          format: getDateInputISOFormat(get(dateInputFormat)),
+        }),
+        key: Eth2StakingFilterKeys.START,
+        keyValue: Eth2StakingFilterValueKeys.START,
+        serializer: dateSerializer(dateInputFormat),
+        string: true,
+        suggestions: () => [],
+        validate: dateValidator(dateInputFormat),
+      },
+      {
+        description: t('common.filter.end_date'),
+        deserializer: dateDeserializer(dateInputFormat),
+        hint: t('common.filter.date_hint', {
+          format: getDateInputISOFormat(get(dateInputFormat)),
+        }),
+        key: Eth2StakingFilterKeys.END,
+        keyValue: Eth2StakingFilterValueKeys.END,
+        serializer: dateSerializer(dateInputFormat),
+        string: true,
+        suggestions: () => [],
+        validate: dateValidator(dateInputFormat),
+      },
+      {
+        description: t('eth_validator_combined_filter.status'),
+        key: Eth2StakingFilterKeys.STATUS,
+        keyValue: Eth2StakingFilterValueKeys.STATUS,
+        string: true,
+        suggestions: () => validStatuses.filter(x => x !== 'all'),
+        validate: (status: string) => isValidStatus(status),
+      },
+    ] satisfies Matcher[],
 );
 
 function updateFilters(updatedFilters: Filters) {
   set(filters, updatedFilters);
-  const { fromTimestamp, toTimestamp, status } = updatedFilters;
+  const { fromTimestamp, status, toTimestamp } = updatedFilters;
 
   assert(typeof fromTimestamp === 'string' || fromTimestamp === undefined);
   assert(typeof toTimestamp === 'string' || toTimestamp === undefined);
@@ -96,28 +102,29 @@ function updateFilters(updatedFilters: Filters) {
 
   emit('update:filter', {
     fromTimestamp: fromTimestamp ? parseInt(fromTimestamp) : undefined,
-    toTimestamp: toTimestamp ? parseInt(toTimestamp) : undefined,
     status,
+    toTimestamp: toTimestamp ? parseInt(toTimestamp) : undefined,
   });
 }
 
-watchImmediate(() => props.filter, (period) => {
-  const updatedFilters = { ...get(filters) };
+watchImmediate(
+  () => props.filter,
+  (period) => {
+    const updatedFilters = { ...get(filters) };
 
-  if (period?.fromTimestamp)
-    updatedFilters.fromTimestamp = period.fromTimestamp.toString();
-  else
-    delete updatedFilters.fromTimestamp;
+    if (period?.fromTimestamp)
+      updatedFilters.fromTimestamp = period.fromTimestamp.toString();
+    else delete updatedFilters.fromTimestamp;
 
-  if (period?.toTimestamp)
-    updatedFilters.toTimestamp = period.toTimestamp.toString();
-  else
-    delete updatedFilters.toTimestamp;
+    if (period?.toTimestamp)
+      updatedFilters.toTimestamp = period.toTimestamp.toString();
+    else delete updatedFilters.toTimestamp;
 
-  updatedFilters.status = period?.status;
+    updatedFilters.status = period?.status;
 
-  set(filters, updatedFilters);
-});
+    set(filters, updatedFilters);
+  },
+);
 </script>
 
 <template>

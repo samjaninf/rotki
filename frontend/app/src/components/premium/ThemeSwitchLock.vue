@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useLinks } from '@/composables/links';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+
 const { href, onLinkClick } = useLinks();
 const { t } = useI18n();
 </script>
@@ -9,13 +12,11 @@ const { t } = useI18n();
     offset-y="12"
     offset-x="-10"
     size="sm"
-    color="default"
   >
     <template #icon>
       <RuiIcon
-        name="lock-line"
-        color="primary"
-        size="14"
+        name="lu-lock-keyhole"
+        size="10"
       />
     </template>
     <MenuTooltipButton
@@ -23,7 +24,7 @@ const { t } = useI18n();
       :href="href"
       @click="onLinkClick()"
     >
-      <RuiIcon name="sun-line" />
+      <RuiIcon name="lu-sun" />
     </MenuTooltipButton>
   </RuiBadge>
 </template>

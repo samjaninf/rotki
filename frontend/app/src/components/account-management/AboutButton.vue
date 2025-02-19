@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useAreaVisibilityStore } from '@/store/session/visibility';
+
 const { t } = useI18n();
 const { showAbout } = storeToRefs(useAreaVisibilityStore());
 
@@ -20,7 +22,7 @@ function show() {
         rounded
         @click="show()"
       >
-        <RuiIcon name="information-line" />
+        <RuiIcon name="lu-info" />
       </RuiButton>
     </template>
   </RuiTooltip>

@@ -1,83 +1,114 @@
 <script setup lang="ts">
 import { helpers, requiredIf, requiredUnless } from '@vuelidate/validators';
-import { type ExchangePayload, KrakenAccountType } from '@/types/exchanges';
+import useVuelidate from '@vuelidate/core';
+import { type ExchangeFormData, KrakenAccountType } from '@/types/exchanges';
 import { toMessages } from '@/utils/validation';
-import type { Writeable } from '@/types';
+import ExchangeKeysFormStructure from '@/components/settings/api-keys/exchange/ExchangeKeysFormStructure.vue';
+import { useRefPropVModel } from '@/utils/model';
+import { useExchangesStore } from '@/store/exchanges';
+import { useLocationStore } from '@/store/locations';
+import { useLocations } from '@/composables/locations';
+import { useFormStateWatcher } from '@/composables/form';
+import BinancePairsSelector from '@/components/helper/BinancePairsSelector.vue';
+import ExchangeInput from '@/components/inputs/ExchangeInput.vue';
 
-const props = defineProps<{
-  exchange: ExchangePayload;
-  editMode: boolean;
-}>();
+const modelValue = defineModel<ExchangeFormData>({ required: true });
 
-const emit = defineEmits<{
-  (e: 'input', value: ExchangePayload): void;
-}>();
+const stateUpdated = defineModel<boolean>('stateUpdated', { required: true });
 
-const { editMode, exchange } = toRefs(props);
-const editKeys = ref(false);
-
-const name = computed({
-  get() {
-    return props.exchange.name ?? undefined;
-  },
-  set(value?: string) {
-    input({ ...props.exchange, newName: value ?? null });
-  },
-});
-
-const apiKey = computed({
-  get() {
-    return props.exchange.apiKey ?? undefined;
-  },
-  set(value?: string) {
-    input({ ...props.exchange, apiKey: value ?? null });
-  },
-});
-
-const apiSecret = computed({
-  get() {
-    return props.exchange.apiSecret ?? undefined;
-  },
-  set(value?: string) {
-    input({ ...props.exchange, apiSecret: value ?? null });
-  },
-});
-
-const passphrase = computed({
-  get() {
-    return props.exchange.passphrase ?? undefined;
-  },
-  set(value?: string) {
-    input({ ...props.exchange, passphrase: value ?? null });
-  },
-});
+const editKeys = ref<boolean>(false);
 
 const { getExchangeNonce } = useExchangesStore();
-const { exchangesWithPassphrase, exchangesWithoutApiSecret } = storeToRefs(useLocationStore());
+const { exchangesWithoutApiSecret, exchangesWithPassphrase } = storeToRefs(useLocationStore());
+const { getLocationData } = useLocations();
 const { t, te } = useI18n();
 
 const requiresApiSecret = computed(() => {
-  const { location } = get(exchange);
-
+  const { location } = get(modelValue);
   return !get(exchangesWithoutApiSecret).includes(location);
 });
 
 const requiresPassphrase = computed(() => {
-  const { location } = get(exchange);
+  const { location } = get(modelValue);
   return get(exchangesWithPassphrase).includes(location);
 });
 
 const isBinance = computed(() => {
-  const { location } = get(exchange);
+  const { location } = get(modelValue);
   return ['binance', 'binanceus'].includes(location);
 });
 
+const isKraken = computed(() => {
+  const { location } = get(modelValue);
+  return ['kraken'].includes(location);
+});
+
 const isCoinbase = computed(() => {
-  const { location } = get(exchange);
+  const { location } = get(modelValue);
   return ['coinbase'].includes(location);
 });
 
-const { getLocationData } = useLocations();
+const isCoinbasePro = computed(() => {
+  const { location } = get(modelValue);
+  return ['coinbaseprime'].includes(location);
+});
+
+const showKeyWaitingTimeWarning = logicOr(isKraken, isCoinbase, isCoinbasePro);
+
+const editMode = computed<boolean>(() => get(modelValue).mode === 'edit');
+
+const nameProp = useRefPropVModel(modelValue, 'name');
+const newNameProp = useRefPropVModel(modelValue, 'newName');
+const apiKey = useRefPropVModel(modelValue, 'apiKey');
+const apiSecret = useRefPropVModel(modelValue, 'apiSecret', {
+  transform(value) {
+    return get(isCoinbase) ? value.replace(/\\n/g, '\n') : value;
+  },
+});
+
+const asteriskPlaceholder = '*'.repeat(30);
+
+function refWithAsterisk(comp: WritableComputedRef<string>): WritableComputedRef<string> {
+  return computed({
+    get() {
+      if (get(editMode) && !get(editKeys)) {
+        return asteriskPlaceholder;
+      }
+      return get(comp);
+    },
+    set(value: string) {
+      set(comp, value);
+    },
+  });
+}
+
+const apiKeyModel = refWithAsterisk(apiKey);
+const apiSecretModel = refWithAsterisk(apiSecret);
+
+const passphrase = useRefPropVModel(modelValue, 'passphrase');
+const krakenAccountType = useRefPropVModel(modelValue, 'krakenAccountType');
+
+const name = computed<string>({
+  get() {
+    return get(editMode) ? (get(newNameProp) || '') : get(nameProp);
+  },
+  set(value?: string) {
+    if (get(editMode)) {
+      set(newNameProp, value);
+    }
+    else {
+      set(nameProp, value);
+    }
+  },
+});
+
+useFormStateWatcher({
+  apiKey,
+  apiSecret,
+  krakenAccountType,
+  name,
+  passphrase,
+}, stateUpdated);
 
 const suggestedName = function (exchange: string): string {
   const location = getLocationData(exchange);
@@ -89,34 +120,13 @@ function toggleEdit() {
   set(editKeys, !get(editKeys));
 
   if (!get(editKeys)) {
-    input({
-      ...get(exchange),
-      apiSecret: null,
-      apiKey: null,
+    set(modelValue, {
+      ...get(modelValue),
+      apiKey: '',
+      apiSecret: '',
     });
   }
 }
-
-function input(payload: ExchangePayload) {
-  const newPayload: Writeable<ExchangePayload> = {
-    ...payload,
-  };
-
-  if (get(isCoinbase) && payload.apiSecret)
-    newPayload.apiSecret = payload.apiSecret.replace(/\\n/g, '\n');
-
-  emit('input', newPayload);
-}
-
-onMounted(() => {
-  if (get(editMode))
-    return;
-
-  input({
-    ...get(exchange),
-    name: suggestedName(get(exchange).location),
-  });
-});
 
 const krakenAccountTypes = KrakenAccountType.options.map((item) => {
   const translationKey = `backend_mappings.exchanges.kraken.type.${item}`;
@@ -128,9 +138,21 @@ const krakenAccountTypes = KrakenAccountType.options.map((item) => {
   };
 });
 
-const sensitiveFieldEditable = computed(() => !get(editMode) || get(editKeys));
+const sensitiveFieldEditable = logicOr(logicNot(editMode), editKeys);
 
-const rules = {
+const v$ = useVuelidate({
+  apiKey: {
+    required: helpers.withMessage(
+      t('exchange_keys_form.validation.non_empty'),
+      requiredIf(sensitiveFieldEditable),
+    ),
+  },
+  apiSecret: {
+    required: helpers.withMessage(
+      t('exchange_keys_form.validation.non_empty'),
+      requiredIf(logicAnd(sensitiveFieldEditable, requiresApiSecret)),
+    ),
+  },
   name: {
     required: helpers.withMessage(
       t('exchange_keys_form.name.non_empty'),
@@ -143,40 +165,32 @@ const rules = {
       requiredIf(editMode),
     ),
   },
-  apiKey: {
-    required: helpers.withMessage(
-      t('exchange_keys_form.api_key.non_empty'),
-      requiredIf(sensitiveFieldEditable),
-    ),
-  },
-  apiSecret: {
-    required: helpers.withMessage(
-      t('exchange_keys_form.api_secret.non_empty'),
-      requiredIf(logicAnd(sensitiveFieldEditable, requiresApiSecret)),
-    ),
-  },
   passphrase: {
     required: helpers.withMessage(
-      t('exchange_keys_form.passphrase.non_empty'),
+      t('exchange_keys_form.validation.non_empty'),
       requiredIf(logicAnd(sensitiveFieldEditable, requiresPassphrase)),
     ),
   },
-};
+}, {
+  apiKey,
+  apiSecret,
+  name: nameProp,
+  newName: newNameProp,
+  passphrase,
+}, { $autoDirty: true });
 
-const { setValidation } = useExchangeApiKeysForm();
-
-const v$ = setValidation(rules, exchange, { $autoDirty: true });
-
-function onExchangeChange(exchange: string) {
-  input({
-    name: suggestedName(exchange),
-    newName: null,
-    location: exchange,
-    apiKey: null,
-    apiSecret: get(exchangesWithoutApiSecret).includes(exchange) ? '' : null,
-    passphrase: null,
-    krakenAccountType: exchange === 'kraken' ? 'starter' : null,
-    binanceMarkets: null,
+function onExchangeChange(exchange?: string) {
+  const name = exchange ?? '';
+  set(modelValue, {
+    apiKey: '',
+    apiSecret: '',
+    binanceMarkets: undefined,
+    krakenAccountType: name === 'kraken' ? 'starter' : undefined,
+    location: name,
+    mode: get(modelValue, 'mode'),
+    name: suggestedName(name),
+    newName: '',
+    passphrase: '',
   });
 
   nextTick(() => {
@@ -184,8 +198,22 @@ function onExchangeChange(exchange: string) {
   });
 }
 
-const coinbaseApiKeyNameFormat = 'organizations/{org_id}/apiKeys/{key_id}';
-const coinbasePrivateKeyFormat = '-----BEGIN EC PRIVATE KEY-----\\n{KEY}\\n-----END EC PRIVATE KEY-----\\n';
+onMounted(() => {
+  if (get(editMode)) {
+    set(newNameProp, get(nameProp));
+    return;
+  }
+
+  const model = get(modelValue);
+  set(modelValue, {
+    ...model,
+    name: suggestedName(model.location),
+  });
+});
+
+defineExpose({
+  validate: async (): Promise<boolean> => await get(v$).$validate(),
+});
 </script>
 
 <template>
@@ -196,45 +224,32 @@ const coinbasePrivateKeyFormat = '-----BEGIN EC PRIVATE KEY-----\\n{KEY}\\n-----
     <div class="grid md:grid-cols-2 gap-x-4 gap-y-2">
       <ExchangeInput
         show-with-key-only
-        :value="exchange.location"
+        :model-value="modelValue.location"
         :label="t('exchange_keys_form.exchange')"
         data-cy="exchange"
         :disabled="editMode"
-        @input="onExchangeChange($event)"
+        @update:model-value="onExchangeChange($event)"
       />
 
       <RuiTextField
-        v-if="editMode"
         v-model="name"
         variant="outlined"
         color="primary"
-        :error-messages="toMessages(v$.newName)"
+        :error-messages="editMode ? toMessages(v$.newName) : toMessages(v$.name)"
         data-cy="name"
         :label="t('common.name')"
-      />
-
-      <RuiTextField
-        v-else
-        variant="outlined"
-        color="primary"
-        :value="exchange.name"
-        :error-messages="toMessages(v$.name)"
-        data-cy="name"
-        :label="t('common.name')"
-        @input="input({ ...exchange, name: $event })"
       />
     </div>
 
     <RuiMenuSelect
-      v-if="exchange.location === 'kraken'"
-      :value="exchange.krakenAccountType"
+      v-if="isKraken"
+      v-model="krakenAccountType"
       data-cy="account-type"
       :options="krakenAccountTypes"
       :label="t('exchange_settings.inputs.kraken_account')"
       key-attr="identifier"
       text-attr="label"
       variant="outlined"
-      @input="input({ ...exchange, krakenAccountType: $event })"
     />
 
     <div
@@ -255,60 +270,80 @@ const coinbasePrivateKeyFormat = '-----BEGIN EC PRIVATE KEY-----\\n{KEY}\\n-----
           >
             <RuiIcon
               size="20"
-              :name="!editKeys ? 'pencil-line' : 'close-line'"
+              :name="!editKeys ? 'lu-pencil' : 'lu-x'"
             />
           </RuiButton>
         </template>
         {{
-          !editKeys
-            ? t('exchange_keys_form.edit.activate_tooltip')
-            : t('exchange_keys_form.edit.deactivate_tooltip')
+          !editKeys ? t('exchange_keys_form.edit.activate_tooltip') : t('exchange_keys_form.edit.deactivate_tooltip')
         }}
       </RuiTooltip>
     </div>
 
-    <RuiRevealableTextField
-      v-model.trim="apiKey"
-      variant="outlined"
-      color="primary"
-      :disabled="editMode && !editKeys"
-      :error-messages="toMessages(v$.apiKey)"
-      data-cy="api-key"
-      prepend-icon="key-line"
-      :label="isCoinbase ? t('exchange_settings.inputs.api_key_name') : t('exchange_settings.inputs.api_key')"
-      :hint="isCoinbase ? `${t('exchange_settings.inputs.format')}: ${coinbaseApiKeyNameFormat}` : ''"
-    />
+    <ExchangeKeysFormStructure :location="modelValue.location">
+      <template #apiKey="{ label, hint, className }">
+        <RuiRevealableTextField
+          v-model.trim="apiKeyModel"
+          :text-color="editMode && !editKeys && toMessages(v$.apiKey).length === 0 ? 'success' : undefined"
+          variant="outlined"
+          color="primary"
+          :disabled="editMode && !editKeys"
+          :error-messages="toMessages(v$.apiKey)"
+          data-cy="api-key"
+          prepend-icon="lu-key"
+          :label="label"
+          :hint="hint"
+          :class="className"
+        />
+      </template>
 
-    <RuiRevealableTextField
-      v-if="requiresApiSecret"
-      v-model.trim="apiSecret"
-      variant="outlined"
-      color="primary"
-      :disabled="editMode && !editKeys"
-      :error-messages="toMessages(v$.apiSecret)"
-      data-cy="api-secret"
-      prepend-icon="lock-line"
-      :label="isCoinbase ? t('exchange_settings.inputs.private_key') : t('exchange_settings.inputs.api_secret')"
-      :hint="isCoinbase ? `${t('exchange_settings.inputs.format')}: ${coinbasePrivateKeyFormat}` : ''"
-    />
+      <template #apiSecret="{ label, hint, className }">
+        <RuiRevealableTextField
+          v-if="requiresApiSecret"
+          v-model.trim="apiSecretModel"
+          variant="outlined"
+          color="primary"
+          :text-color="editMode && !editKeys && toMessages(v$.apiKey).length === 0 ? 'success' : undefined"
+          :disabled="editMode && !editKeys"
+          :error-messages="toMessages(v$.apiSecret)"
+          data-cy="api-secret"
+          prepend-icon="lu-lock-keyhole"
+          :label="label"
+          :hint="hint"
+          :class="className"
+        />
+      </template>
 
-    <RuiRevealableTextField
-      v-if="requiresPassphrase"
-      v-model.trim="passphrase"
-      :disabled="editMode && !editKeys"
-      variant="outlined"
-      color="primary"
-      :error-messages="toMessages(v$.passphrase)"
-      prepend-icon="key-line"
-      data-cy="passphrase"
-      :label="t('exchange_settings.inputs.passphrase')"
-    />
+      <template #passphrase="{ label, hint, className }">
+        <RuiRevealableTextField
+          v-if="requiresPassphrase"
+          v-model.trim="passphrase"
+          :disabled="editMode && !editKeys"
+          variant="outlined"
+          color="primary"
+          :error-messages="toMessages(v$.passphrase)"
+          prepend-icon="lu-key"
+          data-cy="passphrase"
+          :label="label"
+          :hint="hint"
+          :class="className"
+        />
+      </template>
+    </ExchangeKeysFormStructure>
 
     <BinancePairsSelector
       v-if="isBinance"
-      :name="exchange.name"
-      :location="exchange.location"
-      @input="input({ ...exchange, binanceMarkets: $event })"
+      :name="modelValue.name"
+      :location="modelValue.location"
+      @update:selection="modelValue = { ...modelValue, binanceMarkets: $event }"
     />
   </div>
+
+  <RuiAlert
+    v-if="showKeyWaitingTimeWarning"
+    class="mt-4"
+    type="info"
+  >
+    {{ t('exchange_keys_form.waiting_time_warning') }}
+  </RuiAlert>
 </template>

@@ -4,10 +4,10 @@ import json
 import logging
 import operator
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast, overload
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, cast, overload
 from urllib.parse import urlencode
 
 import gevent
@@ -19,29 +19,40 @@ from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.converters import BITFINEX_EXCHANGE_TEST_ASSETS, asset_from_bitfinex
 from rotkehlchen.assets.utils import symbol_to_asset_or_token
 from rotkehlchen.constants import ZERO
+from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.deserialization import deserialize_price
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    create_asset_movement_with_fee,
+)
+from rotkehlchen.history.events.structures.base import HistoryBaseEntry
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.serialization.deserialize import deserialize_asset_amount, deserialize_fee
+from rotkehlchen.serialization.deserialize import (
+    deserialize_asset_amount,
+    deserialize_fee,
+    deserialize_timestamp,
+)
 from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetAmount,
-    AssetMovementCategory,
     ExchangeAuthCredentials,
     Fee,
     Location,
     Timestamp,
+    TimestampMS,
     TradeType,
 )
 from rotkehlchen.user_messages import MessagesAggregator
-from rotkehlchen.utils.misc import ts_now_in_ms
+from rotkehlchen.utils.misc import ts_now_in_ms, ts_sec_to_ms
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
 from rotkehlchen.utils.mixins.lockable import protect_with_lock
 from rotkehlchen.utils.serialization import jsonloads_list
@@ -49,7 +60,6 @@ from rotkehlchen.utils.serialization import jsonloads_list
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.history.events.structures.base import HistoryEvent
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -79,7 +89,7 @@ API_WALLET_MIN_RESULT_LENGTH = 3
 API_TRADES_MIN_RESULT_LENGTH = 11
 API_MOVEMENTS_MIN_RESULT_LENGTH = 22
 
-DeserializationMethod = Callable[..., Trade | AssetMovement]  # ... due to keyword args
+DeserializationMethod = Callable[..., list[Trade] | list[AssetMovement]]  # ... due to keyword args
 
 
 class CurrenciesResponse(NamedTuple):
@@ -117,10 +127,10 @@ class Bitfinex(ExchangeInterface):
             api_key=api_key,
             secret=secret,
             database=database,
+            msg_aggregator=msg_aggregator,
         )
         self.base_uri = 'https://api.bitfinex.com'
         self.session.headers.update({'bfx-apikey': self.api_key})
-        self.msg_aggregator = msg_aggregator
         self.nonce_lock = Semaphore()
 
     def edit_exchange_credentials(self, credentials: ExchangeAuthCredentials) -> bool:
@@ -252,7 +262,7 @@ class Bitfinex(ExchangeInterface):
         call_options = options.copy()
         limit = options['limit']
         results: list[Trade] | (list[AssetMovement] | list) = []
-        processed_result_ids: set[int] = set()
+        processed_result_ids: set[str] = set()
         retries_left = API_REQUEST_RETRY_TIMES
         while retries_left >= 0:
             response = self._api_query(
@@ -322,19 +332,37 @@ class Bitfinex(ExchangeInterface):
                 raw_results=response_list,
                 processed_result_ids=processed_result_ids,
             )
-            results.extend(cast(Iterable, results_))
+            results.extend(cast('Iterable', results_))
             # NB: Copying the set before updating it prevents losing the call args values
             processed_result_ids = processed_result_ids.copy()
-            # type ignore is due to always having a trade link for bitfinex trades
-            processed_result_ids.update({int(result.link) for result in results_})  # type: ignore
+            newly_processed_results = set()
+            for result in results_:
+                if isinstance(result, AssetMovement):  # temporary solution until trades are also history events  # noqa: E501
+                    if (extra_data := result.extra_data) is None:
+                        continue  # fees don't have an id set in extra_data
+
+                    if (reference := extra_data.get('reference')) is None:
+                        log.error(f'Unexpected missing movement_id in {result} from bitfinex. Skipping.')  # noqa: E501
+                        continue
+
+                    newly_processed_results.add(reference)
+                elif result.link is not None:
+                    newly_processed_results.add(result.link)
+
+            processed_result_ids.update(newly_processed_results)
 
             if len(response_list) < limit:
                 break
             # Update pagination params per endpoint
             # NB: Copying the dict before updating it prevents losing the call args values
             call_options = call_options.copy()
+            last_item = results[-1]
             call_options.update({
-                'start': results[-1].timestamp * 1000,
+                'start': (
+                    last_item.timestamp
+                    if isinstance(last_item, AssetMovement)  # temporary solution until trades are also history events  # noqa: E501
+                    else ts_sec_to_ms(last_item.timestamp)
+                ),
             })
 
         return results
@@ -345,7 +373,7 @@ class Bitfinex(ExchangeInterface):
             case: Literal['trades'],
             options: dict[str, Any],
             raw_results: list[list[Any]],
-            processed_result_ids: set[int],
+            processed_result_ids: set[str],
     ) -> list[Trade]:
         ...
 
@@ -355,7 +383,7 @@ class Bitfinex(ExchangeInterface):
             case: Literal['asset_movements'],
             options: dict[str, Any],
             raw_results: list[list[Any]],
-            processed_result_ids: set[int],
+            processed_result_ids: set[str],
     ) -> list[AssetMovement]:
         ...
 
@@ -364,7 +392,7 @@ class Bitfinex(ExchangeInterface):
             case: Literal['trades', 'asset_movements'],
             options: dict[str, Any],
             raw_results: list[list[Any]],
-            processed_result_ids: set[int],
+            processed_result_ids: set[str],
     ) -> list[Trade] | (list[AssetMovement] | list):
         deserialization_method: DeserializationMethod
         if case == 'trades':
@@ -408,7 +436,7 @@ class Bitfinex(ExchangeInterface):
                 )
                 break
 
-            if raw_result[id_index] in processed_result_ids:
+            if str(raw_result[id_index]) in processed_result_ids:
                 log.debug(
                     f'Skipped {self.name} {case} result. Already processed',
                     raw_result=raw_result,
@@ -436,20 +464,26 @@ class Bitfinex(ExchangeInterface):
                     f'Failed to deserialize a {self.name} {case} result. '
                     f'Check logs for details. Ignoring it.',
                 )
-            except (UnknownAsset, UnsupportedAsset) as e:
+            except UnsupportedAsset as e:
                 msg = (
-                    f'Found {self.name} {case} with unknown/unsupported '
+                    f'Found {self.name} {case} with unsupported '
                     f'asset {e.identifier}'
                 )
                 log.warning(f'{msg}. raw_data={raw_result}')
                 self.msg_aggregator.add_warning(f'{msg}. Ignoring {case}')
                 continue
+            except UnknownAsset as e:
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details=case,
+                )
+                continue
 
-            results.append(result)  # type: ignore
+            results.extend(result)  # type: ignore
 
         return results
 
-    def _deserialize_asset_movement(self, raw_result: list[Any]) -> AssetMovement:
+    def _deserialize_asset_movement(self, raw_result: list[Any]) -> list[AssetMovement]:
         """Process an asset movement (i.e. deposit or withdrawal) from Bitfinex
         and deserialize it.
 
@@ -474,35 +508,38 @@ class Bitfinex(ExchangeInterface):
                 f'Unexpected bitfinex movement with status: {raw_result[5]}. '
                 f'Only completed movements are processed. Raw movement: {raw_result}',
             )
-        fee_asset = asset_from_bitfinex(bitfinex_name=raw_result[1])
+        asset = asset_from_bitfinex(bitfinex_name=raw_result[1])
 
         amount = deserialize_asset_amount(raw_result[12])
-        category = (
-            AssetMovementCategory.DEPOSIT
+        event_type: Final = (
+            HistoryEventType.DEPOSIT
             if amount > ZERO
-            else AssetMovementCategory.WITHDRAWAL
+            else HistoryEventType.WITHDRAWAL
         )
         address = None
         transaction_id = None
-        if fee_asset.is_fiat() is False:
+        if asset.is_fiat() is False:
             address = str(raw_result[16])
             transaction_id = str(raw_result[20])
 
-        asset_movement = AssetMovement(
-            timestamp=Timestamp(int(raw_result[5] / 1000)),
-            location=Location.BITFINEX,
-            category=category,
-            address=address,
-            transaction_id=transaction_id,
-            asset=fee_asset,
+        return create_asset_movement_with_fee(
+            location=self.location,
+            location_label=self.name,
+            event_type=event_type,
+            timestamp=TimestampMS(deserialize_timestamp(raw_result[5])),
+            asset=asset,
             amount=abs(amount),
-            fee_asset=fee_asset,
-            fee=Fee(abs(deserialize_fee(raw_result[13]))),
-            link=str(raw_result[0]),
+            fee_asset=asset,
+            fee=abs(deserialize_fee(raw_result[13])),
+            unique_id=(reference := str(raw_result[0])),
+            extra_data=maybe_set_transaction_extra_data(
+                address=address,
+                transaction_id=transaction_id,
+                extra_data={'reference': reference},
+            ),
         )
-        return asset_movement
 
-    def _deserialize_trade(self, raw_result: list[Any]) -> Trade:
+    def _deserialize_trade(self, raw_result: list[Any]) -> list[Trade]:
         """Process a trade result from Bitfinex and deserialize it.
 
         The base and quote assets are instantiated using the `fee_currency_symbol`
@@ -538,7 +575,7 @@ class Bitfinex(ExchangeInterface):
         quote_asset = asset_from_bitfinex(bitfinex_name=bfx_quote_asset_symbol)
         fee_asset = asset_from_bitfinex(bitfinex_name=raw_result[10])
 
-        trade = Trade(
+        return [Trade(
             timestamp=Timestamp(int(raw_result[2] / 1000)),
             location=Location.BITFINEX,
             base_asset=base_asset,
@@ -550,8 +587,7 @@ class Bitfinex(ExchangeInterface):
             fee_currency=fee_asset,
             link=str(raw_result[0]),
             notes='',
-        )
-        return trade
+        )]
 
     @staticmethod
     def _get_error_response_data(response_list: list[Any]) -> ErrorResponseData:
@@ -572,10 +608,7 @@ class Bitfinex(ExchangeInterface):
     @staticmethod
     def _process_bfx_pair(raw_pair: str) -> str:
         bfx_pair = raw_pair.replace(':', '')
-        if bfx_pair.startswith('t'):
-            bfx_pair = bfx_pair[1:]
-
-        return bfx_pair
+        return bfx_pair.removeprefix('t')
 
     def _query_currencies(self) -> CurrenciesResponse:
         """Query and return the list of all the currencies supported in
@@ -891,11 +924,16 @@ class Bitfinex(ExchangeInterface):
 
             try:
                 asset = asset_from_bitfinex(bitfinex_name=wallet[currency_index])
-            except (UnknownAsset, UnsupportedAsset) as e:
-                asset_tag = 'unknown' if isinstance(e, UnknownAsset) else 'unsupported'
+            except UnsupportedAsset as e:
                 self.msg_aggregator.add_warning(
-                    f'Found {asset_tag} {self.name} asset {e.identifier} due to: {e!s}. '
+                    f'Found unsupported {self.name} asset {e.identifier} due to: {e!s}. '
                     f'Ignoring its balance query.',
+                )
+                continue
+            except UnknownAsset as e:
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='balance query',
                 )
                 continue
 
@@ -924,11 +962,11 @@ class Bitfinex(ExchangeInterface):
 
         return dict(assets_balance), ''
 
-    def query_online_deposits_withdrawals(
+    def query_online_history_events(
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> list[AssetMovement]:
+    ) -> Sequence[HistoryBaseEntry]:
         """Return the account deposits and withdrawals on Bitfinex.
 
         Endpoint documentation:
@@ -994,11 +1032,4 @@ class Bitfinex(ExchangeInterface):
             start_ts: Timestamp,  # pylint: disable=unused-argument
             end_ts: Timestamp,
     ) -> list[MarginPosition]:
-        return []  # noop for bitfinex
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
         return []  # noop for bitfinex

@@ -1,17 +1,16 @@
-import { snakeCaseTransformer } from '@/services/axios-tranformers';
 import { ApiValidationError } from '@/types/api/errors';
-import type { ActionResult } from '@rotki/common/lib/data';
-import type {
-  AxiosInstance,
-  AxiosResponse,
-  ParamsSerializerOptions,
-} from 'axios';
+import { snakeCaseTransformer } from '@/services/axios-tranformers';
+import type { ActionResult } from '@rotki/common';
+import type { AxiosInstance, AxiosResponse, ParamsSerializerOptions } from 'axios';
 import type { PendingTask } from '@/types/task';
 
 type Parser<T> = (response: AxiosResponse<ActionResult<T>>) => ActionResult<T>;
 
-export function handleResponse<T>(response: AxiosResponse<ActionResult<T>>, parse: Parser<T> = response => response.data): T {
-  const { result, message } = parse(response);
+export function handleResponse<T>(
+  response: AxiosResponse<ActionResult<T>>,
+  parse: Parser<T> = response => response.data,
+): T {
+  const { message, result } = parse(response);
   if (result)
     return result;
 
@@ -21,18 +20,22 @@ export function handleResponse<T>(response: AxiosResponse<ActionResult<T>>, pars
   throw new Error(message);
 }
 
-export async function fetchExternalAsync(api: AxiosInstance, url: string, params?: Record<string, any>): Promise<PendingTask> {
+export async function fetchExternalAsync(
+  api: AxiosInstance,
+  url: string,
+  params?: Record<string, any>,
+): Promise<PendingTask> {
   const result = await api.get<ActionResult<PendingTask>>(url, {
-    validateStatus: validWithSessionAndExternalService,
     params: snakeCaseTransformer({
       asyncQuery: true,
       ...(params || {}),
     }),
+    validateStatus: validWithSessionAndExternalService,
   });
   return handleResponse(result);
 }
 
-export function serialize(params: Record<string, any>) {
+export function serialize(params: Record<string, any>): string {
   const list = [];
   for (const [key, value] of Object.entries(params)) {
     if (value === null || value === undefined)
@@ -40,8 +43,7 @@ export function serialize(params: Record<string, any>) {
 
     if (Array.isArray(value))
       list.push(`${key}=${value.join(',')}`);
-    else
-      list.push(`${key}=${value}`);
+    else list.push(`${key}=${value}`);
   }
   return list.join('&');
 }
@@ -72,9 +74,7 @@ function isValid(validStatuses: number[], status: number): boolean {
  * @param status The status code received in the backend's response
  * @return The validity of the status code
  */
-export function validWithParamsSessionAndExternalService(
-  status: number,
-): boolean {
+export function validWithParamsSessionAndExternalService(status: number): boolean {
   return isValid([200, 400, 401, 409, 502], status);
 }
 

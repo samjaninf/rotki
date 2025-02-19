@@ -1,28 +1,26 @@
-import { BigNumber } from '@rotki/common';
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { Theme } from '@rotki/common/lib/settings';
-import {
-  TimeFramePeriod,
-  TimeFramePersist,
-} from '@rotki/common/lib/settings/graphs';
+import { BigNumber, Blockchain, Theme, TimeFramePeriod, TimeFramePersist, assert } from '@rotki/common';
 import { type Pinia, createPinia } from 'pinia';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Defaults } from '@/data/defaults';
 import { DARK_COLORS, LIGHT_COLORS } from '@/plugins/theme';
-import { snakeCaseTransformer } from '@/services/axios-tranformers';
 import { CurrencyLocation } from '@/types/currency-location';
 import { DateFormat } from '@/types/date-format';
 import {
+  BalanceSource,
   BlockchainRefreshButtonBehaviour,
   DashboardTableType,
-  type FrontendSettings,
+  FrontendSettings,
   Quarter,
   SupportedLanguage,
 } from '@/types/settings/frontend-settings';
 import { TableColumn } from '@/types/table-column';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { camelCaseTransformer } from '@/services/axios-tranformers';
+import { useSettingsApi } from '@/composables/api/settings/settings-api';
 
 vi.mock('@/composables/api/settings/settings-api', () => ({
   useSettingsApi: vi.fn().mockReturnValue({
-    setSettings: vi.fn(),
+    setSettings: vi.fn().mockResolvedValue({ other: { frontendSettings: {} } }),
   }),
 }));
 
@@ -36,64 +34,60 @@ describe('settings:frontend', () => {
   });
 
   it('updates settings on valid payload', async () => {
-    expect.assertions(1);
+    expect.assertions(2);
     const store = useFrontendSettingsStore(pinia);
-    await store.updateSetting({ defiSetupDone: true });
+    await store.updateSetting({ defiSetupDone: true, language: SupportedLanguage.GR });
 
-    expect(api.setSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        frontendSettings: JSON.stringify(
-          snakeCaseTransformer({
-            defiSetupDone: true,
-            language: SupportedLanguage.EN,
-            timeframeSetting: TimeFramePersist.REMEMBER,
-            visibleTimeframes: Defaults.DEFAULT_VISIBLE_TIMEFRAMES,
-            lastKnownTimeframe: TimeFramePeriod.ALL,
-            queryPeriod: 5,
-            profitLossReportPeriod: {
-              year: new Date().getFullYear().toString(),
-              quarter: Quarter.ALL,
-            },
-            thousandSeparator: Defaults.DEFAULT_THOUSAND_SEPARATOR,
-            decimalSeparator: Defaults.DEFAULT_DECIMAL_SEPARATOR,
-            currencyLocation: Defaults.DEFAULT_CURRENCY_LOCATION,
-            abbreviateNumber: false,
-            minimumDigitToBeAbbreviated: 4,
-            refreshPeriod: -1,
-            explorers: {},
-            itemsPerPage: 10,
-            amountRoundingMode: BigNumber.ROUND_UP,
-            valueRoundingMode: BigNumber.ROUND_DOWN,
-            selectedTheme: Theme.AUTO,
-            lightTheme: LIGHT_COLORS,
-            darkTheme: DARK_COLORS,
-            defaultThemeVersion: 1,
-            graphZeroBased: false,
-            showGraphRangeSelector: true,
-            nftsInNetValue: true,
-            renderAllNftImages: true,
-            whitelistedDomainsForNftImages: [],
-            dashboardTablesVisibleColumns: {
-              [DashboardTableType.ASSETS]:
-                Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
-              [DashboardTableType.LIABILITIES]:
-                Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
-              [DashboardTableType.NFT]:
-                Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
-              [DashboardTableType.LIQUIDITY_POSITION]:
-                Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
-            },
-            dateInputFormat: DateFormat.DateMonthYearHourMinuteSecond,
-            versionUpdateCheckFrequency:
-              Defaults.DEFAULT_VERSION_UPDATE_CHECK_FREQUENCY,
-            enableAliasNames: true,
-            blockchainRefreshButtonBehaviour:
-              BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
-            savedFilters: {},
-          }),
-        ),
-      }),
-    );
+    expect(api.setSettings).toHaveBeenCalledOnce();
+    const payload = vi.mocked(api.setSettings).mock.calls[0][0];
+    assert(payload.frontendSettings);
+    const parsedSettings = FrontendSettings.parse(camelCaseTransformer(JSON.parse(payload.frontendSettings)));
+
+    expect(parsedSettings).toMatchObject({
+      defiSetupDone: true,
+      language: SupportedLanguage.GR,
+      timeframeSetting: TimeFramePersist.REMEMBER,
+      visibleTimeframes: Defaults.DEFAULT_VISIBLE_TIMEFRAMES,
+      lastKnownTimeframe: TimeFramePeriod.ALL,
+      queryPeriod: 5,
+      profitLossReportPeriod: {
+        year: new Date().getFullYear().toString(),
+        quarter: Quarter.ALL,
+      },
+      thousandSeparator: Defaults.DEFAULT_THOUSAND_SEPARATOR,
+      decimalSeparator: Defaults.DEFAULT_DECIMAL_SEPARATOR,
+      currencyLocation: Defaults.DEFAULT_CURRENCY_LOCATION,
+      abbreviateNumber: false,
+      minimumDigitToBeAbbreviated: 4,
+      refreshPeriod: -1,
+      explorers: {},
+      itemsPerPage: 10,
+      amountRoundingMode: BigNumber.ROUND_UP,
+      valueRoundingMode: BigNumber.ROUND_DOWN,
+      selectedTheme: Theme.AUTO,
+      lightTheme: LIGHT_COLORS,
+      darkTheme: DARK_COLORS,
+      defaultThemeVersion: 1,
+      graphZeroBased: false,
+      showGraphRangeSelector: true,
+      nftsInNetValue: true,
+      renderAllNftImages: true,
+      whitelistedDomainsForNftImages: [],
+      dashboardTablesVisibleColumns: {
+        [DashboardTableType.ASSETS]: Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
+        [DashboardTableType.LIABILITIES]: Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
+        [DashboardTableType.NFT]: Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
+        [DashboardTableType.LIQUIDITY_POSITION]: Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
+        [DashboardTableType.BLOCKCHAIN_ASSET_BALANCES]: Defaults.DEFAULT_DASHBOARD_TABLE_VISIBLE_COLUMNS,
+      },
+      dateInputFormat: DateFormat.DateMonthYearHourMinuteSecond,
+      versionUpdateCheckFrequency: Defaults.DEFAULT_VERSION_UPDATE_CHECK_FREQUENCY,
+      enableAliasNames: true,
+      blockchainRefreshButtonBehaviour: BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
+      shouldRefreshValidatorDailyStats: false,
+      savedFilters: {},
+      balanceUsdValueThreshold: {},
+    });
   });
 
   it('does not update settings on missing payload', async () => {
@@ -105,6 +99,7 @@ describe('settings:frontend', () => {
   it('restore', () => {
     const store = useFrontendSettingsStore(pinia);
     const state: FrontendSettings = {
+      schemaVersion: 1,
       defiSetupDone: true,
       language: SupportedLanguage.EN,
       timeframeSetting: TimeFramePeriod.YEAR,
@@ -128,6 +123,7 @@ describe('settings:frontend', () => {
       thousandSeparator: '|',
       decimalSeparator: '-',
       refreshPeriod: 120,
+      notifyNewNfts: false,
       explorers: {
         [Blockchain.ETH]: {
           transaction: 'explore/tx',
@@ -154,23 +150,25 @@ describe('settings:frontend', () => {
       renderAllNftImages: false,
       whitelistedDomainsForNftImages: [],
       dashboardTablesVisibleColumns: {
-        [DashboardTableType.ASSETS]: [
-          TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-        ],
-        [DashboardTableType.LIABILITIES]: [
-          TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-        ],
+        [DashboardTableType.ASSETS]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
+        [DashboardTableType.LIABILITIES]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
         [DashboardTableType.NFT]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
-        [DashboardTableType.LIQUIDITY_POSITION]: [
-          TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-        ],
+        [DashboardTableType.LIQUIDITY_POSITION]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
+        [DashboardTableType.BLOCKCHAIN_ASSET_BALANCES]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
       },
       dateInputFormat: DateFormat.DateMonthYearHourMinuteSecond,
       versionUpdateCheckFrequency: 24,
       enableAliasNames: true,
-      blockchainRefreshButtonBehaviour:
-        BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
+      blockchainRefreshButtonBehaviour: BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
+      shouldRefreshValidatorDailyStats: false,
+      subscriptDecimals: false,
       savedFilters: {},
+      balanceUsdValueThreshold: {
+        [BalanceSource.EXCHANGES]: '0',
+        [BalanceSource.BLOCKCHAIN]: '0',
+        [BalanceSource.MANUAL]: '0',
+      },
+      useHistoricalAssetBalances: false,
     };
 
     store.update(state);
@@ -224,22 +222,15 @@ describe('settings:frontend', () => {
     expect(store.whitelistedDomainsForNftImages).toStrictEqual([]);
     expect(store.dashboardTablesVisibleColumns).toStrictEqual({
       [DashboardTableType.ASSETS]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
-      [DashboardTableType.LIABILITIES]: [
-        TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-      ],
+      [DashboardTableType.LIABILITIES]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
       [DashboardTableType.NFT]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
-      [DashboardTableType.LIQUIDITY_POSITION]: [
-        TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE,
-      ],
+      [DashboardTableType.LIQUIDITY_POSITION]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
+      [DashboardTableType.BLOCKCHAIN_ASSET_BALANCES]: [TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE],
     });
-    expect(store.dateInputFormat).toBe(
-      DateFormat.DateMonthYearHourMinuteSecond,
-    );
+    expect(store.dateInputFormat).toBe(DateFormat.DateMonthYearHourMinuteSecond);
     expect(store.versionUpdateCheckFrequency).toBe(24);
     expect(store.enableAliasNames).toBe(true);
-    expect(store.blockchainRefreshButtonBehaviour).toBe(
-      BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
-    );
+    expect(store.blockchainRefreshButtonBehaviour).toBe(BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES);
     expect(store.savedFilters).toMatchObject({});
   });
 });

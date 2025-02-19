@@ -18,7 +18,6 @@ from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
     AssetAmount,
-    AssetMovementCategory,
     ChainID,
     ChecksumEvmAddress,
     EvmInternalTransaction,
@@ -147,7 +146,7 @@ def deserialize_timestamp_from_bitstamp_date(date: str) -> Timestamp:
 
     The bitstamp dates follow the %Y-%m-%d %H:%M:%S format but are in UTC time
     and not local time so can't use iso8601ts_to_timestamp() directly since that
-    would interpet them as local time.
+    would interpret them as local time.
 
     Can throw DeserializationError if the data is not as expected
     """
@@ -196,14 +195,14 @@ def deserialize_timestamp_from_floatstr(time: str | (FVal | float)) -> Timestamp
 
 
 def deserialize_timestamp_from_intms(time: int) -> Timestamp:
-    """Deserializes a timestamp an integer in millseconds
+    """Deserializes a timestamp an integer in milliseconds
 
 
     Can throw DeserializationError if the data is not as expected
     """
     if not isinstance(time, int):
         raise DeserializationError(
-            f'Failed to deserialize a timestamp entry from a {type(time)} entry in binance',
+            f'Failed to deserialize a timestamp entry from a {type(time)} entry',
         )
 
     return Timestamp(int(time / 1000))
@@ -220,22 +219,6 @@ def deserialize_fval(
         raise DeserializationError(f'Failed to deserialize value entry: {e!s} for {name} during {location}') from e  # noqa: E501
 
     return result
-
-
-def deserialize_optional_to_fval(
-        value: AcceptableFValInitInput | None,
-        name: str,
-        location: str,
-) -> FVal:
-    """
-    Deserializes an FVal from a field that was optional and if None raises DeserializationError
-    """
-    if value is None:
-        raise DeserializationError(
-            f'Failed to deserialize value entry for {name} during {location} since null was given',
-        )
-
-    return deserialize_fval(value=value, name=name, location=location)
 
 
 def deserialize_optional_to_optional_fval(
@@ -310,30 +293,20 @@ def get_pair_position_str(pair: TradePair, position: str) -> str:
     return base_str if position == 'first' else quote_str
 
 
-def deserialize_asset_movement_category(
-        value: str | HistoryEventType,
-) -> AssetMovementCategory:
-    """Takes a string and determines whether to accept it as an asset movement category
+def deserialize_asset_movement_event_type(
+        value: str,
+) -> Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL]:
+    """Takes a string and determines whether to accept it as an asset movement event_type
 
     Can throw DeserializationError if value is not as expected
     """
     if isinstance(value, str):
-        if value.lower() == 'deposit':
-            return AssetMovementCategory.DEPOSIT
-        if value.lower() in {'withdraw', 'withdrawal'}:
-            return AssetMovementCategory.WITHDRAWAL
+        if (lowered_value := value.lower()) == 'deposit':
+            return HistoryEventType.DEPOSIT
+        if lowered_value in {'withdraw', 'withdrawal'}:
+            return HistoryEventType.WITHDRAWAL
         raise DeserializationError(
             f'Failed to deserialize asset movement category symbol. Unknown {value}',
-        )
-
-    if isinstance(value, HistoryEventType):
-        if value == HistoryEventType.DEPOSIT:
-            return AssetMovementCategory.DEPOSIT
-        if value == HistoryEventType.WITHDRAWAL:
-            return AssetMovementCategory.WITHDRAWAL
-        raise DeserializationError(
-            f'Failed to deserialize asset movement category from '
-            f'HistoryEventType and {value} entry',
         )
 
     raise DeserializationError(
@@ -516,21 +489,21 @@ def deserialize_evm_transaction(
 def deserialize_evm_transaction(
         data: dict[str, Any],
         internal: Literal[False],
-        chain_id: ChainID,
-        evm_inquirer: 'EvmNodeInquirer',
-        parent_tx_hash: Optional['EVMTxHash'] = None,
-) -> tuple[EvmTransaction, dict[str, Any]]:
-    ...
-
-
-@overload
-def deserialize_evm_transaction(  # type: ignore[misc]
-        data: dict[str, Any],
-        internal: Literal[False],
         chain_id: L2ChainIdsWithL1FeesType,
         evm_inquirer: 'L2WithL1FeesInquirer',
         parent_tx_hash: Optional['EVMTxHash'] = None,
 ) -> tuple[L2WithL1FeesTransaction, dict[str, Any]]:
+    ...
+
+
+@overload
+def deserialize_evm_transaction(
+        data: dict[str, Any],
+        internal: Literal[False],
+        chain_id: ChainID,
+        evm_inquirer: 'EvmNodeInquirer',
+        parent_tx_hash: Optional['EVMTxHash'] = None,
+) -> tuple[EvmTransaction, dict[str, Any]]:
     ...
 
 

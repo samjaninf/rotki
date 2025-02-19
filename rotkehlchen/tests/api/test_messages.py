@@ -1,6 +1,9 @@
+from typing import TYPE_CHECKING
+
 import pytest
 import requests
 
+from rotkehlchen.tests.fixtures.websockets import WebsocketReader
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_proper_response,
@@ -9,9 +12,16 @@ from rotkehlchen.tests.utils.api import (
 from rotkehlchen.tests.utils.history import mock_history_processing_and_exchanges
 from rotkehlchen.types import Location
 
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
 
+
+@pytest.mark.parametrize('legacy_messages_via_websockets', [True])
 @pytest.mark.parametrize('added_exchanges', [(Location.POLONIEX,)])
-def test_query_messages(rotkehlchen_api_server_with_exchanges):
+def test_query_messages(
+        rotkehlchen_api_server_with_exchanges: 'APIServer',
+        websocket_connection: WebsocketReader,
+    ) -> None:
     """Test that querying the messages endpoint returns notifications for the user"""
     rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
     setup = mock_history_processing_and_exchanges(rotki)
@@ -27,13 +37,13 @@ def test_query_messages(rotkehlchen_api_server_with_exchanges):
     response = requests.get(
         api_url_for(rotkehlchen_api_server_with_exchanges, 'messagesresource'),
     )
-    result = assert_proper_sync_response_with_result(response)
-    errors = result['errors']
-    warnings = result['warnings']
-    assert len(errors) == 0
-    assert len(warnings) == 2
-    assert warnings[0] == 'Found poloniex trade with unknown asset NOEXISTINGASSET. Ignoring it.'
-    assert warnings[1] == 'Found poloniex trade with unsupported asset BALLS. Ignoring it.'
+    assert_proper_sync_response_with_result(response)
+    websocket_connection.wait_until_messages_num(num=2, timeout=10)
+    for expected_message in [
+        {'type': 'exchange_unknown_asset', 'data': {'location': 'poloniex', 'name': 'poloniex', 'identifier': 'NOEXISTINGASSET', 'details': 'trade'}},  # noqa: E501
+        {'type': 'legacy', 'data': {'verbosity': 'warning', 'value': 'Found poloniex trade with unsupported asset BALLS. Ignoring it.'}},  # noqa: E501
+    ]:
+        assert expected_message == websocket_connection.pop_message()
 
     # now query for the messages again and make sure that nothing is return, since
     # our previous query should have popped all the messages in the queue
@@ -43,7 +53,4 @@ def test_query_messages(rotkehlchen_api_server_with_exchanges):
     assert_proper_response(response)
     data = response.json()
     assert data['message'] == ''
-    errors = data['result']['errors']
-    warnings = data['result']['warnings']
-    assert len(errors) == 0
-    assert len(warnings) == 0
+    assert websocket_connection.messages_num() == 0

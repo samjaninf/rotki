@@ -1,128 +1,99 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
+import { Blockchain, HistoryEventEntryType } from '@rotki/common';
 import { helpers, required, requiredIf } from '@vuelidate/validators';
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { isEmpty } from 'lodash-es';
+import { isEmpty } from 'es-toolkit/compat';
+import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
-import HistoryEventAssetPriceForm from '@/components/history/events/forms/HistoryEventAssetPriceForm.vue';
 import { DateFormat } from '@/types/date-format';
-import type {
-  EthWithdrawalEvent,
-  NewEthWithdrawalEventPayload,
-} from '@/types/history/events';
+import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
+import { bigNumberifyFromRef } from '@/utils/bignumbers';
+import HistoryEventAssetPriceForm from '@/components/history/events/forms/HistoryEventAssetPriceForm.vue';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useHistoryEventsForm } from '@/composables/history/events/form';
+import AutoCompleteWithSearchSync from '@/components/inputs/AutoCompleteWithSearchSync.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
+import { useFormStateWatcher } from '@/composables/form';
+import type { EthWithdrawalEvent, NewEthWithdrawalEventPayload } from '@/types/history/events';
 
-const props = withDefaults(
-  defineProps<{
-    editableItem?: EthWithdrawalEvent;
-    groupHeader?: EthWithdrawalEvent;
-  }>(),
-  {
-    editableItem: undefined,
-    groupHeader: undefined,
-  },
-);
+interface EthWithdrawalEventFormProps {
+  editableItem?: EthWithdrawalEvent;
+  groupHeader?: EthWithdrawalEvent;
+}
+
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+
+const props = withDefaults(defineProps<EthWithdrawalEventFormProps>(), {
+  editableItem: undefined,
+  groupHeader: undefined,
+});
 
 const { t } = useI18n();
 
 const { editableItem, groupHeader } = toRefs(props);
-const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
-const assetPriceForm: Ref<InstanceType<
-  typeof HistoryEventAssetPriceForm
-> | null> = ref(null);
+const assetPriceForm = ref<InstanceType<typeof HistoryEventAssetPriceForm>>();
 
-const eventIdentifier: Ref<string> = ref('');
-const datetime: Ref<string> = ref('');
-const amount: Ref<string> = ref('');
-const usdValue: Ref<string> = ref('');
-const validatorIndex: Ref<string> = ref('');
-const withdrawalAddress: Ref<string> = ref('');
-const isExit: Ref<boolean> = ref(false);
+const eventIdentifier = ref<string>('');
+const datetime = ref<string>('');
+const amount = ref<string>('');
+const validatorIndex = ref<string>('');
+const withdrawalAddress = ref<string>('');
+const isExit = ref<boolean>(false);
 
 const errorMessages = ref<Record<string, string[]>>({});
 
 const rules = {
+  amount: {
+    required: helpers.withMessage(t('transactions.events.form.amount.validation.non_empty'), required),
+  },
   eventIdentifier: {
     required: helpers.withMessage(
-      t(
-        'transactions.events.form.event_identifier.validation.non_empty',
-      ),
+      t('transactions.events.form.event_identifier.validation.non_empty'),
       requiredIf(() => !!get(editableItem)),
     ),
   },
   timestamp: { externalServerValidation: () => true },
-  amount: {
-    required: helpers.withMessage(
-      t('transactions.events.form.amount.validation.non_empty'),
-      required,
-    ),
-  },
-  usdValue: {
-    required: helpers.withMessage(
-      t('transactions.events.form.fiat_value.validation.non_empty', {
-        currency: get(currencySymbol),
-      }),
-      required,
-    ),
-  },
   validatorIndex: {
-    required: helpers.withMessage(
-      t(
-        'transactions.events.form.validator_index.validation.non_empty',
-      ),
-      required,
-    ),
+    required: helpers.withMessage(t('transactions.events.form.validator_index.validation.non_empty'), required),
   },
   withdrawalAddress: {
-    required: helpers.withMessage(
-      t(
-        'transactions.events.form.withdrawal_address.validation.non_empty',
-      ),
-      required,
-    ),
-    isValid: helpers.withMessage(
-      t(
-        'transactions.events.form.withdrawal_address.validation.valid',
-      ),
-      (value: string) => isValidEthAddress(value),
-    ),
+    isValid: helpers.withMessage(t('transactions.events.form.withdrawal_address.validation.valid'), (value: string) =>
+      isValidEthAddress(value)),
+    required: helpers.withMessage(t('transactions.events.form.withdrawal_address.validation.non_empty'), required),
   },
 };
 
 const numericAmount = bigNumberifyFromRef(amount);
-const numericUsdValue = bigNumberifyFromRef(usdValue);
 
-const { setValidation, setSubmitFunc, saveHistoryEventHandler } = useHistoryEventsForm();
+const { saveHistoryEventHandler } = useHistoryEventsForm();
+const { getAddresses } = useBlockchainStore();
 
-const v$ = setValidation(
+const states = {
+  amount,
+  eventIdentifier,
+  timestamp: datetime,
+  validatorIndex,
+  withdrawalAddress,
+};
+
+const v$ = useVuelidate(
   rules,
-  {
-    eventIdentifier,
-    timestamp: datetime,
-    amount,
-    usdValue,
-    validatorIndex,
-    withdrawalAddress,
-  },
+  states,
   {
     $autoDirty: true,
     $externalResults: errorMessages,
   },
 );
+useFormStateWatcher(states, stateUpdated);
+
+const withdrawalAddressSuggestions = computed(() => getAddresses(Blockchain.ETH));
 
 function reset() {
   set(eventIdentifier, null);
-  set(
-    datetime,
-    convertFromTimestamp(
-      dayjs().valueOf(),
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
+  set(datetime, convertFromTimestamp(dayjs().valueOf(), DateFormat.DateMonthYearHourMinuteSecond, true));
   set(amount, '0');
-  set(usdValue, '0');
   set(validatorIndex, '');
   set(withdrawalAddress, '');
   set(isExit, false);
@@ -133,16 +104,8 @@ function reset() {
 
 function applyEditableData(entry: EthWithdrawalEvent) {
   set(eventIdentifier, entry.eventIdentifier);
-  set(
-    datetime,
-    convertFromTimestamp(
-      entry.timestamp,
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
-  set(amount, entry.balance.amount.toFixed());
-  set(usdValue, entry.balance.usdValue.toFixed());
+  set(datetime, convertFromTimestamp(entry.timestamp, DateFormat.DateMonthYearHourMinuteSecond, true));
+  set(amount, entry.amount.toFixed());
   set(validatorIndex, entry.validatorIndex.toString());
   set(withdrawalAddress, entry.locationLabel);
   set(isExit, entry.isExit);
@@ -152,15 +115,7 @@ function applyGroupHeaderData(entry: EthWithdrawalEvent) {
   set(eventIdentifier, entry.eventIdentifier);
   set(withdrawalAddress, entry.locationLabel ?? '');
   set(validatorIndex, entry.validatorIndex.toString());
-  set(
-    datetime,
-    convertFromTimestamp(
-      entry.timestamp,
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
-  set(usdValue, '0');
+  set(datetime, convertFromTimestamp(entry.timestamp, DateFormat.DateMonthYearHourMinuteSecond, true));
 }
 
 watch(errorMessages, (errors) => {
@@ -169,23 +124,19 @@ watch(errorMessages, (errors) => {
 });
 
 async function save(): Promise<boolean> {
-  const timestamp = convertToTimestamp(
-    get(datetime),
-    DateFormat.DateMonthYearHourMinuteSecond,
-    true,
-  );
+  if (!(await get(v$).$validate()))
+    return false;
+
+  const timestamp = convertToTimestamp(get(datetime), DateFormat.DateMonthYearHourMinuteSecond, true);
 
   const payload: NewEthWithdrawalEventPayload = {
-    eventIdentifier: get(eventIdentifier),
+    amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
     entryType: HistoryEventEntryType.ETH_WITHDRAWAL_EVENT,
+    eventIdentifier: get(eventIdentifier),
+    isExit: get(isExit),
     timestamp,
-    balance: {
-      amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
-      usdValue: get(numericUsdValue).isNaN() ? Zero : get(numericUsdValue),
-    },
     validatorIndex: parseInt(get(validatorIndex)),
     withdrawalAddress: get(withdrawalAddress),
-    isExit: get(isExit),
   };
 
   const edit = get(editableItem);
@@ -197,8 +148,6 @@ async function save(): Promise<boolean> {
     reset,
   );
 }
-
-setSubmitFunc(save);
 
 function checkPropsData() {
   const editable = get(editableItem);
@@ -219,9 +168,9 @@ onMounted(() => {
   checkPropsData();
 });
 
-const { getAddresses } = useBlockchainStore();
-
-const withdrawalAddressSuggestions = computed(() => getAddresses(Blockchain.ETH));
+defineExpose({
+  save,
+});
 </script>
 
 <template>
@@ -254,20 +203,18 @@ const withdrawalAddressSuggestions = computed(() => getAddresses(Blockchain.ETH)
 
     <HistoryEventAssetPriceForm
       ref="assetPriceForm"
+      v-model:amount="amount"
       asset="ETH"
       :v$="v$"
       :datetime="datetime"
-      :amount.sync="amount"
-      :usd-value.sync="usdValue"
       disable-asset
     />
 
     <RuiDivider class="my-10" />
 
-    <ComboboxWithCustomInput
+    <AutoCompleteWithSearchSync
       v-model="withdrawalAddress"
       :items="withdrawalAddressSuggestions"
-      outlined
       data-cy="withdrawalAddress"
       :label="t('transactions.events.form.withdrawal_address.label')"
       :error-messages="toMessages(v$.withdrawalAddress)"

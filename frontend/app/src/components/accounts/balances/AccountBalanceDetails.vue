@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useBlockchainStore } from '@/store/blockchain';
+import AccountAssetBalances from '@/components/accounts/balances/AccountAssetBalances.vue';
+
 const props = defineProps<{
   chain: string;
   address: string;

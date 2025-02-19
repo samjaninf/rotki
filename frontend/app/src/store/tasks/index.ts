@@ -1,5 +1,7 @@
 import dayjs from 'dayjs';
-import { find, toArray } from 'lodash-es';
+import { find, toArray } from 'es-toolkit/compat';
+import { AxiosError } from 'axios';
+import { checkIfDevelopment } from '@shared/utils';
 import { TaskType } from '@/types/task-type';
 import {
   BackendCancelledTaskError,
@@ -9,36 +11,15 @@ import {
   TaskNotFoundError,
   UserCancelledTaskError,
 } from '@/types/task';
-import type { ActionResult } from '@rotki/common/lib/data';
-
-function unlockTask(lockedTasks: Ref<number[]>, taskId: number): number[] {
-  const locked = [...get(lockedTasks)];
-  const idIndex = locked.indexOf(taskId);
-  locked.splice(idIndex, 1);
-  return locked;
-}
-
-type ErrorHandler = (
-  task: Task<TaskMeta>,
-  message?: string
-) => ActionResult<unknown>;
+import { removeKey } from '@/utils/data';
+import { logger } from '@/utils/logging';
+import { useTaskApi } from '@/composables/api/task';
+import type { ActionResult } from '@rotki/common';
 
 const USER_CANCELLED_TASK = 'task_cancelled_by_user';
+const TIMEOUT_THRESHOLD = 3;
 
-function useError(): { error: ErrorHandler } {
-  const { t } = useI18n();
-  const error: ErrorHandler = (task, error) => ({
-    result: {},
-    message: t('task_manager.error', {
-      taskId: task.id,
-      title: task.meta.title,
-      error,
-    }),
-  });
-  return {
-    error,
-  };
-}
+type ErrorHandler = (task: Task<TaskMeta>, message?: string) => ActionResult<unknown>;
 
 interface TaskResponse<R, M extends TaskMeta> {
   result: R;
@@ -50,15 +31,35 @@ interface TaskActionResult<T> extends ActionResult<T> {
   error?: any;
 }
 
+function unlockTask(lockedTasks: Ref<number[]>, taskId: number): number[] {
+  const locked = [...get(lockedTasks)];
+  const idIndex = locked.indexOf(taskId);
+  locked.splice(idIndex, 1);
+  return locked;
+}
+
+function useError(): { error: ErrorHandler } {
+  const { t } = useI18n();
+  const error: ErrorHandler = (task, error) => ({
+    message: t('task_manager.error', {
+      error,
+      taskId: task.id,
+      title: task.meta.title,
+    }),
+    result: {},
+  });
+  return { error };
+}
+
 export const useTaskStore = defineStore('tasks', () => {
   const locked = ref<number[]>([]);
   const tasks = ref<TaskMap<TaskMeta>>({});
   const unknownTasks = ref<Record<number, number>>({});
+  const timeouts = ref<Record<number, number>>({});
   const handlers: Record<string, (result: ActionResult<any>, meta: any) => void> = {};
   let isRunning = false;
 
   const { error } = useError();
-
   const api = useTaskApi();
 
   const registerHandler = <R, M extends TaskMeta>(
@@ -90,16 +91,12 @@ export const useTaskStore = defineStore('tasks', () => {
   };
 
   const remove = (taskId: number): void => {
-    const remainingTasks = { ...get(tasks) };
-    delete remainingTasks[taskId];
-    set(tasks, remainingTasks);
+    set(tasks, removeKey(get(tasks), taskId));
+    set(timeouts, removeKey(get(timeouts), taskId));
     unlock(taskId);
   };
 
-  const isTaskRunning = (
-    type: TaskType,
-    meta: Record<string, any> = {},
-  ) => computed<boolean>(() =>
+  const isTaskRunning = (type: TaskType, meta: Record<string, any> = {}): ComputedRef<boolean> => computed<boolean>(() =>
     !!find(get(tasks), (item) => {
       const sameType = item.type === type;
       const keys = Object.keys(meta);
@@ -118,7 +115,7 @@ export const useTaskStore = defineStore('tasks', () => {
   );
 
   const metadata = <T extends TaskMeta>(type: TaskType): T | undefined => {
-    const task = find(get(tasks), item => item.type === type);
+    const task = find(Object.values(get(tasks)), item => item.type === type);
     if (task)
       return task.meta as T;
 
@@ -130,28 +127,18 @@ export const useTaskStore = defineStore('tasks', () => {
 
   const taskList = computed(() => toArray(get(tasks)));
 
-  const addTask = <M extends TaskMeta>(
-    id: number,
-    type: TaskType,
-    meta: M,
-  ): void => {
-    assert(
-      !(id === null || id === undefined),
-      `missing id for ${TaskType[type]} with ${JSON.stringify(meta)}`,
-    );
+  const addTask = <M extends TaskMeta>(id: number, type: TaskType, meta: M): void => {
+    assert(!(id === null || id === undefined), `missing id for ${TaskType[type]} with ${JSON.stringify(meta)}`);
 
     add({
       id,
-      type,
       meta,
       time: dayjs().valueOf(),
+      type,
     });
   };
 
-  const handleResult = (
-    result: TaskActionResult<any>,
-    task: Task<TaskMeta>,
-  ): void => {
+  const handleResult = (result: TaskActionResult<any>, task: Task<TaskMeta>): void => {
     if (task.meta.ignoreResult) {
       remove(task.id);
       return;
@@ -159,21 +146,15 @@ export const useTaskStore = defineStore('tasks', () => {
 
     const handler = handlers[task.type] ?? handlers[`${task.type}-${task.id}`];
 
-    if (handler) {
+    if (handler)
       handler(result, task.meta);
-      /* c8 ignore next 5 */
-    }
-    else {
-      logger.warn(
-          `missing handler for ${TaskType[task.type]} with id ${task.id}`,
-      );
-    }
+    /* c8 ignore next 5 */ else logger.warn(`missing handler for ${TaskType[task.type]} with id ${task.id}`);
 
     remove(task.id);
   };
 
   const cancelTask = async (task: Task<TaskMeta>): Promise<boolean> => {
-    const { id, type, meta } = task;
+    const { id, meta, type } = task;
 
     if (!get(isTaskRunning(type, meta)))
       return false;
@@ -188,7 +169,7 @@ export const useTaskStore = defineStore('tasks', () => {
         }
         else {
           lock(id);
-          handleResult({ result: null, message: USER_CANCELLED_TASK }, task);
+          handleResult({ message: USER_CANCELLED_TASK, result: null }, task);
           unlock(id);
         }
       }
@@ -203,7 +184,7 @@ export const useTaskStore = defineStore('tasks', () => {
     }
   };
 
-  const awaitTask = <R, M extends TaskMeta>(
+  const awaitTask = async <R, M extends TaskMeta>(
     id: number,
     type: TaskType,
     meta: M,
@@ -216,7 +197,7 @@ export const useTaskStore = defineStore('tasks', () => {
         type,
         (actionResult, meta) => {
           unregisterHandler(type, id.toString());
-          const { result, message } = actionResult;
+          const { message, result } = actionResult;
 
           if (actionResult.error) {
             reject(actionResult.error);
@@ -225,33 +206,22 @@ export const useTaskStore = defineStore('tasks', () => {
             let errorMessage: string;
             if (message) {
               if (message === USER_CANCELLED_TASK) {
-                let msg = 'Request cancelled';
+                const msg = 'Request cancelled';
                 if (checkIfDevelopment() && !import.meta.env.VITE_TEST)
-                  msg += ` ::dev_only_msg_part:: task_id: ${id}, task_type: ${TaskType[type]}`;
+                  logger.debug(`${msg} -> task_id: ${id}, task_type: ${TaskType[type]}`);
 
-                logger.debug(msg);
                 reject(new UserCancelledTaskError(msg));
                 return;
               }
               errorMessage = message;
-              /* c8 ignore next 5 */
-              if (checkIfDevelopment() && !import.meta.env.VITE_TEST) {
-                errorMessage += `::dev_only_msg_part:: task_id: ${id}, task_type: ${
-                  TaskType[type]
-                }, meta: ${JSON.stringify(meta)}`;
-              }
               reject(new Error(errorMessage));
             }
             else {
-              reject(
-                new BackendCancelledTaskError(
-                  `Backend cancelled task_id: ${id}, task_type: ${TaskType[type]}`,
-                ),
-              );
+              reject(new BackendCancelledTaskError(`Backend cancelled task_id: ${id}, task_type: ${TaskType[type]}`));
             }
           }
           else {
-            resolve({ result, meta, message });
+            resolve({ message, meta, result });
           }
         },
         nonUnique ? id.toString() : undefined,
@@ -263,14 +233,12 @@ export const useTaskStore = defineStore('tasks', () => {
     const lockedTasks = get(locked);
     const pendingTasks = get(tasks);
     return {
-      ready: taskIds.filter(
-        id => !lockedTasks.includes(id) && pendingTasks[id] && pendingTasks[id].id !== null,
-      ),
+      ready: taskIds.filter(id => !lockedTasks.includes(id) && pendingTasks[id] && pendingTasks[id].id !== null),
       unknown: taskIds.filter(id => !lockedTasks.includes(id) && !pendingTasks[id]),
     };
   };
 
-  function removeFromUnknownTasks(taskId: number) {
+  function removeFromUnknownTasks(taskId: number): void {
     const unknown = { ...get(unknownTasks) };
     if (!unknown[taskId])
       return;
@@ -289,32 +257,40 @@ export const useTaskStore = defineStore('tasks', () => {
       handleResult(result, task);
     }
     catch (error_: any) {
-      logger.error('Task handling failed', error_);
       if (error_ instanceof TaskNotFoundError) {
         remove(task.id);
         handleResult(error(task, error_.message), task);
       }
       else {
-        handleResult({ message: error_.message, result: null, error: error_ }, task);
+        if (error_ instanceof AxiosError && error_.code === 'ECONNABORTED' && error_.message.includes('timeout')) {
+          const totalTimeouts = (get(timeouts)[task.id] ?? 0) + 1;
+          if (totalTimeouts >= TIMEOUT_THRESHOLD) {
+            remove(task.id);
+            handleResult({ error: error_, message: error_.message, result: null }, task);
+          }
+          else {
+            set(timeouts, { ...get(timeouts), [task.id]: totalTimeouts });
+          }
+        }
+        else {
+          remove(task.id);
+          handleResult({ error: error_, message: error_.message, result: null }, task);
+        }
       }
     }
     unlock(task.id);
   };
 
-  const handleTasks = (
-    ids: number[],
-  ): Promise<PromiseSettledResult<void>[]> => {
+  const handleTasks = async (ids: number[]): Promise<PromiseSettledResult<void>[]> => {
     const taskMap = get(tasks);
-    return Promise.allSettled(ids.map(id => processTask(taskMap[id])));
+    return Promise.allSettled(ids.map(async id => processTask(taskMap[id])));
   };
 
   const consumeUnknownTasks = async (ids: number[]): Promise<void> => {
     if (ids.length === 0)
       return;
 
-    logger.warn(
-      `the following task ids were not known to the frontend ${ids.join(', ')}`,
-    );
+    logger.warn(`the following task ids were not known to the frontend ${ids.join(', ')}`);
 
     for (const id of ids) {
       await api.queryTaskResult(id);
@@ -369,18 +345,18 @@ export const useTaskStore = defineStore('tasks', () => {
   };
 
   return {
-    tasks: taskList,
-    taskById: tasks,
-    locked,
     add,
-    remove,
-    cancelTask,
-    isTaskRunning,
-    hasRunningTasks,
-    metadata,
     addTask,
     awaitTask,
+    cancelTask,
+    hasRunningTasks,
+    isTaskRunning,
+    locked,
+    metadata,
     monitor,
+    remove,
+    taskById: tasks,
+    tasks: taskList,
   };
 });
 

@@ -1,10 +1,23 @@
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { Blockchain } from '@rotki/common';
+import { startPromise } from '@shared/utils';
 import { ApiValidationError, type ValidationErrors } from '@/types/api/errors';
 import { isBtcChain } from '@/types/blockchain/chains';
-import { XpubPrefix } from '@/utils/xpub';
+import { getKeyType, guessPrefix } from '@/utils/xpub';
+import { getAccountAddress, getChain } from '@/utils/blockchain/accounts/utils';
+import { logger } from '@/utils/logging';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useMessageStore } from '@/store/message';
+import { useEthStaking } from '@/composables/blockchain/accounts/staking';
+import { useBlockchainAccounts } from '@/composables/blockchain/accounts';
+import { useBlockchains } from '@/composables/blockchain';
 import type { Module } from '@/types/modules';
-import type { AccountPayload, BlockchainAccountWithBalance, XpubAccountPayload } from '@/types/blockchain/accounts';
+import type {
+  AccountPayload,
+  BlockchainAccountBalance,
+  XpubAccountPayload,
+} from '@/types/blockchain/accounts';
 import type { Eth2Validator } from '@/types/balances';
+import type { Ref } from 'vue';
 
 interface AccountManageMode {
   readonly mode: 'edit' | 'add';
@@ -20,10 +33,6 @@ export interface StakingValidatorManage extends AccountManageMode {
   chain: Blockchain.ETH2;
   type: 'validator';
   data: Eth2Validator;
-  /**
-   * The original account ownership percentage, needed when editing the account.
-   */
-  ownershipPercentage?: number;
 }
 
 export interface AccountManageAdd extends AccountManageMode {
@@ -33,10 +42,6 @@ export interface AccountManageAdd extends AccountManageMode {
   data: AccountPayload[];
   /**
    * Adds from all evm addresses if enabled.
-   */
-  evm?: boolean;
-  /**
-   * The specified modules will be enabled for the account.
    */
   modules?: Module[];
 }
@@ -48,74 +53,104 @@ export interface AccountManageEdit extends AccountManageMode {
   data: AccountPayload;
 }
 
+export interface AccountAgnosticManage extends AccountManageMode {
+  readonly mode: 'edit';
+  category: string;
+  type: 'group';
+  chain: undefined;
+  data: AccountPayload;
+}
+
 export type AccountManage = AccountManageAdd | AccountManageEdit;
 
-export type AccountManageState = AccountManage | StakingValidatorManage | XpubManage;
+export type AccountManageState = AccountManage | StakingValidatorManage | XpubManage | AccountAgnosticManage;
 
 export function createNewBlockchainAccount(): AccountManageAdd {
   return {
-    mode: 'add',
-    type: 'account',
-    chain: Blockchain.ETH,
+    chain: 'evm',
     data: [
       {
         address: '',
         tags: null,
       },
     ],
+    mode: 'add',
+    type: 'account',
   };
 }
 
-export function editBlockchainAccount(account: BlockchainAccountWithBalance): AccountManageState {
+export function editBlockchainAccount(account: BlockchainAccountBalance): AccountManageState {
   if ('publicKey' in account.data) {
-    const { ownershipPercentage, publicKey, index } = account.data;
+    const { index, ownershipPercentage = '100', publicKey } = account.data;
     return {
-      mode: 'edit',
-      type: 'validator',
       chain: Blockchain.ETH2,
       data: {
-        ownershipPercentage,
+        ownershipPercentage: ownershipPercentage || '100',
         publicKey,
         validatorIndex: index.toString(),
       },
+      mode: 'edit',
+      type: 'validator',
     } satisfies StakingValidatorManage;
   }
   else if ('xpub' in account.data) {
-    const chain = account.chain;
-    assert(isBtcChain(chain));
-    const match = isPrefixed(account.data.xpub);
-    const prefix = match?.[1] ?? XpubPrefix.XPUB;
+    const chain = getChain(account);
+    assert(chain && isBtcChain(chain));
+    const prefix = guessPrefix(account.data.xpub);
     return {
-      mode: 'edit',
-      type: 'xpub',
       chain,
       data: {
-        tags: account.tags ?? null,
         label: account.label,
+        tags: account.tags ?? null,
         xpub: {
-          xpub: account.data.xpub,
           derivationPath: account.data.derivationPath ?? '',
-          xpubType: getKeyType(prefix as XpubPrefix),
+          xpub: account.data.xpub,
+          xpubType: getKeyType(prefix),
         },
       },
+      mode: 'edit',
+      type: 'xpub',
     } satisfies XpubManage;
   }
-  else {
+  else if (account.type === 'group' && account.chains.length > 1) {
+    assert(account.category);
+    const address = getAccountAddress(account);
     return {
+      category: account.category,
+      chain: undefined,
+      data: {
+        address,
+        label: account.label === address ? undefined : account.label,
+        tags: account.tags ?? null,
+      },
+      mode: 'edit',
+      type: 'group',
+    } satisfies AccountAgnosticManage;
+  }
+  else {
+    const chain = getChain(account);
+    assert(chain);
+    const address = getAccountAddress(account);
+    return {
+      chain,
+      data: {
+        address,
+        label: account.label === address ? undefined : account.label,
+        tags: account.tags ?? null,
+      },
       mode: 'edit',
       type: 'account',
-      chain: account.chain,
-      data: {
-        tags: account.tags ?? null,
-        label: account.label,
-        address: account.data.address,
-      },
-
     } satisfies AccountManageEdit;
   }
 }
 
-export function useAccountManage() {
+interface UseAccountManageReturn {
+  pending: Ref<boolean>;
+  errorMessages: Ref<ValidationErrors>;
+  save: (state: AccountManageState) => Promise<boolean>;
+}
+
+export function useAccountManage(): UseAccountManageReturn {
   const pending = ref(false);
   const errorMessages = ref<ValidationErrors>({});
 
@@ -123,10 +158,11 @@ export function useAccountManage() {
 
   const { addAccounts, addEvmAccounts, fetchAccounts, refreshAccounts } = useBlockchains();
   const { addEth2Validator, editEth2Validator, updateEthStakingOwnership } = useEthStaking();
-  const { editAccount } = useBlockchainAccounts();
+  const { editAccount, editAgnosticAccount } = useBlockchainAccounts();
+  const { updateAccountData, updateAccounts } = useBlockchainStore();
   const { setMessage } = useMessageStore();
 
-  function handleErrors(error: any, props: Record<string, any> = {}) {
+  function handleErrors(error: any, props: Record<string, any> = {}): void {
     logger.error(error);
     let errors = error.message;
 
@@ -136,8 +172,8 @@ export function useAccountManage() {
     if (typeof errors === 'string') {
       setMessage({
         description: t('account_form.error.description', { error: errors }),
-        title: t('account_form.error.title'),
         success: false,
+        title: t('account_form.error.title'),
       });
     }
     else {
@@ -152,23 +188,38 @@ export function useAccountManage() {
     try {
       set(pending, true);
       if (edit) {
-        await editAccount(state.data, state.chain);
-        startPromise(fetchAccounts(state.chain));
+        updateAccounts(state.chain, await editAccount(state.data, state.chain));
       }
       else {
-        if (state.evm) {
+        if (state.chain === 'evm') {
           await addEvmAccounts({
-            payload: state.data,
             modules: state.modules,
+            payload: state.data,
           });
         }
         else {
           await addAccounts(state.chain, {
-            payload: state.data,
             modules: isEth ? state.modules : undefined,
+            payload: state.data,
           });
         }
       }
+    }
+    catch (error: any) {
+      handleErrors(error);
+      return false;
+    }
+    finally {
+      set(pending, false);
+    }
+    return true;
+  }
+
+  async function saveAgnosticAccount(state: AccountAgnosticManage): Promise<boolean> {
+    try {
+      set(pending, true);
+      await editAgnosticAccount(state.category, state.data);
+      updateAccountData(state.data);
     }
     catch (error: any) {
       handleErrors(error);
@@ -196,8 +247,8 @@ export function useAccountManage() {
     }
     catch (error: any) {
       handleErrors(error, {
-        xpub: '',
         derivationPath: '',
+        xpub: '',
       });
       return false;
     }
@@ -218,11 +269,7 @@ export function useAccountManage() {
       if (isEdit) {
         assert(payload.publicKey);
         assert(payload.ownershipPercentage);
-        updateEthStakingOwnership(
-          payload.publicKey,
-          bigNumberify(state?.ownershipPercentage ?? 100),
-          bigNumberify(payload.ownershipPercentage),
-        );
+        updateEthStakingOwnership(payload.publicKey, bigNumberify(payload.ownershipPercentage));
         startPromise(fetchAccounts(Blockchain.ETH2));
       }
       else {
@@ -250,8 +297,8 @@ export function useAccountManage() {
 
       setMessage({
         description,
-        title,
         success: false,
+        title,
       });
     }
     else {
@@ -262,7 +309,7 @@ export function useAccountManage() {
     return result.success;
   }
 
-  const save = (state: AccountManageState): Promise<boolean> => {
+  const save = async (state: AccountManageState): Promise<boolean> => {
     switch (state.type) {
       case 'account':
         return saveAccount(state);
@@ -270,12 +317,14 @@ export function useAccountManage() {
         return saveValidator(state);
       case 'xpub':
         return saveXpub(state);
+      case 'group':
+        return saveAgnosticAccount(state);
     }
   };
 
   return {
-    pending,
     errorMessages,
+    pending,
     save,
   };
 }

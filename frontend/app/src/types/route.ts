@@ -1,48 +1,50 @@
 import { z } from 'zod';
-import {
-  Blockchain,
-} from '@rotki/common/lib/blockchain';
-import type { Dictionary } from 'vue-router/types/router';
-import type { Account } from '@rotki/common/lib/account';
+import { type Account, Blockchain } from '@rotki/common';
+import { arrayify } from '@/utils/array';
+import type { LocationQueryValue, LocationQueryValueRaw } from 'vue-router';
 
-export type LocationQuery = Dictionary<
-  string | (string | null)[] | null | undefined | boolean
->;
+export type LocationQuery = Record<string, LocationQueryValue | LocationQueryValue[]>;
 
-export type RawLocationQuery = Dictionary<
-  string | (string | null)[] | null | undefined
->;
+export type RawLocationQuery = Record<string, LocationQueryValueRaw | LocationQueryValueRaw[] | boolean>;
 
-export const RouterPaginationOptionsSchema = z.object({
-  itemsPerPage: z
-    .string()
-    .transform(val => parseInt(val))
-    .optional(),
-  page: z
-    .string()
-    .transform(val => parseInt(val))
-    .optional(),
-  sortBy: z
-    .array(z.string())
+export const CommaSeparatedStringSchema = z.string()
+  .optional()
+  .transform(val => (val ? val.split(',') : []));
+
+export const RouterExpandedIdsSchema = z.object({
+  expanded: CommaSeparatedStringSchema,
+});
+
+const SortOrderSchema = z.enum(['asc', 'desc']);
+
+export const HistorySortOrderSchema = z.object({
+  sort: z.array(z.string())
     .or(z.string())
-    .transform(val => (Array.isArray(val) ? val : [val]))
+    .transform(arrayify)
     .optional(),
-  sortDesc: z
-    .array(z.string())
-    .or(z.string())
-    .transform((val) => {
-      const arr = Array.isArray(val) ? val : [val];
-      return arr.map(entry => entry === 'true');
-    })
+  sortOrder: z.array(SortOrderSchema)
+    .or(SortOrderSchema)
+    .transform(arrayify)
     .optional(),
 });
 
+export const HistoryPaginationSchema = z.object({
+  limit: z.coerce
+    .number()
+    .min(1)
+    .optional(),
+  page: z.coerce
+    .number()
+    .min(1)
+    .optional()
+    .default(1),
+});
+
 export const RouterAccountsSchema = z.object({
-  accounts: z
-    .array(z.string())
+  accounts: z.array(z.string())
     .or(z.string())
     .transform((val) => {
-      const arr = Array.isArray(val) ? val : [val];
+      const arr = arrayify(val);
       const mapped: Account[] = [];
       arr.forEach((entry) => {
         const parsed = entry.split('#');

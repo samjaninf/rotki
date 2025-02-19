@@ -1,57 +1,70 @@
 <script setup lang="ts">
-import type { VueConstructor } from 'vue';
+import AppImage from '@/components/common/AppImage.vue';
+import type { RuiIcons } from '@rotki/ui-library';
+import type { Component } from 'vue';
 
 withDefaults(
   defineProps<{
     mini?: boolean;
-    icon?: string;
+    icon?: RuiIcons;
     text: string;
     image?: string;
-    iconComponent?: VueConstructor | null;
+    iconComponent?: Component;
     active?: boolean;
     subMenu?: boolean;
     parent?: boolean;
   }>(),
   {
-    mini: false,
-    icon: '',
-    image: '',
-    iconComponent: null,
     active: false,
-    subMenu: false,
+    icon: undefined,
+    iconComponent: undefined,
+    image: '',
+    mini: false,
     parent: false,
+    subMenu: false,
   },
 );
 
 const [DefineImage, ReuseImage] = createReusableTemplate();
 
+const outer = ref<HTMLDivElement>();
 const inner = ref<HTMLDivElement>();
 const { height: innerHeight } = useElementSize(inner);
-const subMenuExpanded: Ref<boolean> = ref(false);
+const subMenuExpanded = ref<boolean>(false);
 
 function expandParent() {
   if (!get(parent))
     return;
 
-  set(subMenuExpanded, !get(subMenuExpanded));
-}
+  const newState = !get(subMenuExpanded);
+  set(subMenuExpanded, newState);
 
-const css = useCssModule();
+  if (newState) {
+    setTimeout(() => {
+      get(outer)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 150);
+  }
+}
 </script>
 
 <template>
-  <div>
+  <div ref="outer">
     <div
       :class="[
-        css.wrapper,
-        { [css.active]: active, [css.active__parent]: active && parent, [css.mini]: mini, [css.submenu]: subMenu },
+        $style.wrapper,
+        {
+          [$style.active]: active,
+          [$style.active__parent]: active && parent,
+          [$style.mini]: mini,
+          [$style.submenu]: subMenu,
+        },
       ]"
       @click="expandParent()"
     >
       <DefineImage>
         <div
           :class="[
-            css.icon,
+            $style.icon,
             {
               ['mr-2']: subMenu && !mini,
               ['mr-3']: !subMenu && !mini,
@@ -65,7 +78,7 @@ const css = useCssModule();
             contain
             width="24px"
             :src="image"
-            :class="css.image"
+            :class="$style.image"
           />
           <Component
             :is="iconComponent"
@@ -73,7 +86,7 @@ const css = useCssModule();
             :active="active"
           />
           <RuiIcon
-            v-else
+            v-else-if="icon"
             :name="icon"
           />
         </div>
@@ -90,16 +103,16 @@ const css = useCssModule();
       </RuiTooltip>
       <template v-else>
         <ReuseImage />
-        <div class="flex grow py-0 capitalize navigation-menu-item__text">
+        <div class="flex grow py-0 navigation-menu-item__text">
           {{ text }}
         </div>
       </template>
       <div
         v-if="parent && !mini"
-        :class="css.toggle"
+        :class="$style.toggle"
       >
         <RuiIcon
-          name="arrow-down-s-line"
+          name="lu-chevron-down"
           class="transition-all transform"
           :class="{ 'rotate-180': subMenuExpanded }"
         />
@@ -108,9 +121,9 @@ const css = useCssModule();
     <div
       v-if="parent"
       :class="[
-        css['submenu-wrapper'],
+        $style['submenu-wrapper'],
         {
-          [`${css.expanded} submenu-wrapper__expanded`]: subMenuExpanded,
+          [`${$style.expanded} submenu-wrapper__expanded`]: subMenuExpanded,
         },
       ]"
       class="submenu-wrapper"
@@ -135,7 +148,7 @@ const css = useCssModule();
   }
 
   .toggle {
-    @apply text-rui-text-secondary;
+    @apply text-rui-grey-500;
   }
 
   &.active {
@@ -152,14 +165,15 @@ const css = useCssModule();
     &__parent {
       @apply font-medium bg-transparent text-rui-primary hover:bg-rui-grey-100;
 
-      .icon, .toggle {
+      .icon,
+      .toggle {
         @apply text-rui-primary;
       }
     }
   }
 
   &.submenu {
-    @apply pl-12 text-sm;
+    @apply pl-12 pr-0 text-sm;
   }
 
   &.mini {

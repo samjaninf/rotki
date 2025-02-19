@@ -1,18 +1,19 @@
-\
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { Blockchain } from '@rotki/common';
 import { helpers, required } from '@vuelidate/validators';
-import { isEmpty } from 'lodash-es';
+import { isEmpty } from 'es-toolkit/compat';
 import useVuelidate from '@vuelidate/core';
-import { XpubPrefix, type XpubType } from '@/utils/xpub';
+import { XpubPrefix, type XpubType, getKeyType, getPrefix, isPrefixed, keyType } from '@/utils/xpub';
 import { toMessages } from '@/utils/validation';
+import { trimOnPaste } from '@/utils/event';
 import type { ValidationErrors } from '@/types/api/errors';
 import type { BtcChains } from '@/types/blockchain/chains';
 import type { XpubPayload } from '@/types/blockchain/accounts';
 
+const errors = defineModel<ValidationErrors>('errorMessages', { required: true });
+
 const props = defineProps<{
   disabled: boolean;
-  errorMessages: ValidationErrors;
   xpub: XpubPayload | undefined;
   blockchain: BtcChains;
 }>();
@@ -23,18 +24,16 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const { xpub, disabled, blockchain, errorMessages } = toRefs(props);
+const { blockchain, disabled, xpub } = toRefs(props);
 
-const xpubKey = ref('');
-const derivationPath = ref('');
+const xpubKey = ref<string>('');
+const derivationPath = ref<string>('');
 const xpubKeyPrefix = ref<XpubPrefix>(XpubPrefix.XPUB);
 const advanced = ref(false);
 
 function updateXpub(event?: XpubPayload) {
   emit('update:xpub', event);
 }
-
-const isPrefixed = (value: string) => value.match(/([x-z]pub)(.*)/);
 
 function setXpubKeyType(value: string) {
   const match = isPrefixed(value);
@@ -62,52 +61,49 @@ const keyTypeListData = computed<XpubType[]>(() => {
   if (get(blockchain) === Blockchain.BTC)
     return keyType;
 
-  return keyType.filter(
-    item => ![XpubPrefix.ZPUB, XpubPrefix.P2TR].includes(item.value),
-  );
+  return keyType.filter(item => ![XpubPrefix.ZPUB, XpubPrefix.P2TR].includes(item.value));
 });
 
 const rules = {
-  xpub: {
-    required: helpers.withMessage(
-      t('account_form.validation.xpub_non_empty'),
-      required,
-    ),
-  },
   derivationPath: {
     basic: () => true,
+  },
+  xpub: {
+    required: helpers.withMessage(t('account_form.validation.xpub_non_empty'), required),
   },
 };
 
 const v$ = useVuelidate(
   rules,
   {
-    xpub,
     derivationPath,
+    xpub,
   },
   {
     $autoDirty: true,
+    $externalResults: errors,
     $stopPropagation: true,
-    $externalResults: errorMessages,
   },
 );
 
-async function validate(): Promise<boolean> {
+function validate(): Promise<boolean> {
   return get(v$).$validate();
 }
 
-watch(errorMessages, (errors) => {
+watch(errors, (errors) => {
   if (!isEmpty(errors))
     get(v$).$validate();
 });
 
-watch(xpub, (xpub) => {
-  set(xpubKey, xpub?.xpub);
+watchImmediate(xpub, (xpub) => {
+  set(xpubKey, xpub?.xpub || '');
   const prefix = getPrefix(xpub?.xpubType);
   if (prefix !== XpubPrefix.XPUB)
     set(xpubKeyPrefix, prefix);
 
-  set(derivationPath, xpub?.derivationPath);
+  const derivation = get(derivationPath);
+  if (derivation && derivation.replace(/'/g, '').replace(/\/$/, '') !== xpub?.derivationPath)
+    set(derivationPath, xpub?.derivationPath || '');
 });
 
 watch(blockchain, () => {
@@ -121,22 +117,12 @@ watch([xpubKeyPrefix, xpubKey, derivationPath], ([prefix, xpub, path]) => {
   let payload: XpubPayload | undefined;
   if (xpub) {
     payload = {
+      derivationPath: path?.replace(/'/g, '').replace(/\/$/, '') ?? undefined,
       xpub: xpub.trim(),
-      derivationPath: path ?? undefined,
       xpubType: getKeyType(prefix as XpubPrefix),
     };
   }
   updateXpub(payload);
-});
-
-onMounted(() => {
-  const payload = get(xpub);
-  set(xpubKey, payload?.xpub || '');
-  const prefix = getPrefix(payload?.xpubType);
-  if (prefix !== XpubPrefix.XPUB)
-    set(xpubKeyPrefix, prefix);
-
-  set(derivationPath, payload?.derivationPath);
 });
 
 defineExpose({
@@ -145,7 +131,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="mt-2">
+  <div class="mt-2 flex flex-col gap-4">
     <div class="flex gap-4">
       <RuiMenuSelect
         v-model="xpubKeyPrefix"
@@ -184,11 +170,11 @@ defineExpose({
               >
                 <RuiIcon
                   v-if="advanced"
-                  name="arrow-up-s-line"
+                  name="lu-chevron-up"
                 />
                 <RuiIcon
                   v-else
-                  name="arrow-down-s-line"
+                  name="lu-chevron-down"
                 />
               </RuiButton>
             </div>

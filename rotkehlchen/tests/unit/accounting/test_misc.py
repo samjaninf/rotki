@@ -4,14 +4,17 @@ import pytest
 
 from rotkehlchen.accounting.mixins.event import AccountingEventMixin, AccountingEventType
 from rotkehlchen.accounting.pnl import PNL, PnlTotals
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_ETH, A_ETH2, A_EUR, A_KFEE, A_USD, A_USDT
 from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.tests.utils.accounting import accounting_history_process, check_pnls_and_csv
+from rotkehlchen.tests.utils.accounting import (
+    accounting_history_process,
+    check_pnls_and_csv,
+    get_calculated_asset_amount,
+)
 from rotkehlchen.tests.utils.constants import A_GBP
 from rotkehlchen.tests.utils.history import prices
 from rotkehlchen.tests.utils.messages import no_message_errors
@@ -38,7 +41,7 @@ def test_kfee_price_in_accounting(accountant, google_service):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(amount=ONE),
+            amount=ONE,
         ), HistoryEvent(
             event_identifier='2',
             sequence_index=0,
@@ -47,7 +50,7 @@ def test_kfee_price_in_accounting(accountant, google_service):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_KFEE,
-            balance=Balance(amount=FVal(1000)),
+            amount=FVal(1000),
         ), Trade(
             timestamp=Timestamp(1609537953),
             location=Location.KRAKEN,  # PNL: 598.26 ETH/EUR -> PNL: 0.02 * 598.26 - 0.02*178.615 ->  8.3929  # noqa: E501
@@ -128,7 +131,7 @@ def test_fees_count_in_cost_basis(accountant, google_service):
     expected_pnls = PnlTotals({
         AccountingEventType.TRADE: PNL(taxable=FVal('619.025'), free=ZERO),
     })
-    assert accountant.pots[0].cost_basis.get_calculated_asset_amount(A_ETH) is None
+    assert get_calculated_asset_amount(accountant.pots[0].cost_basis, A_ETH) is None
     warnings = accountant.msg_aggregator.consume_warnings()
     assert len(warnings) == 0
     check_pnls_and_csv(accountant, expected_pnls, google_service)
@@ -150,7 +153,7 @@ def test_fees_in_received_asset(accountant, google_service):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(amount=ONE),
+            amount=ONE,
         ), Trade(
             # Sell 0.02 ETH for USDT with rate 1000 USDT/ETH and 0.10 USDT fee
             # So acquired 20 USDT for 0.02 ETH + 0.10 USDT
@@ -176,7 +179,7 @@ def test_fees_in_received_asset(accountant, google_service):
         history_list=history,
     )
     no_message_errors(accountant.msg_aggregator)
-    assert accountant.pots[0].cost_basis.get_calculated_asset_amount(A_USDT.identifier).is_close('19.90')  # noqa: E501
+    assert get_calculated_asset_amount(accountant.pots[0].cost_basis, A_USDT).is_close('19.90')
     expected_pnls = PnlTotals({
         AccountingEventType.TRADE: PNL(taxable=ZERO, free=FVal('8.3929')),
         AccountingEventType.FEE: PNL(taxable=FVal('-0.059826'), free=ZERO),

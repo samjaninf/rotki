@@ -1,10 +1,6 @@
-import type {
-  ProfitLossEvent,
-  ProfitLossOverviewItem,
-  SelectedReport,
-} from '@/types/reports';
+import type { ProfitLossEvent, ProfitLossOverviewItem, Report, SelectedReport } from '@/types/reports';
 
-export function calculateTotalProfitLoss(item: SelectedReport): ProfitLossOverviewItem {
+export function calculateTotalProfitLoss(item: Report | SelectedReport): ProfitLossOverviewItem {
   let totalFree = Zero;
   let totalTaxable = Zero;
   for (const key in item.overview) {
@@ -19,6 +15,6 @@ export function calculateTotalProfitLoss(item: SelectedReport): ProfitLossOvervi
 }
 
 // TODO: Figure out in the future, how to avoid hardcode
-export function isTransactionEvent(item: ProfitLossEvent) {
+export function isTransactionEvent(item: ProfitLossEvent): boolean {
   return item.type === 'transaction event';
 }

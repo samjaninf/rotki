@@ -3,12 +3,14 @@ from unittest.mock import patch
 
 import pytest
 
-from rotkehlchen.accounting.structures.balance import Balance
+from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.ethereum.modules.gitcoin.constants import GITCOIN_GRANTS_OLD1
 from rotkehlchen.chain.evm.constants import GENESIS_HASH
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.l2_with_l1_fees.types import L2WithL1FeesTransaction
 from rotkehlchen.chain.evm.types import EvmAccount, string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH, A_SAI
+from rotkehlchen.db.constants import EVMTX_DECODED, EVMTX_SPAM
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import EvmEventFilterQuery, EvmTransactionsFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -20,7 +22,7 @@ from rotkehlchen.history.events.structures.base import (
     HistoryEventType,
 )
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
-from rotkehlchen.tests.utils.ethereum import INFURA_ETH_NODE
+from rotkehlchen.tests.utils.ethereum import INFURA_ETH_NODE, get_decoded_events_of_transaction
 from rotkehlchen.types import (
     ChainID,
     ChecksumEvmAddress,
@@ -35,6 +37,7 @@ from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.decoding.decoder import EthereumTransactionDecoder
+    from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.chain.ethereum.transactions import EthereumTransactions
     from rotkehlchen.chain.optimism.decoding.decoder import OptimismTransactionDecoder
     from rotkehlchen.chain.optimism.transactions import OptimismTransactions
@@ -133,7 +136,7 @@ def test_tx_decode(ethereum_transaction_decoder, database):
             for tx in transactions:
                 receipt = dbevmtx.get_receipt(cursor, tx.tx_hash, ChainID.ETHEREUM)
                 assert receipt is not None, 'all receipts should be queried in the test DB'
-                events, _ = decoder._get_or_decode_transaction_events(tx, receipt, ignore_cache=False)  # noqa: E501
+                events, _, _ = decoder._get_or_decode_transaction_events(tx, receipt, ignore_cache=False)  # noqa: E501
                 if tx.tx_hash == approve_tx_hash:
                     assert len(events) == 2
                     assert_events_equal(events[0], EvmEvent(
@@ -144,9 +147,9 @@ def test_tx_decode(ethereum_transaction_decoder, database):
                         location=Location.ETHEREUM,
                         location_label=addr1,
                         asset=A_ETH,
-                        balance=Balance(amount=FVal('0.000030921')),
+                        amount=FVal('0.000030921'),
                         # The no-member is due to https://github.com/PyCQA/pylint/issues/3162
-                        notes='Burned 0.000030921 ETH for gas',
+                        notes='Burn 0.000030921 ETH for gas',
                         event_type=HistoryEventType.SPEND,
                         event_subtype=HistoryEventSubType.FEE,
                         counterparty=CPT_GAS,
@@ -159,11 +162,11 @@ def test_tx_decode(ethereum_transaction_decoder, database):
                         location=Location.ETHEREUM,
                         location_label=addr1,
                         asset=A_SAI,
-                        balance=Balance(amount=1),
-                        notes=f'Set SAI spending approval of {addr1} by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE to 1',  # noqa: E501
+                        amount=1,
+                        notes=f'Set SAI spending approval of {addr1} by {GITCOIN_GRANTS_OLD1} to 1',  # noqa: E501
                         event_type=HistoryEventType.INFORMATIONAL,
                         event_subtype=HistoryEventSubType.APPROVE,
-                        address='0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE',
+                        address=GITCOIN_GRANTS_OLD1,
                     ))
 
             assert decode_mock.call_count == len(transactions)
@@ -171,13 +174,13 @@ def test_tx_decode(ethereum_transaction_decoder, database):
             for tx in transactions:
                 receipt = dbevmtx.get_receipt(cursor, tx.tx_hash, ChainID.ETHEREUM)
                 assert receipt is not None, 'all receipts should be queried in the test DB'
-                events, _ = decoder._get_or_decode_transaction_events(tx, receipt, ignore_cache=False)  # noqa: E501
+                events, _, _ = decoder._get_or_decode_transaction_events(tx, receipt, ignore_cache=False)  # noqa: E501
         assert decode_mock.call_count == len(transactions)
 
     dbevents = DBHistoryEvents(database)
     # customize one evm event to check that the logic for them works correctly
-    success, _ = dbevents.edit_history_event(events[1])
-    assert success is True
+    with database.user_write() as write_cursor:
+        assert dbevents.edit_history_event(write_cursor=write_cursor, event=events[1]) is None
 
     with database.user_write() as write_cursor:
         assert write_cursor.execute('SELECT COUNT(*) from history_events').fetchone()[0] == 2
@@ -191,6 +194,7 @@ def test_tx_decode(ethereum_transaction_decoder, database):
         assert write_cursor.execute('SELECT COUNT(*) from evm_tx_mappings').fetchone()[0] == 0
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x9531C059098e3d194fF87FebB587aB07B30B1306', '0xc37b40ABdB939635068d3c5f13E7faF686F03B65']])  # noqa: E501
 @pytest.mark.parametrize('optimism_accounts', [['0x9531C059098e3d194fF87FebB587aB07B30B1306']])
 def test_query_and_decode_transactions_works_with_different_chains(
@@ -214,24 +218,36 @@ def test_query_and_decode_transactions_works_with_different_chains(
     optimism_transactions.get_receipts_for_transactions_missing_them()
     assert dbevmtx.get_transaction_hashes_no_receipt(tx_filter_query=None, limit=None) == [evmhash_eth_yabir]  # noqa: E501
 
-    # check that the transactions have not been decoded
     hashes = dbl2withl1feestx.get_transaction_hashes_not_decoded(chain_id=ChainID.OPTIMISM, limit=None)  # noqa: E501
     assert len(hashes) == 1
     hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
     assert len(hashes) == 1
 
-    # decode evm transactions using the optimism decoder and without providing any tx hash
-    optimism_transaction_decoder.decode_transaction_hashes(ignore_cache=False, tx_hashes=None)
+    # get the receipts for the last address, which should mark 1 more transaction as not decoded
+    eth_transactions.get_receipts_for_transactions_missing_them(addresses=[ethereum_accounts[1]])
+    hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
+    assert len(hashes) == 2
 
-    # verify that the optimism transactions got decoded but not the
-    # ethereum one (would raise an error if tried)
-    hashes = dbl2withl1feestx.get_transaction_hashes_not_decoded(chain_id=ChainID.OPTIMISM, limit=None)  # noqa: E501
-    assert len(hashes) == 0
+    # see that setting the spam attribute alone does not count it as decoded
+    with database.user_write() as write_cursor:
+        write_cursor.execute(
+            'INSERT INTO evm_tx_mappings(tx_id, value) VALUES(?, ?)',
+            (3, EVMTX_SPAM),
+        )
+    hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
+    assert len(hashes) == 2
+
+    # see that setting the decoded attribute counts properly
+    with database.user_write() as write_cursor:
+        write_cursor.execute(
+            'INSERT INTO evm_tx_mappings(tx_id, value) VALUES(?, ?)',
+            (3, EVMTX_DECODED),
+        )
     hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
     assert len(hashes) == 1
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [[
     '0x756F45E3FA69347A9A973A725E3C98bC4db0b5a0',
     '0x9328D55ccb3FCe531f199382339f0E576ee840A3',
@@ -254,13 +270,11 @@ def test_genesis_remove_address(
 
     def get_genesis_events() -> list[EvmEvent]:
         with database.conn.read_ctx() as cursor:
-            events = dbevents.get_history_events(
+            return dbevents.get_history_events(
                 cursor=cursor,
                 filter_query=EvmEventFilterQuery.make(tx_hashes=[GENESIS_HASH]),
                 has_premium=True,
             )
-
-        return events
 
     def delete_transactions_for_address(address: ChecksumEvmAddress) -> None:
         with database.user_write() as write_cursor:
@@ -294,3 +308,22 @@ def test_genesis_remove_address(
         )
 
     assert len(genesis_tx) == 0, 'Genesis transaction should have been deleted'
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('ethereum_accounts', [['0xcBe21204C4b9F1810363D69773b74203376681a2']])
+def test_token_detection_after_decoding(
+        database: 'DBHandler',
+        ethereum_inquirer: 'EthereumInquirer',
+        ethereum_accounts: 'list[ChecksumEvmAddress]',
+) -> None:
+    """Test that the tokens found in new IN history events are saved as detected tokens."""
+    with patch.object(database, 'save_tokens_for_address') as save_tokens_mock:
+        get_decoded_events_of_transaction(
+            evm_inquirer=ethereum_inquirer,
+            tx_hash=deserialize_evm_tx_hash('0x21713730e79832ad0a88c9695745a95cd6e475fe69232f2aa8993ca98e6db92f'),
+        )
+        assert save_tokens_mock.call_count == 1
+        assert save_tokens_mock.call_args_list[0].kwargs['address'] == ethereum_accounts[0]
+        assert save_tokens_mock.call_args_list[0].kwargs['blockchain'] == SupportedBlockchain.ETHEREUM  # noqa: E501
+        assert save_tokens_mock.call_args_list[0].kwargs['tokens'] == [Asset('eip155:1/erc20:0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c')]  # noqa: E501

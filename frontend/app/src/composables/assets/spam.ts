@@ -1,39 +1,46 @@
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { useWhitelistedAssetsStore } from '@/store/assets/whitelisted';
+import { useNotificationsStore } from '@/store/notifications';
+import { useAssetSpamApi } from '@/composables/api/assets/spam';
 import type { ActionStatus } from '@/types/action';
 
-export function useSpamAsset() {
+interface UseSpamAssetReturn {
+  markAssetsAsSpam: (tokens: string[]) => Promise<ActionStatus>;
+  removeAssetFromSpamList: (token: string) => Promise<ActionStatus>;
+}
+
+export function useSpamAsset(): UseSpamAssetReturn {
   const { notify } = useNotificationsStore();
   const { t } = useI18n();
 
   const {
-    markAssetAsSpam: markAssetAsSpamCaller,
+    markAssetsAsSpam: markAssetAsSpamCaller,
     removeAssetFromSpamList: removeAssetFromSpamListCaller,
   } = useAssetSpamApi();
 
   const { fetchWhitelistedAssets } = useWhitelistedAssetsStore();
   const { fetchIgnoredAssets } = useIgnoredAssetsStore();
 
-  const markAssetAsSpam = async (token: string): Promise<ActionStatus> => {
+  const markAssetsAsSpam = async (tokens: string[]): Promise<ActionStatus> => {
     try {
-      await markAssetAsSpamCaller(token);
+      await markAssetAsSpamCaller(tokens);
       await fetchWhitelistedAssets();
       await fetchIgnoredAssets();
       return { success: true };
     }
     catch (error: any) {
       notify({
-        title: t('ignore.spam.failed.mark_title'),
+        display: true,
         message: t('ignore.spam.failed.mark_message', {
           message: error.message,
         }),
-        display: true,
+        title: t('ignore.spam.failed.mark_title'),
       });
-      return { success: false, message: error.message };
+      return { message: error.message, success: false };
     }
   };
 
-  const removeAssetFromSpamList = async (
-    token: string,
-  ): Promise<ActionStatus> => {
+  const removeAssetFromSpamList = async (token: string): Promise<ActionStatus> => {
     try {
       await removeAssetFromSpamListCaller(token);
       await fetchWhitelistedAssets();
@@ -42,18 +49,18 @@ export function useSpamAsset() {
     }
     catch (error: any) {
       notify({
-        title: t('ignore.spam.failed.unmark_title'),
+        display: true,
         message: t('ignore.spam.failed.unmark_message', {
           message: error.message,
         }),
-        display: true,
+        title: t('ignore.spam.failed.unmark_title'),
       });
-      return { success: false, message: error.message };
+      return { message: error.message, success: false };
     }
   };
 
   return {
-    markAssetAsSpam,
+    markAssetsAsSpam,
     removeAssetFromSpamList,
   };
 }

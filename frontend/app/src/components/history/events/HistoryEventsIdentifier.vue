@@ -1,36 +1,58 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { useBreakpoint } from '@rotki/ui-library-compat';
-import { toSentenceCase } from '@/utils/text';
+import { Blockchain } from '@rotki/common';
+import {
+  isAssetMovementEventRef,
+  isEthBlockEventRef,
+  isEthDepositEventRef,
+  isEvmEventRef,
+  isWithdrawalEventRef,
+} from '@/utils/history/events';
+import { useSupportedChains } from '@/composables/info/chains';
+import HashLink from '@/components/helper/HashLink.vue';
 import type { HistoryEventEntry } from '@/types/history/events';
 
 const props = defineProps<{
   event: HistoryEventEntry;
 }>();
 
+const { t } = useI18n();
+
 const { event } = toRefs(props);
 
-const translationKey: ComputedRef<string> = computed(
-  () => `transactions.events.headers.${toSnakeCase(get(event).entryType)}`,
-);
-
 const { getChain } = useSupportedChains();
+const { is2xlAndUp } = useBreakpoint();
 
-const evmOrDepositEvent = computed(
-  () => get(isEvmEventRef(event)) || get(isEthDepositEventRef(event)),
-);
+const translationKey = computed<string>(() => `transactions.events.headers.${toSnakeCase(get(event).entryType)}`);
+
+const evmOrDepositEvent = computed(() => get(isEvmEventRef(event)) || get(isEthDepositEventRef(event)));
 const blockEvent = isEthBlockEventRef(event);
 const withdrawEvent = isWithdrawalEventRef(event);
+const assetMovementEvent = isAssetMovementEventRef(event);
 
-const css = useCssModule();
-const { is2xlAndUp } = useBreakpoint();
+/**
+ * The key is used to avoid an issue where the block event identifier would be reused
+ * to display a hash event identifier resulting in a numerical display instead.
+ */
+const key = computed(() => {
+  if (get(evmOrDepositEvent))
+    return 'tx_hash';
+  else if (get(blockEvent))
+    return 'block';
+  else if (get(withdrawEvent))
+    return 'withdraw';
+  else if (get(assetMovementEvent))
+    return 'asset_movement';
+  else
+    return undefined;
+});
 </script>
 
 <template>
-  <i18n
-    :path="translationKey"
-    tag="span"
-    class="flex items-center gap-2"
+  <i18n-t
+    :key="key"
+    :keypath="translationKey"
+    tag="div"
+    class="flex flex-wrap items-center gap-x-1.5 gap-y-1"
   >
     <template #location>
       {{ toSentenceCase(event.location) }}
@@ -41,7 +63,7 @@ const { is2xlAndUp } = useBreakpoint();
       #blockNumber
     >
       <HashLink
-        :class="css.address__content"
+        :class="$style.wrapper"
         :text="blockEvent.blockNumber.toString()"
         :show-icon="false"
         type="block"
@@ -53,7 +75,7 @@ const { is2xlAndUp } = useBreakpoint();
       #validatorIndex
     >
       <HashLink
-        :class="css.address__content"
+        :class="$style.wrapper"
         :text="withdrawEvent.validatorIndex.toString()"
         :show-icon="false"
         :chain="Blockchain.ETH2"
@@ -66,7 +88,7 @@ const { is2xlAndUp } = useBreakpoint();
       #txHash
     >
       <HashLink
-        :class="css.address__content"
+        :class="$style.wrapper"
         :text="evmOrDepositEvent.txHash"
         :show-icon="false"
         type="transaction"
@@ -75,16 +97,43 @@ const { is2xlAndUp } = useBreakpoint();
         :full-address="is2xlAndUp"
       />
     </template>
-  </i18n>
+
+    <template
+      v-else-if="assetMovementEvent && assetMovementEvent.extraData?.transactionId"
+      #txHash
+    >
+      <HashLink
+        :class="$style.wrapper"
+        :text="assetMovementEvent!.extraData?.transactionId || undefined"
+        :show-icon="false"
+        type="transaction"
+        :truncate-length="8"
+        :full-address="is2xlAndUp"
+        copy-only
+      />
+    </template>
+
+    <template
+      v-if="assetMovementEvent"
+      #verb
+    >
+      {{
+        assetMovementEvent.eventType === 'withdrawal'
+          ? t('transactions.events.headers.asset_movement_event_withdraw')
+          : t('transactions.events.headers.asset_movement_event_deposit')
+      }}
+    </template>
+  </i18n-t>
 </template>
 
 <style lang="scss" module>
-.address {
-  &__content {
-    background: var(--v-rotki-light-grey-darken1);
-    padding: 0.125rem 0.25rem 0.125rem 0.5rem;
-    border-radius: 3rem;
-    margin: 2px;
+.wrapper {
+  @apply bg-rui-grey-300 pr-1 pl-2 rounded-full m-0.5;
+}
+
+:global(.dark) {
+  .wrapper {
+    @apply bg-rui-grey-800;
   }
 }
 </style>

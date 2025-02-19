@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import BalanceDisplay from '@/components/display/BalanceDisplay.vue';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
 import type { DefiAsset } from '@/types/defi/overview';
 
 const props = defineProps<{
@@ -7,9 +9,7 @@ const props = defineProps<{
 
 const { asset } = toRefs(props);
 
-const evmIdentifier: ComputedRef<string> = computed(() =>
-  createEvmIdentifierFromAddress(get(asset).tokenAddress),
-);
+const evmIdentifier = computed<string>(() => createEvmIdentifierFromAddress(get(asset).tokenAddress));
 </script>
 
 <template>

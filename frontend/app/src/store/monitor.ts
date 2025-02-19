@@ -1,10 +1,26 @@
+import { startPromise } from '@shared/utils';
+import { isEqual } from 'es-toolkit';
+import { logger } from '@/utils/logging';
+import { BalanceSource } from '@/types/settings/frontend-settings';
+import { useExchangeBalancesStore } from '@/store/balances/exchanges';
+import { useManualBalancesStore } from '@/store/balances/manual';
+import { useWatchersStore } from '@/store/session/watchers';
+import { usePeriodicStore } from '@/store/session/periodic';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useWebsocketStore } from '@/store/websocket';
+import { useTaskStore } from '@/store/tasks';
+import { useBalances } from '@/composables/balances';
+import { useBlockchainBalances } from '@/composables/blockchain/balances';
+import { useMessageHandling } from '@/composables/message-handling';
+
 const PERIODIC = 'periodic';
 const TASK = 'task';
 const WATCHER = 'watcher';
 const BALANCES = 'balances';
 
 export const useMonitorStore = defineStore('monitor', () => {
-  const monitors: Ref<Record<string, any>> = ref({});
+  const monitors = ref<Record<string, any>>({});
 
   const { canRequestData } = storeToRefs(useSessionAuthStore());
   const { check } = usePeriodicStore();
@@ -12,10 +28,12 @@ export const useMonitorStore = defineStore('monitor', () => {
   const { fetchWatchers } = useWatchersStore();
   const { monitor } = useTaskStore();
   const { autoRefresh } = useBalances();
+  const { fetchManualBalances } = useManualBalancesStore();
+  const { fetchConnectedExchangeBalances } = useExchangeBalancesStore();
+  const { fetchBlockchainBalances } = useBlockchainBalances();
 
-  const { queryPeriod, refreshPeriod } = storeToRefs(
-    useFrontendSettingsStore(),
-  );
+  const frontendStore = useFrontendSettingsStore();
+  const { balanceUsdValueThreshold, queryPeriod, refreshPeriod } = storeToRefs(frontendStore);
 
   const ws = useWebsocketStore();
   const { connected } = storeToRefs(ws);
@@ -114,10 +132,24 @@ export const useMonitorStore = defineStore('monitor', () => {
     start(true);
   };
 
+  watch(balanceUsdValueThreshold, (current, old) => {
+    if (!isEqual(current[BalanceSource.MANUAL], old[BalanceSource.MANUAL])) {
+      startPromise(fetchManualBalances(true));
+    }
+
+    if (!isEqual(current[BalanceSource.EXCHANGES], old[BalanceSource.EXCHANGES])) {
+      startPromise(fetchConnectedExchangeBalances(false));
+    }
+
+    if (!isEqual(current[BalanceSource.BLOCKCHAIN], old[BalanceSource.BLOCKCHAIN])) {
+      startPromise(fetchBlockchainBalances());
+    }
+  });
+
   return {
+    restart,
     start,
     stop,
-    restart,
   };
 });
 

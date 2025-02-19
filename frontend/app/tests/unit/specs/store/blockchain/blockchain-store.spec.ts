@@ -1,6 +1,7 @@
-import { beforeEach, describe } from 'vitest';
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { Blockchain } from '@rotki/common';
 import { useBlockchainStore } from '@/store/blockchain';
+import type { AddressData, BlockchainAccount } from '@/types/blockchain/accounts';
 import type { AssetPrices } from '@/types/prices';
 
 describe('useBlockchainStore', () => {
@@ -19,7 +20,6 @@ describe('useBlockchainStore', () => {
           value: bigNumberify(2500),
           usdPrice: null,
           isManualPrice: false,
-          isCurrentCurrency: true,
         },
       };
 
@@ -50,7 +50,7 @@ describe('useBlockchainStore', () => {
 
       store.updatePrices(assetPrices);
 
-      expect(store.totals.eth.ETH).toEqual({
+      expect(store.aggregatedTotals.ETH).toEqual({
         amount: bigNumberify(10),
         usdValue: bigNumberify(25000),
       });
@@ -60,5 +60,47 @@ describe('useBlockchainStore', () => {
         usdValue: bigNumberify(25000),
       });
     });
+  });
+
+  it('removeAccounts', () => {
+    const account: BlockchainAccount<AddressData> = {
+      data: {
+        type: 'address',
+        address: '0x123',
+      },
+      chain: 'eth',
+      nativeAsset: 'ETH',
+    };
+    const balances = {
+      '0x123': {
+        assets: {
+          ETH: {
+            amount: bigNumberify(1),
+            usdValue: bigNumberify(2501),
+          },
+        },
+        liabilities: {},
+      },
+    };
+    store.updateAccounts('eth', [account]);
+    store.updateBalances('eth', {
+      perAccount: {
+        eth: balances,
+      },
+      totals: {
+        assets: {
+          ETH: {
+            amount: bigNumberify(1),
+            usdValue: bigNumberify(2501),
+          },
+        },
+        liabilities: {},
+      },
+    });
+    expect(store.accounts).toMatchObject({ eth: [account] });
+    expect(store.balances).toMatchObject({ eth: balances });
+    store.removeAccounts({ addresses: ['0x123'], chains: ['eth'] });
+    expect(store.accounts).toMatchObject({ eth: [] });
+    expect(store.balances).toMatchObject({ eth: {} });
   });
 });

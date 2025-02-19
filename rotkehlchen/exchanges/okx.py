@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlencode, urljoin
 
@@ -12,20 +14,26 @@ import requests
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.converters import asset_from_okx
 from rotkehlchen.constants import ZERO
+from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address
 from rotkehlchen.history.deserialization import deserialize_price
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    create_asset_movement_with_fee,
+)
+from rotkehlchen.history.events.structures.base import HistoryBaseEntry
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_asset_amount, deserialize_fee
 from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
-    AssetMovementCategory,
     ExchangeAuthCredentials,
     Fee,
     Location,
@@ -39,10 +47,18 @@ from rotkehlchen.utils.misc import ts_ms_to_sec, ts_sec_to_ms
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.history.events.structures.base import HistoryEvent
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+
+class OkxEndpoint(Enum):
+    CURRENCIES = '/api/v5/asset/currencies'
+    TRADING_BALANCE = '/api/v5/account/balance'
+    FUNDING_BALANCE = '/api/v5/asset/balances'
+    TRADES = '/api/v5/trade/orders-history-archive'
+    DEPOSITS = '/api/v5/asset/deposit-history'
+    WITHDRAWALS = '/api/v5/asset/withdrawal-history'
 
 
 class Okx(ExchangeInterface):
@@ -68,10 +84,10 @@ class Okx(ExchangeInterface):
             api_key=api_key,
             secret=secret,
             database=database,
+            msg_aggregator=msg_aggregator,
         )
         self.passphrase = passphrase
         self.base_uri = 'https://www.okx.com/'
-        self.msg_aggregator = msg_aggregator
         self.session.headers.update({
             'OK-ACCESS-KEY': self.api_key,
             'OK-ACCESS-PASSPHRASE': self.passphrase,
@@ -82,7 +98,7 @@ class Okx(ExchangeInterface):
         if credentials.api_key is not None:
             self.session.headers.update({'OK-ACCESS-KEY': self.api_key})
         if credentials.passphrase is not None:
-            self.session.headers.update({'OK-ACCESS-PASSPHRASE': self.passphrase})
+            self.session.headers.update({'OK-ACCESS-PASSPHRASE': credentials.passphrase})
         return changed
 
     def _generate_signature(
@@ -101,7 +117,7 @@ class Okx(ExchangeInterface):
 
     def _api_query(
             self,
-            endpoint: Literal['currencies', 'balance', 'trades', 'deposits', 'withdrawals'],
+            endpoint: OkxEndpoint,
             options: dict | None = None,
     ) -> dict:
         """
@@ -114,17 +130,14 @@ class Okx(ExchangeInterface):
         options = options.copy() if options else {}
 
         params = {}
-        if endpoint == 'currencies':
-            path = '/api/v5/asset/currencies'
-        elif endpoint == 'balance':
-            path = '/api/v5/account/balance'
-        elif endpoint == 'trades':
-            path = '/api/v5/trade/orders-history-archive'
+        if endpoint in {OkxEndpoint.TRADES, OkxEndpoint.DEPOSITS, OkxEndpoint.WITHDRAWALS}:
             # supports pagination
             params.update({
                 'limit': options.get('limit', ''),
                 'after': options.get('after', ''),
             })
+
+        if endpoint == OkxEndpoint.TRADES:
             params.update({
                 'instType': 'SPOT',
                 'state': 'filled',
@@ -133,22 +146,8 @@ class Okx(ExchangeInterface):
                 params['begin'] = str(ts_sec_to_ms(Timestamp(int(options['start_ts']))))
             if options.get('end_ts'):
                 params['end'] = str(ts_sec_to_ms(Timestamp(int(options['end_ts']))))
-        elif endpoint == 'deposits':
-            path = '/api/v5/asset/deposit-history'
-            # supports pagination
-            params.update({
-                'limit': options.get('limit', ''),
-                'after': options.get('after', ''),
-            })
-        else:
-            assert endpoint == 'withdrawals', 'only case left, should be withdrawals'
-            path = '/api/v5/asset/withdrawal-history'
-            # supports pagination
-            params.update({
-                'limit': options.get('limit', ''),
-                'after': options.get('after', ''),
-            })
 
+        path = endpoint.value
         if len(params) != 0:
             path += f'?{urlencode(params)}'
 
@@ -160,6 +159,7 @@ class Okx(ExchangeInterface):
         })
         url = urljoin(self.base_uri, path)
 
+        log.debug(f'Querying OKX {url} with {method=}')
         try:
             response = self.session.request(method=method, url=url)
         except requests.exceptions.RequestException as e:
@@ -175,7 +175,7 @@ class Okx(ExchangeInterface):
 
     def _api_query_list(
             self,
-            endpoint: Literal['currencies', 'balance', 'trades', 'deposits', 'withdrawals'],
+            endpoint: OkxEndpoint,
             options: dict | None = None,
     ) -> list:
         """
@@ -194,7 +194,7 @@ class Okx(ExchangeInterface):
 
     def _api_query_list_paginated(
             self,
-            endpoint: Literal['currencies', 'balance', 'trades', 'deposits', 'withdrawals'],
+            endpoint: OkxEndpoint,
             pagination_key: str,
             options: dict | None = None,
     ) -> list:
@@ -221,39 +221,43 @@ class Okx(ExchangeInterface):
         return all_items
 
     def validate_api_key(self) -> tuple[bool, str]:
-        response = self._api_query(endpoint='balance')
+        response = self._api_query(endpoint=OkxEndpoint.TRADING_BALANCE)
         if response.get('code') != '0':
             return False, 'Error validating API credentials'
         return True, ''
 
     def query_balances(self, **kwargs: Any) -> ExchangeQueryBalances:
         """
-        https://www.okx.com/docs-v5/en/#rest-api-account-get-balance
+        https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-balance
+        https://www.okx.com/docs-v5/en/#funding-account-rest-api-get-balance
 
         May raise
         - RemoteError if the OKX API or price oracle returns an unexpected response
         """
-        data = self._api_query_list(endpoint='balance')
+        currencies_data: list[dict] = []
+        data = self._api_query_list(endpoint=OkxEndpoint.TRADING_BALANCE)
         if not (len(data) == 1 and isinstance(data[0], dict)):
             raise RemoteError(
-                f'{self.name} balance response does not contain dict data[0]',
+                f'{self.name} trading balance response does not contain dict data[0]',
             )
         try:
-            currencies_data = data[0]['details']
+            currencies_data.extend(data[0]['details'])
         except KeyError as e:
             msg = f'Missing key: {e!s}'
             raise RemoteError(
-                f'{self.name} balance API request failed due to unexpected response {msg}',
+                f'{self.name} trading balance API request failed due to unexpected response {msg}',
             ) from e
+
+        currencies_data.extend(self._api_query_list(endpoint=OkxEndpoint.FUNDING_BALANCE))
 
         assets_balance: defaultdict[AssetWithOracles, Balance] = defaultdict(Balance)
         for currency_data in currencies_data:
             try:
                 asset = asset_from_okx(okx_name=currency_data['ccy'])
             except UnknownAsset as e:
-                self.msg_aggregator.add_warning(
-                    f'Found {self.name} balance with unknown asset '
-                    f'{e.identifier}. Ignoring it.',
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='balance query',
                 )
                 continue
             except UnsupportedAsset as e:
@@ -300,7 +304,7 @@ class Okx(ExchangeInterface):
         - RemoteError from _api_query_list_paginated
         """
         raw_trades = self._api_query_list_paginated(
-            endpoint='trades',
+            endpoint=OkxEndpoint.TRADES,
             pagination_key='ordId',
             options={
                 'start_ts': start_ts,
@@ -323,11 +327,11 @@ class Okx(ExchangeInterface):
     ) -> list[MarginPosition]:
         return []  # noop for okx
 
-    def query_online_deposits_withdrawals(
+    def query_online_history_events(
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> list[AssetMovement]:
+    ) -> Sequence[HistoryBaseEntry]:
         """
         https://www.okx.com/docs-v5/en/#rest-api-funding-get-deposit-history
         https://www.okx.com/docs-v5/en/#rest-api-funding-get-withdrawal-history
@@ -336,7 +340,7 @@ class Okx(ExchangeInterface):
         - RemoteError from _api_query_list_paginated
         """
         deposits = self._api_query_list_paginated(
-            endpoint='deposits',
+            endpoint=OkxEndpoint.DEPOSITS,
             pagination_key='ts',
             options={
                 'start_ts': start_ts,
@@ -344,7 +348,7 @@ class Okx(ExchangeInterface):
             },
         )
         withdrawals = self._api_query_list_paginated(
-            endpoint='withdrawals',
+            endpoint=OkxEndpoint.WITHDRAWALS,
             pagination_key='ordId',
             options={
                 'start_ts': start_ts,
@@ -354,28 +358,17 @@ class Okx(ExchangeInterface):
 
         movements: list[AssetMovement] = []
         for raw_movement in deposits:
-            movement = self.asset_movement_from_okx(
+            movements.extend(self.asset_movement_from_okx(
                 raw_movement=raw_movement,
-                category=AssetMovementCategory.DEPOSIT,
-            )
-            if movement is not None:
-                movements.append(movement)
+                event_type=HistoryEventType.DEPOSIT,
+            ))
         for raw_movement in withdrawals:
-            movement = self.asset_movement_from_okx(
+            movements.extend(self.asset_movement_from_okx(
                 raw_movement=raw_movement,
-                category=AssetMovementCategory.WITHDRAWAL,
-            )
-            if movement is not None:
-                movements.append(movement)
+                event_type=HistoryEventType.WITHDRAWAL,
+            ))
 
         return movements
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
-        return []  # noop for okx
 
     def trade_from_okx(self, raw_trade: dict[str, Any]) -> Trade | None:
         """
@@ -402,9 +395,9 @@ class Okx(ExchangeInterface):
             fee_asset = asset_from_okx(raw_trade['feeCcy'])
             link = raw_trade['ordId']
         except UnknownAsset as e:
-            self.msg_aggregator.add_warning(
-                f'Found {self.name} trade with unknown asset '
-                f'{e.identifier}. Ignoring it.',
+            self.send_unknown_asset_message(
+                asset_identifier=e.identifier,
+                details='trade',
             )
         except UnsupportedAsset as e:
             self.msg_aggregator.add_warning(
@@ -442,39 +435,41 @@ class Okx(ExchangeInterface):
     def asset_movement_from_okx(
             self,
             raw_movement: dict[str, Any],
-            category: AssetMovementCategory,
-    ) -> AssetMovement | None:
+            event_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
+    ) -> list[AssetMovement]:
         """
         Converts a raw asset movement from OKX into an AssetMovement object.
         If there is an error `None` is returned and error is logged.
         """
-        asset_movement = None
         try:
             tx_hash = raw_movement['txId']
-            timestamp = ts_ms_to_sec(TimestampMS(int(raw_movement['ts'])))
+            timestamp = TimestampMS(int(raw_movement['ts']))
             asset = asset_from_okx(raw_movement['ccy'])
             amount = deserialize_asset_amount(raw_movement['amt'])
             address = deserialize_asset_movement_address(raw_movement, 'to', asset)
             fee = Fee(ZERO)
-            if category is AssetMovementCategory.WITHDRAWAL:
+            if event_type is HistoryEventType.WITHDRAWAL:
                 fee = deserialize_fee(raw_movement['fee'])
 
-            asset_movement = AssetMovement(
-                location=Location.OKX,
-                category=category,
-                address=address,
-                transaction_id=tx_hash,
+            return create_asset_movement_with_fee(
+                location=self.location,
+                location_label=self.name,
+                event_type=event_type,
                 timestamp=timestamp,
                 asset=asset,
                 amount=amount,
                 fee_asset=asset,
                 fee=fee,
-                link=tx_hash,
+                unique_id=tx_hash,
+                extra_data=maybe_set_transaction_extra_data(
+                    address=address,
+                    transaction_id=tx_hash,
+                ),
             )
         except UnknownAsset as e:
-            self.msg_aggregator.add_warning(
-                f'Found {self.name} deposit/withdrawal with unknown asset '
-                f'{e.identifier}. Ignoring it.',
+            self.send_unknown_asset_message(
+                asset_identifier=e.identifier,
+                details='deposit/withdrawal',
             )
         except UnsupportedAsset as e:
             self.msg_aggregator.add_warning(
@@ -494,4 +489,4 @@ class Okx(ExchangeInterface):
                 f'asset_movement {raw_movement}. Error was: {msg}',
             )
 
-        return asset_movement
+        return []

@@ -41,7 +41,7 @@ def collect_frames(frame: FrameType) -> list[str]:
 
 
 def flamegraph_format(stack_count: FlameGraph) -> str:
-    return '\n'.join('%s %d' % (key, value) for key, value in sorted(stack_count.items()))
+    return '\n'.join(f'{key} {value}' for key, value in sorted(stack_count.items()))
 
 
 def sample_stack(stack_count: FlameGraph, frame: FrameType, timespent: float) -> None:
@@ -87,7 +87,7 @@ class FlameGraphCollector:
         # function call. This is important for functions which are considerably
         # slower then the others.
         #
-        # Because from whithin the interpreter it's not possible to execute a
+        # Because from within the interpreter it's not possible to execute a
         # function on stable intervals, the count of stacks does not correspond
         # to actual wall time. This is true even if posix signals are used. For
         # this reason the code has to account for the time spent between two
@@ -240,6 +240,6 @@ class SignalSampler:
         del self.timer
         del self.collector
 
-        # The timer must be stoped before sampler
+        # The timer must be stopped before sampler
         timer.stop()
         collector.stop()

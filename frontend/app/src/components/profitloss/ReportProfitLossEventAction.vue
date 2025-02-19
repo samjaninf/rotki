@@ -2,22 +2,29 @@
 import useVuelidate from '@vuelidate/core';
 import { helpers, required } from '@vuelidate/validators';
 import { toMessages } from '@/utils/validation';
-import type { ProfitLossEvent } from '@/types/reports';
+import { convertFromTimestamp } from '@/utils/date';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useMessageStore } from '@/store/message';
+import { useAssetPricesApi } from '@/composables/api/assets/prices';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import type { HistoricalPriceFormPayload } from '@/types/prices';
+import type { ProfitLossEvent } from '@/types/reports';
 
 const props = defineProps<{
   event: ProfitLossEvent;
   currency: string;
 }>();
 
-const { event, currency } = toRefs(props);
+const { currency, event } = toRefs(props);
 
 const { getHistoricPrice } = useBalancePricesStore();
 const { addHistoricalPrice } = useAssetPricesApi();
 
-const fetchingPrice: Ref<boolean> = ref(false);
-const showDialog: Ref<boolean> = ref(false);
-const price: Ref<string> = ref('');
+const fetchingPrice = ref<boolean>(false);
+const showDialog = ref<boolean>(false);
+const price = ref<string>('');
 
 async function openEditHistoricPriceDialog() {
   set(showDialog, true);
@@ -25,25 +32,20 @@ async function openEditHistoricPriceDialog() {
   const { assetIdentifier, timestamp } = get(event);
   const historicPrice = await getHistoricPrice({
     fromAsset: assetIdentifier,
-    toAsset: get(currency),
     timestamp,
+    toAsset: get(currency),
   });
   set(price, historicPrice.isPositive() ? historicPrice.toFixed() : '0');
   set(fetchingPrice, false);
 }
 
-const datetime: ComputedRef<string> = computed(() =>
-  convertFromTimestamp(get(event).timestamp),
-);
+const datetime = computed<string>(() => convertFromTimestamp(get(event).timestamp));
 
 const { t } = useI18n();
 
 const rules = {
   price: {
-    required: helpers.withMessage(
-      t('price_form.price_non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('price_form.price_non_empty'), required),
   },
 };
 
@@ -60,9 +62,9 @@ const { setMessage } = useMessageStore();
 async function updatePrice() {
   const payload: HistoricalPriceFormPayload = {
     fromAsset: get(event).assetIdentifier,
-    toAsset: get(currency),
-    timestamp: get(event).timestamp,
     price: get(price),
+    timestamp: get(event).timestamp,
+    toAsset: get(currency),
   };
 
   try {
@@ -74,9 +76,9 @@ async function updatePrice() {
     const title = t('price_management.add.error.title');
     const description = t('price_management.add.error.description', values);
     setMessage({
-      title,
       description,
       success: false,
+      title,
     });
   }
 }
@@ -84,17 +86,15 @@ async function updatePrice() {
 
 <template>
   <div class="flex justify-end">
-    <RuiMenu
-      :popper="{ placement: 'bottom-end' }"
-    >
-      <template #activator="{ on }">
+    <RuiMenu :popper="{ placement: 'bottom-end' }">
+      <template #activator="{ attrs }">
         <RuiButton
           variant="text"
           class="!p-2"
           icon
-          v-on="on"
+          v-bind="attrs"
         >
-          <RuiIcon name="more-2-fill" />
+          <RuiIcon name="lu-ellipsis-vertical" />
         </RuiButton>
       </template>
       <div class="py-2">
@@ -103,7 +103,7 @@ async function updatePrice() {
           @click="openEditHistoricPriceDialog()"
         >
           <template #prepend>
-            <RuiIcon name="edit-line" />
+            <RuiIcon name="lu-pencil-line" />
           </template>
           {{ t('profit_loss_events.edit_historic_price') }}
         </RuiButton>
@@ -114,65 +114,63 @@ async function updatePrice() {
       v-model="showDialog"
       max-width="450px"
     >
-      <AppBridge>
-        <RuiCard>
-          <template #header>
-            {{ t('profit_loss_events.edit_historic_price') }}
-          </template>
+      <RuiCard>
+        <template #header>
+          {{ t('profit_loss_events.edit_historic_price') }}
+        </template>
 
-          <form class="flex flex-col gap-4">
-            <AssetSelect
-              :value="event.assetIdentifier"
-              :label="t('price_form.from_asset')"
-              hide-details
-              disabled
-              outlined
-            />
-            <AssetSelect
-              :value="currency"
-              :label="t('price_form.to_asset')"
-              hide-details
-              disabled
-              outlined
-            />
-            <DateTimePicker
-              :value="datetime"
-              disabled
-              hide-details
-              :label="t('common.datetime')"
-            />
-            <AmountInput
-              v-model="price"
-              variant="outlined"
-              :loading="fetchingPrice"
-              :disabled="fetchingPrice"
-              :label="t('common.price')"
-              :error-messages="toMessages(v$.price)"
-            />
-          </form>
+        <form class="flex flex-col gap-4">
+          <AssetSelect
+            :model-value="event.assetIdentifier"
+            :label="t('price_form.from_asset')"
+            hide-details
+            disabled
+            outlined
+          />
+          <AssetSelect
+            :model-value="currency"
+            :label="t('price_form.to_asset')"
+            hide-details
+            disabled
+            outlined
+          />
+          <DateTimePicker
+            :model-value="datetime"
+            disabled
+            hide-details
+            :label="t('common.datetime')"
+          />
+          <AmountInput
+            v-model="price"
+            variant="outlined"
+            :loading="fetchingPrice"
+            :disabled="fetchingPrice"
+            :label="t('common.price')"
+            :error-messages="toMessages(v$.price)"
+          />
+        </form>
 
-          <div class="text-body-2 text-rui-text-secondary">
-            {{ t('profit_loss_events.edit_price_warning') }}
-          </div>
+        <div class="text-body-2 text-rui-text-secondary">
+          {{ t('profit_loss_events.edit_price_warning') }}
+        </div>
 
-          <template #footer>
-            <div class="grow" />
-            <RuiButton
-              variant="text"
-              color="primary"
-              @click="showDialog = false"
-            >
-              {{ t('common.actions.cancel') }}
-            </RuiButton>
-            <RuiButton
-              color="primary"
-              @click="updatePrice()"
-            >
-              {{ t('price_form.update_price') }}
-            </RuiButton>
-          </template>
-        </RuiCard>
-      </AppBridge>
+        <template #footer>
+          <div class="grow" />
+          <RuiButton
+            variant="text"
+            color="primary"
+            @click="showDialog = false"
+          >
+            {{ t('common.actions.cancel') }}
+          </RuiButton>
+          <RuiButton
+            color="primary"
+            @click="updatePrice()"
+          >
+            {{ t('price_form.update_price') }}
+          </RuiButton>
+        </template>
+      </RuiCard>
     </RuiDialog>
   </div>
 </template>

@@ -1,35 +1,33 @@
-import {
-  fetchExternalAsync,
-  handleResponse,
-  validWithSessionAndExternalService,
-} from '@/services/utils';
+import { fetchExternalAsync, handleResponse, validWithSessionAndExternalService } from '@/services/utils';
 import { snakeCaseTransformer } from '@/services/axios-tranformers';
 import { api } from '@/services/rotkehlchen-api';
 import type { ProtocolMetadata } from '@/types/defi';
-import type { ActionResult } from '@rotki/common/lib/data';
+import type { ActionResult } from '@rotki/common';
 import type { PendingTask } from '@/types/task';
 
-export function useDefiApi() {
-  const fetchAllDefi = (): Promise<PendingTask> => fetchExternalAsync(api.instance, '/blockchains/eth/defi');
+interface UseDefiApiReturn {
+  fetchAllDefi: () => Promise<PendingTask>;
+  fetchAirdrops: () => Promise<PendingTask>;
+  fetchAirdropsMetadata: () => Promise<ProtocolMetadata[]>;
+  fetchDefiMetadata: () => Promise<ProtocolMetadata[]>;
+}
+
+export function useDefiApi(): UseDefiApiReturn {
+  const fetchAllDefi = async (): Promise<PendingTask> => fetchExternalAsync(api.instance, '/blockchains/eth/defi');
 
   const fetchAirdrops = async (): Promise<PendingTask> => {
-    const response = await api.instance.get<ActionResult<PendingTask>>(
-      '/blockchains/eth/airdrops',
-      {
-        params: snakeCaseTransformer({
-          asyncQuery: true,
-        }),
-        validateStatus: validWithSessionAndExternalService,
-      },
-    );
+    const response = await api.instance.get<ActionResult<PendingTask>>('/blockchains/eth/airdrops', {
+      params: snakeCaseTransformer({
+        asyncQuery: true,
+      }),
+      validateStatus: validWithSessionAndExternalService,
+    });
 
     return handleResponse(response);
   };
 
   const fetchAirdropsMetadata = async (): Promise<ProtocolMetadata[]> => {
-    const response = await api.instance.get<ActionResult<ProtocolMetadata[]>>(
-      '/airdrops/metadata',
-    );
+    const response = await api.instance.get<ActionResult<ProtocolMetadata[]>>('/airdrops/metadata');
 
     return handleResponse(response);
   };
@@ -40,9 +38,9 @@ export function useDefiApi() {
   };
 
   return {
-    fetchAllDefi,
     fetchAirdrops,
     fetchAirdropsMetadata,
+    fetchAllDefi,
     fetchDefiMetadata,
   };
 }

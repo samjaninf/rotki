@@ -1,10 +1,10 @@
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { type Wrapper, mount } from '@vue/test-utils';
+import { type Account, Blockchain } from '@rotki/common';
+import { type VueWrapper, mount } from '@vue/test-utils';
 import { type Pinia, createPinia, setActivePinia } from 'pinia';
-import Vuetify from 'vuetify';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AccountDisplay from '@/components/display/AccountDisplay.vue';
 import { PrivacyMode } from '@/types/session';
-import type { GeneralAccount } from '@rotki/common/lib/account';
+import { useSessionSettingsStore } from '@/store/settings/session';
 
 vi.mock('@/composables/api/assets/icon', () => ({
   useAssetIconApi: () => ({
@@ -14,25 +14,23 @@ vi.mock('@/composables/api/assets/icon', () => ({
 vi.mock('@/services/websocket/websocket-service');
 
 describe('accountDisplay.vue', () => {
-  let wrapper: Wrapper<any>;
+  let wrapper: VueWrapper<InstanceType<typeof AccountDisplay>>;
   let pinia: Pinia;
 
-  const account: GeneralAccount = {
+  const account: Account = {
     chain: Blockchain.ETH,
     address: '0x52bc44d5378309EE2abF1539BF71dE1b7d7bE3b5',
-    label: 'Test Account',
-    tags: [],
   };
 
   function createWrapper() {
-    const vuetify = new Vuetify();
     return mount(AccountDisplay, {
-      pinia,
-      vuetify,
-      stubs: {
-        AssetIcon: true,
+      global: {
+        stubs: {
+          AssetIcon: true,
+        },
+        plugins: [pinia],
       },
-      propsData: {
+      props: {
         account,
       },
     });
@@ -42,6 +40,10 @@ describe('accountDisplay.vue', () => {
     pinia = createPinia();
     setActivePinia(pinia);
     wrapper = createWrapper();
+  });
+
+  afterEach(() => {
+    wrapper.unmount();
   });
 
   it('does not blur anything by default', () => {

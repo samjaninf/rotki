@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import Fragment from '@/components/helper/Fragment';
-import type {
-  AssetUpdateConflictResult,
-  AssetVersionUpdate,
-  ConflictResolution,
-} from '@/types/asset';
+import { useConfirmStore } from '@/store/confirm';
+import { useMessageStore } from '@/store/message';
+import { useMainStore } from '@/store/main';
+import { useSessionStore } from '@/store/session';
+import { useBackendManagement } from '@/composables/backend';
+import { useRestartingStatus } from '@/composables/user/account';
+import { useAssets } from '@/composables/assets';
+import AssetConflictDialog from '@/components/status/update/AssetConflictDialog.vue';
+import AssetUpdateMessage from '@/components/status/update/AssetUpdateMessage.vue';
+import AssetUpdateInlineConfirm from '@/components/status/update/AssetUpdateInlineConfirm.vue';
+import AssetUpdateStatus from '@/components/status/update/AssetUpdateStatus.vue';
+import AssetUpdateSetting from '@/components/status/update/AssetUpdateSetting.vue';
+import type { AssetUpdateConflictResult, AssetVersionUpdate, ConflictResolution } from '@/types/asset';
 
 const props = withDefaults(defineProps<{ headless?: boolean }>(), {
   headless: false,
@@ -13,16 +20,16 @@ const props = withDefaults(defineProps<{ headless?: boolean }>(), {
 const emit = defineEmits<{ (e: 'skip'): void }>();
 
 const { headless } = toRefs(props);
-const checking: Ref<boolean> = ref(false);
-const applying: Ref<boolean> = ref(false);
-const inlineConfirm: Ref<boolean> = ref(false);
-const showUpdateDialog: Ref<boolean> = ref(false);
-const showConflictDialog: Ref<boolean> = ref(false);
-const conflicts: Ref<AssetUpdateConflictResult[]> = ref([]);
-const changes: Ref<AssetVersionUpdate> = ref({
+const checking = ref<boolean>(false);
+const applying = ref<boolean>(false);
+const inlineConfirm = ref<boolean>(false);
+const showUpdateDialog = ref<boolean>(false);
+const showConflictDialog = ref<boolean>(false);
+const conflicts = ref<AssetUpdateConflictResult[]>([]);
+const changes = ref<AssetVersionUpdate>({
+  changes: 0,
   local: 0,
   remote: 0,
-  changes: 0,
   upToVersion: 0,
 });
 
@@ -39,7 +46,7 @@ const status = computed(() => {
 });
 
 const { logout } = useSessionStore();
-const { checkForUpdate, applyUpdates } = useAssets();
+const { applyUpdates, checkForUpdate } = useAssets();
 const { connect, setConnected } = useMainStore();
 const { restartBackend } = useBackendManagement();
 
@@ -74,9 +81,9 @@ async function check() {
 
   if (versions) {
     set(changes, {
+      changes: versions.newChanges,
       local: versions.local,
       remote: versions.remote,
-      changes: versions.newChanges,
       upToVersion: versions.remote,
     });
   }
@@ -96,7 +103,7 @@ async function updateAssets(resolution?: ConflictResolution) {
   set(showConflictDialog, false);
   const version = get(changes).upToVersion;
   set(applying, true);
-  const updateResult = await applyUpdates({ version, resolution });
+  const updateResult = await applyUpdates({ resolution, version });
   set(applying, false);
   if (updateResult.done) {
     set(skipped, 0);
@@ -108,7 +115,7 @@ async function updateAssets(resolution?: ConflictResolution) {
   }
 }
 
-const restarting: Ref<boolean> = ref(false);
+const { restarting } = useRestartingStatus();
 
 async function updateComplete() {
   if (get(restarting))
@@ -131,12 +138,12 @@ function showDoneConfirmation() {
   else {
     show(
       {
-        title: t('asset_update.success.title'),
         message: t('asset_update.success.description', {
           remoteVersion: get(changes).upToVersion,
         }),
         primaryAction: t('common.actions.ok'),
         singleAction: true,
+        title: t('asset_update.success.title'),
         type: 'success',
       },
       updateComplete,
@@ -157,14 +164,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Fragment>
+  <div>
     <AssetUpdateSetting
       v-if="!headless"
       :loading="checking || applying"
       :skipped="skipped"
       @check="check()"
     />
-    <div v-else-if="headless">
+    <template v-else-if="headless">
       <AssetUpdateStatus
         v-if="status"
         :status="status"
@@ -176,11 +183,11 @@ onMounted(async () => {
         :remote-version="changes.upToVersion"
         @confirm="updateComplete()"
       />
-    </div>
-    <div v-if="showUpdateDialog">
+    </template>
+    <template v-if="showUpdateDialog">
       <RuiDialog
         v-if="!headless"
-        value
+        :model-value="true"
         max-width="500"
         persistent
       >
@@ -201,7 +208,7 @@ onMounted(async () => {
         @confirm="updateAssets()"
         @dismiss="skip($event)"
       />
-    </div>
+    </template>
 
     <AssetConflictDialog
       v-if="showConflictDialog"
@@ -210,7 +217,7 @@ onMounted(async () => {
       @cancel="skip(false)"
       @resolve="updateAssets($event)"
     />
-  </Fragment>
+  </div>
 </template>
 
 <style scoped lang="scss">

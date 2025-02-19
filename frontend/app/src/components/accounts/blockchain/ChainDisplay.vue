@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import type { Blockchain } from '@rotki/common/lib/blockchain';
+import { useSupportedChains } from '@/composables/info/chains';
+import ChainIcon from '@/components/helper/display/icons/ChainIcon.vue';
+import ListItem from '@/components/common/ListItem.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 
 const props = withDefaults(
   defineProps<{
-    chain: Blockchain;
+    chain: string;
     dense?: boolean;
   }>(),
   {
@@ -11,10 +14,17 @@ const props = withDefaults(
   },
 );
 
+const { t } = useI18n();
 const { chain } = toRefs(props);
 
 const { getChainName } = useSupportedChains();
-const name = getChainName(chain);
+const name = computed(() => {
+  const chainVal = get(chain);
+  if (chainVal === 'evm')
+    return t('account_form.labels.all_supported_chains');
+
+  return get(getChainName(chain));
+});
 </script>
 
 <template>
@@ -26,7 +36,15 @@ const name = getChainName(chain);
     class="!py-0"
   >
     <template #avatar>
+      <AdaptiveWrapper v-if="chain === 'evm'">
+        <RuiIcon
+          name="lu-link"
+          color="primary"
+        />
+      </AdaptiveWrapper>
+
       <ChainIcon
+        v-else
         :chain="chain"
         :size="dense ? '20px' : '26px'"
       />

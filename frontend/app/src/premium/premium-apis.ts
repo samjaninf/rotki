@@ -1,72 +1,96 @@
-import type { ProfitLossModel } from '@rotki/common/lib/defi';
+import { isNft } from '@/utils/nft';
+import { truncateAddress } from '@/utils/truncate';
+import { useSushiswapStore } from '@/store/defi/sushiswap';
+import { useCompoundStore } from '@/store/defi/compound';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { useStatisticsStore } from '@/store/statistics';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
+import { useLiquidityPosition } from '@/composables/defi';
+import { useBalancesBreakdown } from '@/composables/balances/breakdown';
+import { useAssetManagementApi } from '@/composables/api/assets/management';
+import { useStatisticsApi } from '@/composables/api/statistics/statistics-api';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useHistoricCachePriceStore } from '@/store/prices/historic';
+import { usePriceApi } from '@/composables/api/balances/price';
+import { useTaskStore } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
 import type {
   AssetsApi,
-  BalancerApi,
   BalancesApi,
+  BigNumber,
   CompoundApi,
-  StatisticsApi,
-  SushiApi,
-  UserSettingsApi,
-  UtilsApi,
-} from '@rotki/common/lib/premium';
-import type {
   LocationData,
   OwnedAssets,
+  ProfitLossModel,
+  StatisticsApi,
+  SushiApi,
   TimedAssetBalances,
+  TimedAssetHistoricalBalances,
   TimedBalances,
-} from '@rotki/common/lib/statistics';
+  UserSettingsApi,
+  UtilsApi,
+} from '@rotki/common';
 import type { MaybeRef } from '@vueuse/core';
 
 export function assetsApi(): AssetsApi {
-  const { assetInfo, assetSymbol, assetName, tokenAddress }
-    = useAssetInfoRetrieval();
+  const { assetInfo, assetName, assetSymbol, tokenAddress } = useAssetInfoRetrieval();
 
   return {
     assetInfo,
-    assetSymbol: (identifier: MaybeRef<string>) =>
-      computed(() => {
-        if (isNft(get(identifier)))
-          return get(assetName(identifier));
+    assetSymbol: (identifier: MaybeRef<string>) => computed(() => {
+      if (isNft(get(identifier)))
+        return get(assetName(identifier));
 
-        return get(assetSymbol(identifier));
-      }),
+      return get(assetSymbol(identifier));
+    }),
     tokenAddress: (identifier: MaybeRef<string>) => tokenAddress(identifier),
   };
 }
 
 export function statisticsApi(): StatisticsApi {
   const { isAssetIgnored } = useIgnoredAssetsStore();
-  const { fetchNetValue, getNetValue } = useStatisticsStore();
+  const statisticsStore = useStatisticsStore();
+
+  const { fetchHistoricalAssetPrice, fetchNetValue, getNetValue } = statisticsStore;
+  const { historicalAssetPriceStatus } = storeToRefs(statisticsStore);
   const {
     queryLatestAssetValueDistribution,
     queryLatestLocationValueDistribution,
     queryTimedBalancesData,
+    queryTimedHistoricalBalancesData,
   } = useStatisticsApi();
   const { queryOwnedAssets } = useAssetManagementApi();
 
+  const { isTaskRunning } = useTaskStore();
+
   return {
-    assetValueDistribution(): Promise<TimedAssetBalances> {
+    async assetValueDistribution(): Promise<TimedAssetBalances> {
       return queryLatestAssetValueDistribution();
-    },
-    locationValueDistribution(): Promise<LocationData> {
-      return queryLatestLocationValueDistribution();
-    },
-    async ownedAssets(): Promise<OwnedAssets> {
-      const owned = await queryOwnedAssets();
-      return owned.filter(asset => !get(isAssetIgnored(asset)));
-    },
-    timedBalances(
-      asset: string,
-      start: number,
-      end: number,
-      collectionId?: number,
-    ): Promise<TimedBalances> {
-      return queryTimedBalancesData(asset, start, end, collectionId);
     },
     async fetchNetValue(): Promise<void> {
       await fetchNetValue();
     },
+    historicalAssetPriceStatus,
+    isQueryingDailyPrices: isTaskRunning(TaskType.FETCH_DAILY_HISTORIC_PRICE),
+    async locationValueDistribution(): Promise<LocationData> {
+      return queryLatestLocationValueDistribution();
+    },
     netValue: startingDate => getNetValue(startingDate),
+    async ownedAssets(): Promise<OwnedAssets> {
+      const owned = await queryOwnedAssets();
+      return owned.filter(asset => !get(isAssetIgnored(asset)));
+    },
+    queryHistoricalAssetPrices: fetchHistoricalAssetPrice,
+    async timedBalances(asset: string, start: number, end: number, collectionId?: number): Promise<TimedBalances> {
+      return queryTimedBalancesData(asset, start, end, collectionId);
+    },
+    async timedHistoricalBalances(asset: string, start: number, end: number, collectionId?: number): Promise<TimedAssetHistoricalBalances> {
+      return queryTimedHistoricalBalancesData(asset, start, end, collectionId);
+    },
   };
 }
 
@@ -74,75 +98,80 @@ export function userSettings(): UserSettingsApi {
   const {
     privacyMode,
     scrambleData,
+    scrambleMultiplier,
     shouldShowAmount,
     shouldShowPercentage,
-    scrambleMultiplier,
   } = storeToRefs(useSessionSettingsStore());
-  const { floatingPrecision, currencySymbol } = storeToRefs(
-    useGeneralSettingsStore(),
-  );
   const {
-    selectedTheme,
     dateInputFormat,
+    decimalSeparator,
     graphZeroBased,
+    selectedTheme,
     showGraphRangeSelector,
+    subscriptDecimals,
+    thousandSeparator,
+    useHistoricalAssetBalances,
   } = storeToRefs(useFrontendSettingsStore());
+  const { currencySymbol, floatingPrecision } = storeToRefs(useGeneralSettingsStore());
 
   return {
-    floatingPrecision,
     currencySymbol,
-    selectedTheme,
     dateInputFormat,
+    decimalSeparator,
+    floatingPrecision,
     graphZeroBased,
-    showGraphRangeSelector,
     privacyMode,
-    scrambleMultiplier,
     scrambleData,
+    scrambleMultiplier,
+    selectedTheme,
     shouldShowAmount,
     shouldShowPercentage,
+    showGraphRangeSelector,
+    subscriptDecimals,
+    thousandSeparator,
+    useHistoricalAssetBalances,
   };
 }
 
 export function balancesApi(): BalancesApi {
-  const { exchangeRate } = useBalancePricesStore();
+  const { assetPrice, exchangeRate } = useBalancePricesStore();
   const { balancesByLocation } = useBalancesBreakdown();
   const { balances } = useAggregatedBalances();
+  const { createKey, historicPriceInCurrentCurrency, isPending } = useHistoricCachePriceStore();
+  const { queryOnlyCacheHistoricalRates } = usePriceApi();
+  const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
+
   return {
-    byLocation: balancesByLocation,
     // TODO: deprecate on the next major components version (it's only here for backwards compat)
     aggregatedBalances: balances(false, false),
+    assetPrice: (asset: string) => computed(() => get(assetPrice(asset)) ?? One),
     balances: (groupMultiChain = false) => balances(false, groupMultiChain),
-    exchangeRate: (currency: string) =>
-      computed(() => get(exchangeRate(currency)) ?? One),
-  };
-}
+    byLocation: balancesByLocation,
+    exchangeRate: (currency: string) => computed(() => get(exchangeRate(currency)) ?? One),
+    historicPriceInCurrentCurrency,
+    isHistoricPricePending: (asset: string, timestamp: number) => isPending(createKey(asset, timestamp)),
+    queryOnlyCacheHistoricalRates: async (asset: string, timestamp: number[]): Promise<Record<string, BigNumber>> => {
+      const data = await queryOnlyCacheHistoricalRates({
+        assetsTimestamp: timestamp.map(item => [asset, item.toString()]),
+        onlyCachePeriod: 3600 * 24,
+        targetAsset: get(currencySymbol),
+      });
 
-export function balancerApi(): BalancerApi {
-  const store = useBalancerStore();
-  const { pools, addresses } = storeToRefs(store);
-  return {
-    balancerProfitLoss: (addresses: string[]) => store.profitLoss(addresses),
-    balancerBalances: (addresses: string[]) =>
-      store.balancerBalances(addresses),
-    balancerPools: pools,
-    balancerAddresses: addresses,
-    fetchBalancerBalances: async (refresh: boolean) =>
-      await store.fetchBalances(refresh),
+      return data.assets[asset] ?? {};
+    },
   };
 }
 
 type ProfitLossRef = ComputedRef<ProfitLossModel[]>;
 
 export function compoundApi(): CompoundApi {
-  const { rewards, debtLoss, interestProfit, liquidationProfit } = storeToRefs(
-    useCompoundStore(),
-  );
+  const { debtLoss, interestProfit, liquidationProfit, rewards } = storeToRefs(useCompoundStore());
 
   return {
-    compoundRewards: rewards as ProfitLossRef,
     compoundDebtLoss: debtLoss as ProfitLossRef,
-    compoundLiquidationProfit: liquidationProfit as ProfitLossRef,
     compoundInterestProfit: interestProfit as ProfitLossRef,
+    compoundLiquidationProfit: liquidationProfit as ProfitLossRef,
+    compoundRewards: rewards as ProfitLossRef,
   };
 }
 
@@ -154,17 +183,17 @@ export function sushiApi(): SushiApi {
 
   return {
     addresses,
-    pools,
     balances: balanceList,
-    poolProfit,
-    fetchEvents,
     fetchBalances,
+    fetchEvents,
+    poolProfit,
+    pools,
   };
 }
 
 export function utilsApi(): UtilsApi {
   return {
-    truncate: truncateAddress,
     getPoolName: useLiquidityPosition().getPoolName,
+    truncate: truncateAddress,
   };
 }

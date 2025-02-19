@@ -4,9 +4,8 @@ import pytest
 
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.pnl import PNL, PnlTotals
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.evm.decoding.paraswap.constants import CPT_PARASWAP
-from rotkehlchen.constants import ZERO
+from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_ETH, A_WBTC
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -46,7 +45,7 @@ def test_paraswap_swap_with_fee(accountant: 'Accountant', db_settings: dict):
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_WBTC,
-        balance=Balance(amount=FVal(swap_amount_str)),
+        amount=FVal(swap_amount_str),
         location_label=user_address,
         notes=f'Receive {swap_amount_str} WBTC from {acquired_from_address} to {user_address}',
         counterparty='0xrandomaddress',
@@ -59,7 +58,7 @@ def test_paraswap_swap_with_fee(accountant: 'Accountant', db_settings: dict):
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_WBTC,
-        balance=Balance(amount=FVal(swap_amount_str)),
+        amount=FVal(swap_amount_str),
         location_label=user_address,
         notes=f'Swap {swap_amount_str} WBTC in paraswap',
         counterparty=CPT_PARASWAP,
@@ -72,7 +71,7 @@ def test_paraswap_swap_with_fee(accountant: 'Accountant', db_settings: dict):
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_ETH,
-        balance=Balance(amount=FVal(receive_amount_str)),
+        amount=FVal(receive_amount_str),
         location_label=user_address,
         notes=f'Receive {receive_amount_str} ETH as the result of a swap in paraswap',
         counterparty=CPT_PARASWAP,
@@ -85,7 +84,7 @@ def test_paraswap_swap_with_fee(accountant: 'Accountant', db_settings: dict):
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.FEE,
         asset=A_ETH,
-        balance=Balance(amount=FVal(fee_amount_str)),
+        amount=FVal(fee_amount_str),
         location_label=user_address,
         notes=f'Spend {fee_amount_str} ETH as a paraswap fee',
         counterparty=CPT_PARASWAP,
@@ -114,6 +113,6 @@ def test_paraswap_swap_with_fee(accountant: 'Accountant', db_settings: dict):
         })
         assert fee_spent_event.price == Price(FVal(0.1))  # BTC swapped(€10) / ETH received(€100)
         assert fee_spent_event.cost_basis is not None  # Fee is taxable this time
-        assert fee_spent_event.cost_basis.taxable_amount == FVal(1)
+        assert fee_spent_event.cost_basis.taxable_amount == ONE
         assert fee_spent_event.cost_basis.taxable_bought_cost == FVal(0.1)  # BTC swapped(€10) / ETH received(€100)  # noqa: E501
     assert_pnl_totals_close(expected_pnls, accountant.pots[0].pnls)

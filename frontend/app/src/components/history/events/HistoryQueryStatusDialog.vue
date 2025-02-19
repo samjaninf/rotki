@@ -1,35 +1,43 @@
 <script setup lang="ts">
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+import EventDecodingStatusDetails from '@/components/history/events/EventDecodingStatusDetails.vue';
+import EvmTransactionQueryStatus from '@/components/history/events/tx/query-status/EvmTransactionQueryStatus.vue';
+import HistoryEventsQueryStatus from '@/components/history/events/query-status/HistoryEventsQueryStatus.vue';
+import type { Blockchain } from '@rotki/common';
 import type {
   EvmTransactionQueryData,
   EvmUnDecodedTransactionsData,
   HistoryEventsQueryData,
 } from '@/types/websocket-messages';
-import type { Blockchain } from '@rotki/common/lib/blockchain';
 
-withDefaults(
-  defineProps<{
-    onlyChains?: Blockchain[];
-    locations?: string[];
-    transactions?: EvmTransactionQueryData[];
-    decodingStatus: EvmUnDecodedTransactionsData[];
-    events?: HistoryEventsQueryData[];
-    getKey: (item: EvmTransactionQueryData | HistoryEventsQueryData) => string;
-  }>(),
-  {
-    onlyChains: () => [],
-    locations: () => [],
-    transactions: () => [],
-    events: () => [],
-  },
-);
+interface HistoryQueryStatusDialogProps {
+  onlyChains?: Blockchain[];
+  locations?: string[];
+  transactions?: EvmTransactionQueryData[];
+  decodingStatus: EvmUnDecodedTransactionsData[];
+  events?: HistoryEventsQueryData[];
+  getKey: (item: EvmTransactionQueryData | HistoryEventsQueryData) => string;
+  loading: boolean;
+}
+
+const props = withDefaults(defineProps<HistoryQueryStatusDialogProps>(), {
+  events: () => [],
+  locations: () => [],
+  onlyChains: () => [],
+  transactions: () => [],
+});
 
 const { t } = useI18n();
-const css = useCssModule();
+
+const { loading } = toRefs(props);
+
+const loadingDebounced = refDebounced(loading, 500);
+const usedLoading = logicOr(loading, loadingDebounced);
 </script>
 
 <template>
-  <RuiDialog width="1200">
-    <template #activator="{ on }">
+  <RuiDialog max-width="1200">
+    <template #activator="{ attrs }">
       <RuiTooltip
         :popper="{ placement: 'top' }"
         :open-delay="400"
@@ -41,9 +49,9 @@ const css = useCssModule();
             icon
             class="mt-1"
             size="sm"
-            v-on="on"
+            v-bind="attrs"
           >
-            <RuiIcon name="information-line" />
+            <RuiIcon name="lu-info" />
           </RuiButton>
         </template>
         {{ t('common.details') }}
@@ -61,49 +69,23 @@ const css = useCssModule();
               variant="text"
               @click="close()"
             >
-              <RuiIcon name="close-line" />
+              <RuiIcon name="lu-x" />
             </RuiButton>
           </div>
         </template>
 
-        <div :class="css.content">
-          <div>
-            <h6 class="text-body-1 font-medium">
-              {{ t('transactions.query_status_events.title') }}
-            </h6>
-            <HistoryEventsQueryStatusCurrent
-              :locations="locations"
-              class="text-subtitle-2 text-rui-text-secondary mt-2"
-            />
-            <div
-              v-for="item in events"
-              :key="getKey(item)"
-              class="py-1"
-            >
-              <HistoryEventsQueryStatusDetails :item="item" />
-            </div>
-          </div>
+        <div :class="$style.content">
+          <HistoryEventsQueryStatus
+            :locations="locations"
+            :events="events"
+          />
 
-          <div>
-            <h6 class="text-body-1 font-medium">
-              {{ t('transactions.query_status.title') }}
-            </h6>
-            <TransactionQueryStatusCurrent
-              :only-chains="onlyChains"
-              class="text-subtitle-2 text-rui-text-secondary my-2"
-            />
-            <div
-              v-for="item in transactions"
-              :key="getKey(item)"
-              class="py-1"
-            >
-              <TransactionQueryStatusDetails :item="item" />
-              <TransactionQueryStatusSteps
-                :item="item"
-                :class="css.stepper"
-              />
-            </div>
-          </div>
+          <EvmTransactionQueryStatus
+            :transactions="transactions"
+            :only-chains="onlyChains"
+          />
+
+          <RuiDivider class="-my-2" />
 
           <div>
             <h6 class="text-body-1 font-medium mb-2">
@@ -117,8 +99,18 @@ const css = useCssModule();
                 :item="item"
               />
             </template>
+            <template v-else-if="usedLoading">
+              <div class="flex gap-2 text-sm">
+                <RuiIcon
+                  color="primary"
+                  name="lu-hourglass"
+                  size="22"
+                />
+                {{ t('transactions.events_decoding.decoded.not_started') }}
+              </div>
+            </template>
             <template v-else>
-              <div class="flex gap-2">
+              <div class="flex gap-2 text-sm">
                 <SuccessDisplay
                   success
                   size="22"
@@ -148,8 +140,5 @@ const css = useCssModule();
   max-height: calc(90vh - 11.875rem);
   min-height: 50vh;
 
-  .stepper {
-    @apply overflow-hidden #{!important};
-  }
 }
 </style>

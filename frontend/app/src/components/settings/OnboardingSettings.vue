@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import useVuelidate from '@vuelidate/core';
-import {
-  and,
-  helpers,
-  minValue,
-  numeric,
-  required,
-} from '@vuelidate/validators';
-import { isEqual } from 'lodash-es';
-import { LogLevel } from '@/utils/log-level';
+import { and, helpers, minValue, numeric, required } from '@vuelidate/validators';
+import { isEqual } from 'es-toolkit';
+import { LogLevel } from '@shared/log-level';
 import { toMessages } from '@/utils/validation';
-import type { BackendOptions } from '@/electron-main/ipc';
-import type { Writeable } from '@/types';
+import { useMainStore } from '@/store/main';
+import { useConfirmStore } from '@/store/confirm';
+import { useBackendManagement } from '@/composables/backend';
+import { useInterop } from '@/composables/electron-interop';
+import { useSettingsApi } from '@/composables/api/settings/settings-api';
+import SettingResetButton from '@/components/settings/SettingResetButton.vue';
+import LanguageSetting from '@/components/settings/general/language/LanguageSetting.vue';
+import BigDialog from '@/components/dialogs/BigDialog.vue';
+import type { RuiIcons } from '@rotki/ui-library';
+import type { BackendOptions } from '@shared/ipc';
+import type { Writeable } from '@rotki/common';
 import type { BackendConfiguration } from '@/types/backend';
 
 const emit = defineEmits<{
@@ -22,22 +25,20 @@ const { t } = useI18n();
 
 const { dataDirectory, defaultBackendArguments } = storeToRefs(useMainStore());
 
-const userDataDirectory: Ref<string> = ref('');
-const userLogDirectory: Ref<string> = ref('');
-const logFromOtherModules: Ref<boolean> = ref(false);
-const valid: Ref<boolean> = ref(false);
+const userDataDirectory = ref<string>('');
+const userLogDirectory = ref<string>('');
+const logFromOtherModules = ref<boolean>(false);
+const valid = ref<boolean>(false);
 
-const maxLogSize: Ref<string> = ref('0');
-const sqliteInstructions: Ref<string> = ref('0');
-const maxLogFiles: Ref<string> = ref('0');
+const maxLogSize = ref<string>('0');
+const sqliteInstructions = ref<string>('0');
+const maxLogFiles = ref<string>('0');
 
 const { backendSettings } = useSettingsApi();
 
-const selecting: Ref<boolean> = ref(false);
-const confirmReset: Ref<boolean> = ref(false);
-const configuration: Ref<BackendConfiguration> = asyncComputed(() =>
-  backendSettings(),
-);
+const selecting = ref<boolean>(false);
+const confirmReset = ref<boolean>(false);
+const configuration = asyncComputed<BackendConfiguration>(() => backendSettings());
 
 function parseValue(value?: string) {
   if (!value)
@@ -54,37 +55,21 @@ function stringifyValue(value?: number) {
   return value.toString();
 }
 
-const {
-  resetOptions,
-  saveOptions,
-  fileConfig,
-  logLevel,
-  defaultLogLevel,
-  defaultLogDirectory,
-  options,
-} = useBackendManagement(loaded);
+const { defaultLogDirectory, defaultLogLevel, fileConfig, logLevel, options, resetOptions, saveOptions }
+  = useBackendManagement(loaded);
 
-const initialOptions: ComputedRef<Partial<BackendOptions>> = computed(() => {
+const initialOptions = computed<Partial<BackendOptions>>(() => {
   const config = get(configuration);
   const opts = get(options);
   const defaults = get(defaultBackendArguments);
   return {
-    loglevel: opts.loglevel ?? get(defaultLogLevel),
     dataDirectory: opts.dataDirectory ?? get(dataDirectory),
     logDirectory: opts.logDirectory ?? get(defaultLogDirectory),
     logFromOtherModules: opts.logFromOtherModules ?? false,
-    maxLogfilesNum:
-        opts.maxLogfilesNum
-        ?? config?.maxLogfilesNum?.value
-        ?? defaults.maxLogfilesNum,
-    maxSizeInMbAllLogs:
-        opts.maxSizeInMbAllLogs
-        ?? config?.maxSizeInMbAllLogs?.value
-        ?? defaults.maxSizeInMbAllLogs,
-    sqliteInstructions:
-        opts.sqliteInstructions
-        ?? config?.sqliteInstructions?.value
-        ?? defaults.sqliteInstructions,
+    loglevel: opts.loglevel ?? get(defaultLogLevel),
+    maxLogfilesNum: opts.maxLogfilesNum ?? config?.maxLogfilesNum?.value ?? defaults.maxLogfilesNum,
+    maxSizeInMbAllLogs: opts.maxSizeInMbAllLogs ?? config?.maxSizeInMbAllLogs?.value ?? defaults.maxSizeInMbAllLogs,
+    sqliteInstructions: opts.sqliteInstructions ?? config?.sqliteInstructions?.value ?? defaults.sqliteInstructions,
   };
 });
 
@@ -159,13 +144,13 @@ const newUserOptions = computed(() => {
 
 const anyValueChanged = computed(() => {
   const form: Partial<BackendOptions> = {
-    loglevel: get(logLevel),
     dataDirectory: get(userDataDirectory),
     logDirectory: get(userLogDirectory),
     logFromOtherModules: get(logFromOtherModules),
+    loglevel: get(logLevel),
+    maxLogfilesNum: parseValue(get(maxLogFiles)),
     maxSizeInMbAllLogs: parseValue(get(maxLogSize)),
     sqliteInstructions: parseValue(get(sqliteInstructions)),
-    maxLogfilesNum: parseValue(get(maxLogFiles)),
   };
 
   return !isEqual(form, get(initialOptions));
@@ -174,27 +159,21 @@ const anyValueChanged = computed(() => {
 const { openDirectory } = useInterop();
 
 const nonNegativeNumberRules = {
-  required: helpers.withMessage(
-    t('backend_settings.errors.non_empty'),
-    required,
-  ),
-  nonNegative: helpers.withMessage(
-    t('backend_settings.errors.min', { min: 0 }),
-    and(numeric, minValue(0)),
-  ),
+  nonNegative: helpers.withMessage(t('backend_settings.errors.min', { min: 0 }), and(numeric, minValue(0))),
+  required: helpers.withMessage(t('backend_settings.errors.non_empty'), required),
 };
 
 const rules = {
-  maxLogSize: nonNegativeNumberRules,
   maxLogFiles: nonNegativeNumberRules,
+  maxLogSize: nonNegativeNumberRules,
   sqliteInstructions: nonNegativeNumberRules,
 };
 
 const v$ = useVuelidate(
   rules,
   {
-    maxLogSize,
     maxLogFiles,
+    maxLogSize,
     sqliteInstructions,
   },
   { $autoDirty: true },
@@ -204,19 +183,19 @@ watch(v$, ({ $invalid }) => {
   set(valid, !$invalid);
 });
 
-function icon(level: LogLevel): string {
+function icon(level: LogLevel): RuiIcons {
   if (level === LogLevel.DEBUG)
-    return 'bug-line';
+    return 'lu-bug';
   else if (level === LogLevel.INFO)
-    return 'information-line';
+    return 'lu-info';
   else if (level === LogLevel.WARNING)
-    return 'alert-line';
+    return 'lu-triangle-alert';
   else if (level === LogLevel.ERROR)
-    return 'error-warning-line';
+    return 'lu-circle-alert';
   else if (level === LogLevel.CRITICAL)
-    return 'virus-line';
+    return 'lu-skull';
   else if (level === LogLevel.TRACE)
-    return 'file-search-line';
+    return 'file-lu-search';
 
   throw new Error(`Invalid option: ${level}`);
 }
@@ -253,9 +232,7 @@ async function selectLogsDirectory() {
 
   set(selecting, true);
   try {
-    const directory = await openDirectory(
-      t('backend_settings.log_directory.select'),
-    );
+    const directory = await openDirectory(t('backend_settings.log_directory.select'));
     if (directory)
       set(userLogDirectory, directory);
   }
@@ -279,12 +256,14 @@ const { show } = useConfirmStore();
 function showResetConfirmation() {
   show(
     {
-      title: t('backend_settings.confirm.title'),
       message: t('backend_settings.confirm.message'),
+      title: t('backend_settings.confirm.title'),
     },
     reset,
   );
 }
+
+const [CreateLabel, ReuseLabel] = createReusableTemplate<{ item: LogLevel }>();
 </script>
 
 <template>
@@ -293,11 +272,8 @@ function showResetConfirmation() {
     :title="t('frontend_settings.title')"
     @cancel="dismiss()"
   >
-    <div class="mb-8">
-      <LanguageSetting
-        use-local-setting
-        class="mb-10"
-      />
+    <div class="mb-4">
+      <LanguageSetting use-local-setting />
     </div>
 
     <div class="mb-4">
@@ -312,6 +288,15 @@ function showResetConfirmation() {
     </div>
 
     <div class="flex flex-col gap-4">
+      <CreateLabel #default="{ item }">
+        <div class="flex items-center gap-3">
+          <RuiIcon
+            class="text-rui-text-secondary"
+            :name="icon(item)"
+          />
+          <span class="capitalize"> {{ item }} </span>
+        </div>
+      </CreateLabel>
       <RuiTextField
         v-model="userDataDirectory"
         data-cy="user-data-directory-input"
@@ -336,7 +321,7 @@ function showResetConfirmation() {
             :disabled="!userDataDirectory"
             @click="selectDataDirectory()"
           >
-            <RuiIcon name="folder-line" />
+            <RuiIcon name="lu-folder" />
           </RuiButton>
         </template>
       </RuiTextField>
@@ -344,11 +329,7 @@ function showResetConfirmation() {
         v-model="userLogDirectory"
         data-cy="user-log-directory-input"
         :disabled="!!fileConfig.logDirectory"
-        :hint="
-          !!fileConfig.logDirectory
-            ? t('backend_settings.config_file_disabled')
-            : undefined
-        "
+        :hint="!!fileConfig.logDirectory ? t('backend_settings.config_file_disabled') : undefined"
         variant="outlined"
         color="primary"
         :label="t('backend_settings.settings.log_directory.label')"
@@ -361,7 +342,7 @@ function showResetConfirmation() {
             icon
             @click="selectLogsDirectory()"
           >
-            <RuiIcon name="folder-line" />
+            <RuiIcon name="lu-folder" />
           </RuiButton>
         </template>
       </RuiTextField>
@@ -373,33 +354,15 @@ function showResetConfirmation() {
         :disabled="!!fileConfig.loglevel"
         :label="t('backend_settings.settings.log_level.label')"
         :hide-details="!fileConfig.loglevel"
-        :hint="
-          !!fileConfig.loglevel
-            ? t('backend_settings.config_file_disabled')
-            : undefined
-        "
-        key-attr="identifier"
-        text-attr="label"
+        :hint="!!fileConfig.loglevel ? t('backend_settings.config_file_disabled') : undefined"
         variant="outlined"
       >
-        <template #item.prepend="{ item }">
-          <RuiIcon
-            class="text-rui-text-secondary"
-            :name="icon(item.identifier)"
-          />
-        </template>
         <template #item="{ item }">
-          <span class="capitalize"> {{ item.identifier.toLocaleLowerCase() }} </span>
+          <ReuseLabel :item="item" />
         </template>
 
         <template #selection="{ item }">
-          <div class="flex items-center gap-4">
-            <RuiIcon
-              class="text-rui-text-secondary"
-              :name="icon(item.identifier)"
-            />
-            <span class="capitalize"> {{ item.identifier.toLocaleLowerCase() }} </span>
-          </div>
+          <ReuseLabel :item="item" />
         </template>
       </RuiMenuSelect>
     </div>

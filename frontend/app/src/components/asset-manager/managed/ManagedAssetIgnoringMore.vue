@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useWhitelistedAssetsStore } from '@/store/assets/whitelisted';
+
 const props = withDefaults(
   defineProps<{
     identifier: string;
@@ -36,18 +38,29 @@ function toggleSpam() {
       menu-class="w-[15rem]"
       close-on-content-click
     >
-      <template #activator="{ on }">
-        <RuiButton
-          class="!p-1"
-          icon
-          variant="text"
-          v-on="on"
+      <template #activator="{ attrs }">
+        <RuiBadge
+          :model-value="isWhitelisted || isSpam"
+          color="primary"
+          dot
+          placement="top"
+          offset-y="12"
+          offset-x="-10"
+          size="md"
+          class="flex items-center"
         >
-          <RuiIcon
-            name="arrow-down-s-line"
-            size="20"
-          />
-        </RuiButton>
+          <RuiButton
+            icon
+            v-bind="attrs"
+            size="sm"
+            class="dark:!bg-rui-grey-800 dark:!text-white"
+          >
+            <RuiIcon
+              name="lu-chevron-down"
+              size="20"
+            />
+          </RuiButton>
+        </RuiBadge>
       </template>
       <div class="py-2 text-rui-text-secondary">
         <RuiButton
@@ -60,7 +73,7 @@ function toggleSpam() {
               class="-mr-2"
               color="primary"
               hide-details
-              :value="isWhitelisted"
+              :model-value="isWhitelisted"
             />
           </template>
           {{ t('ignore.whitelist.action.add') }}
@@ -75,7 +88,7 @@ function toggleSpam() {
               class="-mr-2"
               color="primary"
               hide-details
-              :value="isSpam"
+              :model-value="isSpam"
             />
           </template>
           {{ t('ignore.spam.action.add') }}

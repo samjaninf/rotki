@@ -1,16 +1,18 @@
 <script setup lang="ts">
+import { useInterop } from '@/composables/electron-interop';
+import ErrorScreen from '@/components/error/ErrorScreen.vue';
+
 defineProps<{
   message: string;
 }>();
 
 const { t } = useI18n();
-const css = useCssModule();
 const { closeApp } = useInterop();
 </script>
 
 <template>
   <ErrorScreen
-    :class="css.overlay"
+    :class="$style.overlay"
     :header="t('error_screen.start_failure')"
     :title="t('error_screen.backend_error')"
     :subtitle="t('error_screen.message')"

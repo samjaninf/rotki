@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
+
 defineProps<{
   skipped: number;
   loading: boolean;
@@ -9,24 +12,26 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <RuiCard class="mt-8">
-    <template #header>
+  <SettingsItem>
+    <template #title>
       {{ t('asset_update.manual.title') }}
     </template>
-    <template #subheader>
+    <template #subtitle>
       {{ t('asset_update.manual.subtitle') }}
     </template>
-    <i18n
-      v-if="skipped"
-      path="asset_update.manual.skipped"
-    >
-      <template #skipped>
-        <BadgeDisplay class="ml-2">
-          {{ skipped }}
-        </BadgeDisplay>
-      </template>
-    </i18n>
-    <template #footer>
+    <div class="flex items-center gap-4 justify-end">
+      <i18n-t
+        v-if="skipped"
+        keypath="asset_update.manual.skipped"
+        tag="div"
+        class="flex flex-wrap gap-x-2 gap-y-1"
+      >
+        <template #skipped>
+          <BadgeDisplay>
+            {{ skipped }}
+          </BadgeDisplay>
+        </template>
+      </i18n-t>
       <RuiButton
         color="primary"
         :loading="loading"
@@ -34,6 +39,6 @@ const { t } = useI18n();
       >
         {{ t('asset_update.manual.check') }}
       </RuiButton>
-    </template>
-  </RuiCard>
+    </div>
+  </SettingsItem>
 </template>

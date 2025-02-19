@@ -3,55 +3,46 @@ import useVuelidate from '@vuelidate/core';
 import { between, helpers, requiredIf } from '@vuelidate/validators';
 import { Constraints } from '@/data/constraints';
 import { toMessages } from '@/utils/validation';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useValidation } from '@/composables/validation';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
 
 const versionUpdateCheckFrequency = ref<string>('');
 const versionUpdateCheckEnabled = ref<boolean>(false);
-
-const { versionUpdateCheckFrequency: existingFrequency } = storeToRefs(
-  useFrontendSettingsStore(),
-);
-
+const { versionUpdateCheckFrequency: existingFrequency } = storeToRefs(useFrontendSettingsStore());
 const maxVersionUpdateCheckFrequency = Constraints.MAX_HOURS_DELAY;
 const { t } = useI18n();
 
 const rules = {
   versionUpdateCheckFrequency: {
-    required: helpers.withMessage(
-      t('general_settings.validation.version_update_check_frequency.non_empty'),
-      requiredIf(versionUpdateCheckEnabled),
-    ),
     between: helpers.withMessage(
-      t(
-        'general_settings.validation.version_update_check_frequency.invalid_frequency',
-        {
-          start: 1,
-          end: maxVersionUpdateCheckFrequency,
-        },
-      ),
+      t('general_settings.version_update_check.validation.invalid_frequency', {
+        end: maxVersionUpdateCheckFrequency,
+        start: 1,
+      }),
       between(1, Constraints.MAX_HOURS_DELAY),
+    ),
+    required: helpers.withMessage(
+      t('general_settings.version_update_check.validation.non_empty'),
+      requiredIf(versionUpdateCheckEnabled),
     ),
   },
 };
 
-const v$ = useVuelidate(
-  rules,
-  { versionUpdateCheckFrequency },
-  { $autoDirty: true },
-);
+const v$ = useVuelidate(rules, { versionUpdateCheckFrequency }, { $autoDirty: true });
 const { callIfValid } = useValidation(v$);
 
 function resetVersionUpdateCheckFrequency() {
   const frequency = get(existingFrequency);
   set(versionUpdateCheckEnabled, frequency > 0);
-  set(
-    versionUpdateCheckFrequency,
-    get(versionUpdateCheckEnabled) ? frequency.toString() : '',
-  );
+  set(versionUpdateCheckFrequency, get(versionUpdateCheckEnabled) ? frequency.toString() : '');
 }
 
 function frequencyTransform(value: string) {
   return value ? Number.parseInt(value) : value;
 }
+
 const switchTransform = (value: boolean) => (value ? 24 : -1);
 
 onMounted(() => {
@@ -60,16 +51,31 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex gap-6">
+  <SettingsItem>
+    <template #title>
+      {{ t('general_settings.version_update_check.title') }}
+    </template>
+    <SettingsOption
+      #default="{ updateImmediate }"
+      setting="versionUpdateCheckFrequency"
+      frontend-setting
+      :transform="switchTransform"
+      @finished="resetVersionUpdateCheckFrequency()"
+    >
+      <RuiSwitch
+        v-model="versionUpdateCheckEnabled"
+        :label="t('general_settings.version_update_check.switch')"
+        color="primary"
+        @update:model-value="callIfValid($event, updateImmediate)"
+      />
+    </SettingsOption>
     <div class="grow">
       <SettingsOption
         #default="{ error, success, update }"
         setting="versionUpdateCheckFrequency"
         frontend-setting
         :transform="frequencyTransform"
-        :error-message="
-          t('general_settings.validation.version_update_check_frequency.error')
-        "
+        :error-message="t('general_settings.version_update_check.validation.error')"
         @finished="resetVersionUpdateCheckFrequency()"
       >
         <RuiTextField
@@ -80,30 +86,13 @@ onMounted(() => {
           type="number"
           min="1"
           :max="maxVersionUpdateCheckFrequency"
-          :label="t('general_settings.labels.version_update_check')"
-          :hint="t('general_settings.version_update_check_hint')"
+          :label="t('general_settings.version_update_check.label')"
+          :hint="t('general_settings.version_update_check.hint')"
           :success-messages="success"
-          :error-messages="
-            error || toMessages(v$.versionUpdateCheckFrequency)
-          "
-          @input="update($event)"
+          :error-messages="error || toMessages(v$.versionUpdateCheckFrequency)"
+          @update:model-value="update($event)"
         />
       </SettingsOption>
     </div>
-    <SettingsOption
-      #default="{ update }"
-      setting="versionUpdateCheckFrequency"
-      frontend-setting
-      :transform="switchTransform"
-      @finished="resetVersionUpdateCheckFrequency()"
-    >
-      <RuiSwitch
-        v-model="versionUpdateCheckEnabled"
-        class="mt-4"
-        :label="t('general_settings.labels.version_update_check_enabled')"
-        color="primary"
-        @input="callIfValid($event, update)"
-      />
-    </SettingsOption>
-  </div>
+  </SettingsItem>
 </template>

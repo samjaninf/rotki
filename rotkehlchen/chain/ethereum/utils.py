@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -11,7 +12,7 @@ from requests.exceptions import RequestException
 from web3 import Web3
 
 from rotkehlchen.assets.asset import CryptoAsset, EvmToken
-from rotkehlchen.constants.assets import A_ETH, A_XDAI
+from rotkehlchen.constants.assets import A_BSC_BNB, A_ETH, A_XDAI
 from rotkehlchen.constants.resolver import EVM_CHAIN_DIRECTIVE
 from rotkehlchen.constants.timing import ETH_PROTOCOLS_CACHE_REFRESH
 from rotkehlchen.db.settings import CachedSettings
@@ -47,6 +48,10 @@ def token_normalized_value_decimals(token_amount: int, token_decimals: int | Non
     return token_amount / (FVal(10) ** FVal(token_decimals))
 
 
+def normalized_fval_value_decimals(amount: FVal, decimals: int) -> FVal:
+    return amount / (FVal(10) ** FVal(decimals))
+
+
 def token_raw_value_decimals(token_amount: FVal, token_decimals: int | None) -> int:
     if token_decimals is None:  # if somehow no info on decimals ends up here assume 18
         token_decimals = 18
@@ -66,7 +71,7 @@ def get_decimals(asset: CryptoAsset) -> int:
     May raise:
     - UnsupportedAsset if the given asset is not a native token or an ERC20 token
     """
-    if asset in (A_ETH, A_XDAI):
+    if asset in (A_ETH, A_XDAI, A_BSC_BNB):
         return 18
     try:
         token = asset.resolve_to_evm_token()
@@ -127,11 +132,12 @@ def generate_address_via_create2(
     return to_checksum_address(contract_address)
 
 
-def should_update_protocol_cache(cache_key: CacheType, *args: str) -> bool:
+def should_update_protocol_cache(cache_key: CacheType, args: Sequence[str] | None = None) -> bool:
     """
     Checks if the last time the cache_key was queried is far enough to trigger
     the process of querying it again.
     """
+    args = args if args is not None else []
     with GlobalDBHandler().conn.read_ctx() as cursor:
         if cache_key in UNIQUE_CACHE_KEYS:
             last_update_ts = globaldb_get_unique_cache_last_queried_ts_by_key(

@@ -1,67 +1,72 @@
 <script setup lang="ts">
-import { getIdentifierFromSymbolMap } from '@rotki/common/lib/data';
+import { getAddressFromEvmIdentifier, getIdentifierFromSymbolMap, isEvmIdentifier } from '@rotki/common';
 import { useCurrencies } from '@/types/currencies';
 import { isBlockchain } from '@/types/blockchain/chains';
-import type { StyleValue } from 'vue/types/jsx';
+import { useAssetIconStore } from '@/store/assets/icon';
+import { type AssetResolutionOptions, useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useCopy } from '@/composables/copy';
+import AppImage from '@/components/common/AppImage.vue';
+import GeneratedIcon from '@/components/helper/display/icons/GeneratedIcon.vue';
+import EvmChainIcon from '@/components/helper/display/icons/EvmChainIcon.vue';
+import type { StyleValue } from 'vue';
 
-const props = withDefaults(
-  defineProps<{
-    identifier: string;
-    size: string;
-    styled?: StyleValue;
-    noTooltip?: boolean;
-    circle?: boolean;
-    padding?: string;
-    enableAssociation?: boolean;
-    showChain?: boolean;
-  }>(),
-  {
-    styled: undefined,
-    noTooltip: false,
-    circle: false,
-    padding: '2px',
-    enableAssociation: true,
-    showChain: true,
-  },
-);
+interface AssetIconProps {
+  identifier: string;
+  size: string;
+  styled?: StyleValue;
+  noTooltip?: boolean;
+  circle?: boolean;
+  padding?: string;
+  chainIconPadding?: string;
+  enableAssociation?: boolean;
+  showChain?: boolean;
+  flat?: boolean;
+  resolutionOptions?: AssetResolutionOptions;
+  chainIconSize?: string;
+}
 
-const emit = defineEmits<{ (e: 'click'): void }>();
+const props = withDefaults(defineProps<AssetIconProps>(), {
+  chainIconPadding: '0.5px',
+  circle: false,
+  enableAssociation: true,
+  flat: false,
+  noTooltip: false,
+  padding: '2px',
+  resolutionOptions: () => ({}),
+  showChain: true,
+  styled: undefined,
+});
+
+const emit = defineEmits<{ click: [] }>();
 
 const { t } = useI18n();
 
-const {
-  identifier,
-  padding,
-  size,
-  enableAssociation,
-  showChain,
-} = toRefs(props);
+const { chainIconSize, identifier, padding, resolutionOptions, showChain, size } = toRefs(props);
 
 const error = ref<boolean>(false);
 const pending = ref<boolean>(true);
+const abortController = ref<AbortController>();
 
-const css = useCssModule();
-
+const { checkIfAssetExists, getAssetImageUrl } = useAssetIconStore();
 const { currencies } = useCurrencies();
+const { assetInfo } = useAssetInfoRetrieval();
 
-const mappedIdentifier: ComputedRef<string> = computed(() => {
+const mappedIdentifier = computed<string>(() => {
   const id = getIdentifierFromSymbolMap(get(identifier));
   return isBlockchain(id) ? id.toUpperCase() : id;
 });
 
 const currency = computed<string | undefined>(() => {
   const id = get(mappedIdentifier);
-
   const fiatCurrencies = get(currencies).filter(({ crypto }) => !crypto);
-  return fiatCurrencies.find(({ tickerSymbol }) => tickerSymbol === id)
-    ?.unicodeSymbol;
+  return fiatCurrencies.find(({ tickerSymbol }) => tickerSymbol === id)?.unicodeSymbol;
 });
 
-const { assetInfo } = useAssetInfoRetrieval();
-const { getAssetImageUrl } = useAssetIconStore();
+const asset = assetInfo(mappedIdentifier, resolutionOptions);
+const url = reactify(getAssetImageUrl)(mappedIdentifier);
 
-const asset = assetInfo(mappedIdentifier, enableAssociation);
 const isCustomAsset = computed(() => get(asset)?.isCustomAsset ?? false);
+
 const chain = computed(() => get(asset)?.evmChain);
 const symbol = computed(() => get(asset)?.symbol);
 const name = computed(() => get(asset)?.name);
@@ -75,51 +80,64 @@ const displayAsset = computed<string>(() => {
 });
 
 const tooltip = computed(() => {
-  if (get(isCustomAsset)) {
-    return {
-      symbol: get(name),
-      name: '',
-    };
+  const assetName = get(name) ?? '';
+  const assetSymbol = get(symbol) ?? '';
+  const isCustom = get(isCustomAsset);
+
+  const emptyNameAsset = (symbol: string) => ({
+    name: '',
+    symbol,
+  });
+
+  if (isCustom) {
+    return emptyNameAsset(assetName);
+  }
+
+  const areSymbolAndNameEqual = assetName.toLowerCase() === assetSymbol.toLowerCase();
+  if (areSymbolAndNameEqual) {
+    return emptyNameAsset(assetSymbol);
   }
 
   return {
-    symbol: get(symbol),
-    name: get(name),
+    name: assetName,
+    symbol: assetSymbol,
   };
 });
 
-const url = computed<string>(() => {
-  const id = get(mappedIdentifier);
-  if (get(symbol) === 'WETH')
-    return `./assets/images/protocols/weth.svg`;
+const usedChainIconSize = computed(() => get(chainIconSize) || `${(Number.parseInt(get(size)) * 50) / 100}px`);
 
-  return getAssetImageUrl(id);
-});
-
-const chainIconSize = computed(
-  () => `${(Number.parseInt(get(size)) * 50) / 100}px`,
-);
-const chainWrapperSize = computed(
-  () => `${Number.parseInt(get(chainIconSize)) + 4}px`,
-);
-const chainIconMargin = computed(() => `-${get(chainIconSize)}`);
-const chainIconPosition = computed(
-  () => `${(Number.parseInt(get(chainIconSize)) * 50) / 100}px`,
-);
+const chainIconMargin = computed(() => `-${get(usedChainIconSize)}`);
 
 const placeholderStyle = computed(() => {
   const pad = get(padding);
   const width = get(size);
   const prop = `calc(${pad} + ${pad} + ${width})`;
   return {
-    width: prop,
     height: prop,
+    width: prop,
   };
 });
 
-watch([symbol, identifier], () => {
+watchImmediate(mappedIdentifier, async (identifier) => {
+  set(pending, true);
   set(error, false);
+
+  if (isDefined(abortController)) {
+    get(abortController).abort();
+  }
+  set(abortController, new AbortController());
+
+  const assetExists = await checkIfAssetExists(identifier, {
+    abortController: get(abortController),
+  });
+
+  set(pending, false);
+  if (!assetExists) {
+    set(error, true);
+  }
 });
+
+const { copy } = useCopy(identifier);
 </script>
 
 <template>
@@ -127,6 +145,7 @@ watch([symbol, identifier], () => {
     :popper="{ placement: 'top' }"
     :open-delay="400"
     :disabled="noTooltip"
+    persist-on-tooltip-hover
   >
     <template #activator>
       <div
@@ -136,27 +155,32 @@ watch([symbol, identifier], () => {
       >
         <div
           v-if="showChain && chain"
+          class="chain"
           :class="{
-            [css.circle]: true,
-            [css.chain]: true,
+            [$style.circle]: true,
+            [$style.chain]: true,
           }"
         >
           <EvmChainIcon
             :chain="chain"
-            :size="chainIconSize"
+            :size="usedChainIconSize"
           />
         </div>
 
         <div
           :style="styled"
           class="flex items-center justify-center cursor-pointer h-full w-full icon-bg"
-          :class="{ [css.circle]: circle }"
+          :class="{
+            [$style.circle]: circle,
+          }"
         >
-          <RuiIcon
+          <GeneratedIcon
             v-if="!currency && pending"
-            name="coin-line"
+            class="absolute"
+            :custom-asset="isCustomAsset"
+            :asset="displayAsset"
             :size="size"
-            class="text-rui-light-text-secondary text-black absolute"
+            :flat="flat"
           />
 
           <GeneratedIcon
@@ -164,14 +188,17 @@ watch([symbol, identifier], () => {
             :custom-asset="isCustomAsset"
             :asset="displayAsset"
             :size="size"
+            :flat="flat"
           />
 
           <AppImage
             v-else
+            v-show="!pending && !error"
+            :class="{ 'rounded-full overflow-hidden': flat }"
             contain
             :alt="displayAsset"
             :src="url"
-            loading="lazy"
+            :loading="pending"
             :size="size"
             @loadstart="pending = true"
             @load="pending = false"
@@ -184,7 +211,29 @@ watch([symbol, identifier], () => {
       </div>
     </template>
 
-    {{ t('asset_icon.tooltip', tooltip) }}
+    <div>
+      {{ t('asset_icon.tooltip', tooltip) }}
+    </div>
+    <div
+      v-if="isEvmIdentifier(identifier)"
+      class="font-mono flex items-center gap-2 -my-1"
+    >
+      {{ (isEvmIdentifier(identifier) ? getAddressFromEvmIdentifier(identifier) : identifier) }}
+      <RuiButton
+        size="sm"
+        variant="text"
+        icon
+        @click="copy()"
+      >
+        <template #prepend>
+          <RuiIcon
+            name="lu-copy"
+            size="16"
+            class="!text-rui-grey-400"
+          />
+        </template>
+      </RuiButton>
+    </div>
   </RuiTooltip>
 </template>
 
@@ -194,12 +243,17 @@ watch([symbol, identifier], () => {
 }
 
 .chain {
-  @apply border bg-white absolute z-[1] flex items-center justify-center;
+  @apply bg-white absolute z-[1] flex items-center justify-center rounded-lg shadow-sm;
+  @apply border border-rui-grey-200;
   margin-top: v-bind(chainIconMargin);
   margin-left: v-bind(chainIconMargin);
-  top: v-bind(chainIconPosition);
-  left: v-bind(chainIconPosition);
-  width: v-bind(chainWrapperSize);
-  height: v-bind(chainWrapperSize);
+  bottom: -4px;
+  right: -4px;
+}
+
+:global(.dark) {
+  .chain {
+    @apply border-rui-grey-900;
+  }
 }
 </style>

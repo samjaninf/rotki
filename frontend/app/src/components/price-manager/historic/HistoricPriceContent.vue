@@ -1,147 +1,127 @@
 <script setup lang="ts">
-import type {
-  DataTableColumn,
-  DataTableSortData,
-} from '@rotki/ui-library-compat';
-import type {
-  HistoricalPrice,
-  HistoricalPriceFormPayload,
-} from '@/types/prices';
+import dayjs from 'dayjs';
+import { useRefPropVModel } from '@/utils/model';
+import { useConfirmStore } from '@/store/confirm';
+import { useHistoricPrices } from '@/composables/price-manager/historic';
+import RowActions from '@/components/helper/RowActions.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import HistoricPriceFormDialog from '@/components/price-manager/historic/HistoricPriceFormDialog.vue';
+import type { HistoricalPrice, HistoricalPriceFormPayload } from '@/types/prices';
+import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
 
 const { t } = useI18n();
 
-const sort: Ref<DataTableSortData> = ref([
+const sort = ref<DataTableSortData<HistoricalPrice>>([
   {
     column: 'timestamp',
     direction: 'desc' as const,
   },
 ]);
 
-const headers = computed<DataTableColumn[]>(() => [
+const headers = computed<DataTableColumn<HistoricalPrice>[]>(() => [
   {
-    label: t('price_table.headers.from_asset'),
     key: 'fromAsset',
+    label: t('price_table.headers.from_asset'),
     sortable: true,
   },
   {
-    label: '',
+    cellClass: '!text-xs !text-rui-text-secondary',
     key: 'wasWorth',
-    cellClass: '!text-xs !text-rui-text-secondary',
+    label: '',
   },
   {
-    label: t('common.price'),
-    key: 'price',
     align: 'end',
+    key: 'price',
+    label: t('common.price'),
     sortable: true,
   },
   {
-    label: t('price_table.headers.to_asset'),
     key: 'toAsset',
+    label: t('price_table.headers.to_asset'),
     sortable: true,
   },
   {
-    label: '',
-    key: 'on',
     cellClass: '!text-xs !text-rui-text-secondary',
+    key: 'on',
+    label: '',
   },
   {
-    label: t('common.datetime'),
     key: 'timestamp',
+    label: t('common.datetime'),
     sortable: true,
   },
   {
-    label: '',
-    key: 'actions',
     class: 'w-[3rem]',
+    key: 'actions',
+    label: '',
   },
 ]);
 
 const emptyPrice: () => HistoricalPriceFormPayload = () => ({
   fromAsset: '',
-  toAsset: '',
   price: '',
-  timestamp: 0,
+  timestamp: dayjs().unix(),
+  toAsset: '',
 });
 
-const price = ref<HistoricalPriceFormPayload>(emptyPrice());
+const modelValue = ref<HistoricalPriceFormPayload>();
+const editMode = ref<boolean>(false);
+
 const filter = ref<{ fromAsset?: string; toAsset?: string }>({});
 const fromAsset = useRefPropVModel(filter, 'fromAsset');
 const toAsset = useRefPropVModel(filter, 'toAsset');
 
-const update = ref(false);
-
 const router = useRouter();
 const route = useRoute();
 
-const { items, loading, save, deletePrice, refresh } = useHistoricPrices(
-  filter,
-  t,
-);
+const { deletePrice, items, loading, refresh } = useHistoricPrices(t, filter);
 
-const {
-  openDialog,
-  setOpenDialog,
-  submitting,
-  closeDialog,
-  setSubmitFunc,
-  trySubmit,
-  setPostSubmitFunc,
-} = useHistoricPriceForm();
-
-function openForm(hPrice: HistoricalPrice | null = null) {
-  set(update, !!hPrice);
-  if (hPrice) {
-    set(price, {
-      ...hPrice,
-      price: hPrice.price.toFixed() ?? '',
-    });
-  }
-  else {
-    set(price, {
-      ...emptyPrice(),
-      fromAsset: get(fromAsset) ?? '',
-      toAsset: get(toAsset) ?? '',
-    });
-  }
-  setOpenDialog(true);
+function add() {
+  set(modelValue, {
+    ...emptyPrice(),
+    fromAsset: get(fromAsset) ?? '',
+    toAsset: get(toAsset) ?? '',
+  });
+  set(editMode, false);
 }
 
-const hideForm = function () {
-  closeDialog();
-  set(price, emptyPrice());
-};
+function edit(item: HistoricalPrice) {
+  set(modelValue, {
+    ...item,
+    price: item.price.toFixed() ?? '',
+  });
+  set(editMode, true);
+}
 
 const { show } = useConfirmStore();
 
 function showDeleteConfirmation(item: HistoricalPrice) {
   show(
     {
-      title: t('price_table.delete.dialog.title'),
       message: t('price_table.delete.dialog.message'),
+      title: t('price_table.delete.dialog.title'),
     },
     () => deletePrice(item),
   );
 }
 
 onMounted(async () => {
-  setSubmitFunc(() => save(get(price), get(update)));
   const query = get(route).query;
 
   if (query.add) {
-    openForm();
+    add();
     await router.replace({ query: {} });
   }
 });
-
-setPostSubmitFunc(() => refresh({ modified: true }));
 </script>
 
 <template>
   <TablePageLayout
-    :title="[
-      t('navigation_menu.manage_prices'),
-      t('navigation_menu.manage_prices_sub.historic_prices'),
-    ]"
+    :title="[t('navigation_menu.manage_prices'), t('navigation_menu.manage_prices_sub.historic_prices')]"
   >
     <template #buttons>
       <RuiTooltip :open-delay="400">
@@ -153,7 +133,7 @@ setPostSubmitFunc(() => refresh({ modified: true }));
             @click="refresh()"
           >
             <template #prepend>
-              <RuiIcon name="refresh-line" />
+              <RuiIcon name="lu-refresh-ccw" />
             </template>
             {{ t('common.refresh') }}
           </RuiButton>
@@ -162,10 +142,10 @@ setPostSubmitFunc(() => refresh({ modified: true }));
       </RuiTooltip>
       <RuiButton
         color="primary"
-        @click="openForm()"
+        @click="add()"
       >
         <template #prepend>
-          <RuiIcon name="add-line" />
+          <RuiIcon name="lu-plus" />
         </template>
         {{ t('price_management.dialog.add_title') }}
       </RuiButton>
@@ -179,11 +159,7 @@ setPostSubmitFunc(() => refresh({ modified: true }));
           clearable
           class="flex-1"
           hide-details
-        >
-          <template #prepend>
-            <RuiIcon name="filter-line" />
-          </template>
-        </AssetSelect>
+        />
         <AssetSelect
           v-model="toAsset"
           outlined
@@ -191,20 +167,16 @@ setPostSubmitFunc(() => refresh({ modified: true }));
           :label="t('price_management.to_asset')"
           clearable
           hide-details
-        >
-          <template #prepend>
-            <RuiIcon name="filter-line" />
-          </template>
-        </AssetSelect>
+        />
       </div>
       <RuiDataTable
+        v-model:sort="sort"
         outlined
         dense
         :cols="headers"
         :loading="loading"
         :rows="items"
         row-attr="fromAsset"
-        :sort.sync="sort"
       >
         <template #item.fromAsset="{ row }">
           <AssetDetails :asset="row.fromAsset" />
@@ -230,27 +202,16 @@ setPostSubmitFunc(() => refresh({ modified: true }));
             :delete-tooltip="t('price_table.actions.delete.tooltip')"
             :edit-tooltip="t('price_table.actions.edit.tooltip')"
             @delete-click="showDeleteConfirmation(row)"
-            @edit-click="openForm(row)"
+            @edit-click="edit(row)"
           />
         </template>
       </RuiDataTable>
     </RuiCard>
 
-    <BigDialog
-      :display="openDialog"
-      :title="
-        update
-          ? t('price_management.dialog.edit_title')
-          : t('price_management.dialog.add_title')
-      "
-      :loading="submitting"
-      @confirm="trySubmit()"
-      @cancel="hideForm()"
-    >
-      <HistoricPriceForm
-        v-model="price"
-        :edit="update"
-      />
-    </BigDialog>
+    <HistoricPriceFormDialog
+      v-model="modelValue"
+      :edit-mode="editMode"
+      @refresh="refresh({ modified: true })"
+    />
   </TablePageLayout>
 </template>

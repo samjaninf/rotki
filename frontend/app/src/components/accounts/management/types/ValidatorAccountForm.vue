@@ -1,26 +1,31 @@
 <script setup lang="ts">
 import Eth2Input from '@/components/accounts/blockchain/Eth2Input.vue';
+import { TaskType } from '@/types/task-type';
+import { useRefPropVModel } from '@/utils/model';
+import { useTaskStore } from '@/store/tasks';
 import type { StakingValidatorManage } from '@/composables/accounts/blockchain/use-account-manage';
 import type { ValidationErrors } from '@/types/api/errors';
+import type { ComponentExposed } from 'vue-component-type-helpers';
 
-const props = defineProps<{
-  value: StakingValidatorManage;
-  errorMessages: ValidationErrors;
+const modelValue = defineModel<StakingValidatorManage>({ required: true });
+
+const errorMessages = defineModel<ValidationErrors>('errorMessages', { required: true });
+
+defineProps<{
   loading: boolean;
 }>();
 
-const emit = defineEmits<{
-  (e: 'input', value: StakingValidatorManage): void;
-}>();
+const validator = useRefPropVModel(modelValue, 'data');
 
-const input = ref<InstanceType<typeof Eth2Input>>();
+const input = ref<ComponentExposed<typeof Eth2Input>>();
 
-const validator = useSimplePropVModel(props, 'data', emit);
-
-async function validate(): Promise<boolean> {
+function validate(): Promise<boolean> {
   assert(isDefined(input));
   return get(input).validate();
 }
+
+const { isTaskRunning } = useTaskStore();
+const taskRunning = isTaskRunning(TaskType.ADD_ETH2_VALIDATOR);
 
 defineExpose({
   validate,
@@ -30,8 +35,9 @@ defineExpose({
 <template>
   <Eth2Input
     ref="input"
-    :validator.sync="validator"
-    :disabled="loading || value.mode === 'edit'"
-    :error-messages="errorMessages"
+    v-model:validator="validator"
+    v-model:error-messages="errorMessages"
+    :edit-mode="modelValue.mode === 'edit'"
+    :disabled="loading || taskRunning"
   />
 </template>

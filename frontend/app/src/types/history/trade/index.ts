@@ -5,28 +5,30 @@ import { EntryMeta } from '@/types/history/meta';
 import { CollectionCommonFields } from '@/types/collection';
 import type { PaginationRequestPayload } from '@/types/common';
 
-export const TradeType = z.enum([
-  'buy',
-  'sell',
-  'settlement buy',
-  'settlement sell',
-]);
+export enum TradeType {
+  BUY = 'buy',
+  SELL = 'sell',
+  SETTLEMENT_BUY = 'settlement buy',
+  SETTLEMENT_SELL = 'settlement sell',
+}
 
-export type TradeType = z.infer<typeof TradeType>;
+export const TradeTypeEnum = z.nativeEnum(TradeType);
+
+export type TradeTypeEnum = z.infer<typeof TradeTypeEnum>;
 
 export const Trade = z.object({
-  tradeId: z.string(),
-  timestamp: z.number(),
-  location: z.string(),
-  baseAsset: z.string(),
-  quoteAsset: z.string(),
-  tradeType: TradeType,
   amount: NumericString,
-  rate: NumericString,
+  baseAsset: z.string(),
   fee: NumericString.nullable(),
   feeCurrency: z.string().nullable(),
   link: z.string().nullable(),
+  location: z.string(),
   notes: z.string().nullable(),
+  quoteAsset: z.string(),
+  rate: NumericString,
+  timestamp: z.number(),
+  tradeId: z.string(),
+  tradeType: TradeTypeEnum,
 });
 
 export type Trade = z.infer<typeof Trade>;

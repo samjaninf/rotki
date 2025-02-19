@@ -13,6 +13,7 @@ from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.modules.eth2.beacon import BeaconInquirer
 from rotkehlchen.chain.structures import TimestampOrBlockRange
 from rotkehlchen.constants import ONE, ZERO
+from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, HOUR_IN_SECONDS, YEAR_IN_SECONDS
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.eth2 import DBEth2
@@ -22,11 +23,12 @@ from rotkehlchen.errors.api import PremiumPermissionError
 from rotkehlchen.errors.misc import InputError, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
 from rotkehlchen.history.events.structures.eth2 import EthBlockEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.premium.premium import Premium
-from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey, Timestamp
+from rotkehlchen.premium.premium import Premium, has_premium_check
+from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey, Timestamp, deserialize_evm_tx_hash
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.data_structures import LRUCacheWithRemove
 from rotkehlchen.utils.interfaces import EthereumModule
@@ -46,7 +48,7 @@ from .structures import (
     ValidatorDetailsWithStatus,
     ValidatorID,
 )
-from .utils import create_profit_filter_queries, scrape_validator_daily_stats
+from .utils import create_profit_filter_queries
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
@@ -117,12 +119,15 @@ class Eth2(EthereumModule):
             self.detect_and_refresh_validators(addresses)
 
         with self.database.conn.read_ctx() as cursor:
-            pubkey_to_ownership = dbeth2.get_pubkey_to_ownership(cursor)
+            pubkey_to_ownership = dbeth2.get_active_pubkeys_to_ownership(cursor)
 
-        if len(pubkey_to_ownership) == []:
+        if len(pubkey_to_ownership) == 0:
             return {}  # nothing detected
 
-        balances = self.beacon_inquirer.get_balances(indices_or_pubkeys=list(pubkey_to_ownership.keys()))  # noqa: E501
+        balances = self.beacon_inquirer.get_balances(
+            indices_or_pubkeys=list(pubkey_to_ownership.keys()),
+            has_premium=has_premium_check(self.premium),
+        )
         for pubkey, balance in balances.items():
             if (ownership_proportion := pubkey_to_ownership.get(pubkey, ONE)) != ONE:
                 balances[pubkey] = balance * ownership_proportion
@@ -188,8 +193,8 @@ class Eth2(EthereumModule):
                 else:  # can only be EXITED
                     got_indices = dbeth2.get_exited_validator_indices(cursor)
 
-            to_filter_indices = got_indices if to_filter_indices is None else to_filter_indices | got_indices  # noqa: E501
-            to_query_indices = got_indices if to_query_indices is None else to_query_indices | got_indices  # noqa: E501
+            to_filter_indices = got_indices if to_filter_indices is None else to_filter_indices & got_indices  # noqa: E501
+            to_query_indices = got_indices if to_query_indices is None else to_query_indices & got_indices  # noqa: E501
 
         if addresses is not None:
             with self.database.conn.read_ctx() as cursor:
@@ -197,7 +202,7 @@ class Eth2(EthereumModule):
                     cursor=cursor,
                     addresses=addresses,
                 )
-            to_query_indices = associated_indices if to_query_indices is None else to_query_indices | associated_indices  # noqa: E501
+            to_query_indices = associated_indices if to_query_indices is None else to_query_indices & associated_indices  # noqa: E501
             # also add the to_filter_indices since this will enable deposit association
             # to validator index by address. We need to do this instead of adding
             # addresses to filter arguments since then we would be ANDing the filters
@@ -207,7 +212,7 @@ class Eth2(EthereumModule):
         with self.database.conn.read_ctx() as cursor:
             accounts = self.database.get_blockchain_accounts(cursor)
 
-        withdrawals_filter_query, exits_filter_query, execution_filter_query = create_profit_filter_queries(  # noqa: E501
+        withdrawals_filter_query, exits_filter_query, blocks_execution_filter_query, mev_execution_filter_query = create_profit_filter_queries(  # noqa: E501
             from_ts=from_ts,
             to_ts=to_ts,
             validator_indices=list(to_filter_indices) if to_filter_indices is not None else None,
@@ -215,11 +220,13 @@ class Eth2(EthereumModule):
         )
 
         with self.database.conn.read_ctx() as cursor:
-            withdrawals_amounts, exits_pnl, execution_rewards_amounts = dbeth2.get_validators_profit(  # noqa: E501
+            withdrawals_amounts, exits_pnl, blocks_rewards_amounts, mev_rewards_amounts = dbeth2.get_validators_profit(  # noqa: E501
                 cursor=cursor,
                 exits_filter_query=exits_filter_query,
                 withdrawals_filter_query=withdrawals_filter_query,
-                execution_filter_query=execution_filter_query,
+                blocks_execution_filter_query=blocks_execution_filter_query,
+                mev_execution_filter_query=mev_execution_filter_query,
+                to_filter_indices=to_filter_indices,
             )
 
         pnls: defaultdict[int, dict] = defaultdict(dict)
@@ -227,7 +234,8 @@ class Eth2(EthereumModule):
         for key_label, mapping in (
                 ('withdrawals', withdrawals_amounts),
                 ('exits', exits_pnl),
-                ('execution', execution_rewards_amounts),
+                ('execution_blocks', blocks_rewards_amounts),
+                ('execution_mev', mev_rewards_amounts),
         ):
             for vindex, amount in mapping.items():
                 if amount == ZERO:
@@ -247,6 +255,7 @@ class Eth2(EthereumModule):
         if now - to_ts <= DAY_IN_SECONDS:
             balances = self.beacon_inquirer.get_balances(
                 indices_or_pubkeys=list(to_query_indices),
+                has_premium=has_premium_check(self.premium),
             )
             for pubkey, balance in balances.items():
                 entry = pnls[pubkey_to_index[pubkey]]
@@ -352,7 +361,7 @@ class Eth2(EthereumModule):
 
         for validator_index, last_ts, exit_ts in result:
             self._maybe_backoff_beaconchain(now=now)
-            new_stats = scrape_validator_daily_stats(
+            new_stats = self.beacon_inquirer.query_validator_daily_stats(
                 validator_index=validator_index,
                 last_known_timestamp=last_ts,
                 exit_ts=exit_ts,
@@ -380,14 +389,25 @@ class Eth2(EthereumModule):
 
     def query_single_address_withdrawals(self, address: ChecksumEvmAddress, to_ts: Timestamp) -> None:  # noqa: E501
         with self.database.conn.read_ctx() as cursor:
-            last_query = self.database.get_dynamic_cache(
-                cursor=cursor,
-                name=DBCacheDynamic.WITHDRAWALS_TS,
-                address=address,
-            )
+            # Get the last query timestamp for this address and a count of this address's
+            # validators that are either active, exited but never queried, or exited and
+            # queried but exited_timestamp is after last query timestamp.
+            key_name = DBCacheDynamic.WITHDRAWALS_TS.get_db_key(address=address)
+            last_query, validator_count = cursor.execute(
+                'SELECT kv.value, COUNT(*) FROM eth2_validators ev '
+                'LEFT JOIN key_value_cache kv ON kv.name=? WHERE ev.withdrawal_address=? AND '
+                '(ev.exited_timestamp IS NULL OR kv.name IS NULL OR ev.exited_timestamp > kv.value)',  # noqa: E501
+                (key_name, address),
+            ).fetchone()
+
+        if validator_count == 0:
+            return
 
         from_ts = Timestamp(0)
-        if last_query is not None and to_ts - (from_ts := last_query) <= HOUR_IN_SECONDS * 3:
+        if (
+            last_query is not None and
+            to_ts - (from_ts := Timestamp(int(last_query))) <= HOUR_IN_SECONDS * 3
+        ):
             return
 
         log.debug(f'Querying {address} ETH withdrawals from {from_ts} to {to_ts}')
@@ -561,41 +581,67 @@ class Eth2(EthereumModule):
         transaction events if they can be found"""
         with self.database.conn.read_ctx() as cursor:
             cursor.execute(
-                'SELECT B_H.identifier, B_T.block_number, B_H.notes FROM evm_transactions B_T '
-                'LEFT JOIN evm_events_info B_E '
-                'ON B_T.tx_hash=B_E.tx_hash LEFT JOIN history_events B_H '
-                'ON B_E.identifier=B_H.identifier WHERE '
-                'B_H.asset="ETH" AND B_H.type="receive" AND B_H.subtype="none" '
-                'AND B_T.block_number=('
-                'SELECT A_S.is_exit_or_blocknumber '
-                'FROM history_events A_H LEFT JOIN eth_staking_events_info A_S '
-                'ON A_H.identifier=A_S.identifier WHERE A_H.subtype="mev reward" AND '
-                'A_S.is_exit_or_blocknumber=B_T.block_number AND '
-                'A_H.amount=B_H.amount AND A_H.location_label=B_H.location_label)',
+                """SELECT B_H.identifier, B_T.block_number, B_H.notes, B_T.tx_hash, (
+                    SELECT A_S.validator_index FROM history_events A_H
+                    LEFT JOIN eth_staking_events_info A_S ON A_H.identifier=A_S.identifier
+                    WHERE A_H.subtype=? AND A_S.is_exit_or_blocknumber=B_T.block_number
+                    AND A_H.location_label=B_H.location_label
+                ) as validator_index
+                FROM evm_transactions B_T LEFT JOIN evm_events_info B_E ON B_T.tx_hash=B_E.tx_hash
+                LEFT JOIN history_events B_H ON B_E.identifier=B_H.identifier
+                WHERE B_H.asset=? AND B_H.type=? AND B_H.subtype=? AND B_T.block_number=(
+                    SELECT A_S.is_exit_or_blocknumber FROM history_events A_H
+                    LEFT JOIN eth_staking_events_info A_S ON A_H.identifier=A_S.identifier
+                    WHERE A_H.subtype=? AND A_S.is_exit_or_blocknumber=B_T.block_number
+                    AND A_H.location_label=B_H.location_label
+                )""",
+                (
+                    HistoryEventSubType.MEV_REWARD.serialize(),
+                    A_ETH.identifier,
+                    HistoryEventType.RECEIVE.serialize(),
+                    HistoryEventSubType.NONE.serialize(),
+                    HistoryEventSubType.MEV_REWARD.serialize(),
+                ),
             )
-            result = cursor.fetchall()
+            changes = []
+            for entry in cursor:
+                event_identifier = EthBlockEvent.form_event_identifier(entry[1])
+                tx_hash = deserialize_evm_tx_hash(entry[3])
+                changes.append((
+                    event_identifier,
+                    event_identifier,
+                    f'{entry[2]} as mev reward for block {entry[1]} in {tx_hash.hex()}',  # pylint: disable=no-member
+                    HistoryEventType.STAKING.serialize(),
+                    HistoryEventSubType.MEV_REWARD.serialize(),
+                    json.dumps({'validator_index': entry[4]}),  # extra data
+                    entry[0],  # identifier
+                    tx_hash,
+                ))
 
-        changes = [(
-            EthBlockEvent.form_event_identifier(entry[1]),
-            2,
-            f'{entry[2]} as mev reward for block {entry[1]}',
-            HistoryEventType.STAKING.serialize(),
-            HistoryEventSubType.MEV_REWARD.serialize(),
-            entry[0],
-        ) for entry in result]
         with self.database.user_write() as write_cursor:
             for changes_entry in changes:
+                result = write_cursor.execute(
+                    'SELECT COUNT(*) FROM history_events HE LEFT JOIN evm_events_info EE ON '
+                    'HE.identifier = EE.identifier WHERE HE.event_identifier=? AND EE.tx_hash=?',
+                    (changes_entry[0], changes_entry[7]),
+                ).fetchone()[0]
+                if result == 1:  # Has already been moved.
+                    log.debug(f'Did not move history event with {changes_entry} in combine_block_with_tx_events since event with same tx_hash already combined in the block')  # noqa: E501
+                    write_cursor.execute('DELETE FROM history_events WHERE identifier=?', (changes_entry[6],))  # noqa: E501
+                    continue
+
                 try:
                     write_cursor.execute(
                         'UPDATE history_events '
-                        'SET event_identifier=?, sequence_index=?, notes=?, type=?, subtype=?'
-                        'WHERE identifier=?',
-                        changes_entry,
+                        'SET event_identifier=?, sequence_index=('
+                        'SELECT MAX(sequence_index) FROM history_events E2 WHERE E2.event_identifier=?)+1, '  # noqa: E501
+                        'notes=?, type=?, subtype=?, extra_data=? WHERE identifier=?',
+                        changes_entry[:-1],
                     )
                 except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
                     log.warning(f'Could not update history events with {changes_entry} in combine_block_with_tx_events due to {e!s}')  # noqa: E501
                     # already exists. Probably right after resetting events? Delete old one
-                    write_cursor.execute('DELETE FROM history_events WHERE identifier=?', (changes_entry[5],))  # noqa: E501
+                    write_cursor.execute('DELETE FROM history_events WHERE identifier=?', (changes_entry[6],))  # noqa: E501
 
     def detect_exited_validators(self) -> None:
         """This function will detect any validators that have exited from the ones that
@@ -654,9 +700,8 @@ class Eth2(EthereumModule):
         pubkey_to_data: dict[Eth2PubKey, tuple[int, str]] = {}
         with self.database.conn.read_ctx() as cursor:
             cursor.execute(
-                'SELECT H.identifier, H.amount, E.extra_data from history_events H LEFT JOIN eth_staking_events_info S '  # noqa: E501
-                'ON H.identifier=S.identifier LEFT JOIN evm_events_info E '
-                'ON E.identifier=H.identifier WHERE S.validator_index=?',
+                'SELECT H.identifier, H.amount, H.extra_data from history_events H LEFT JOIN eth_staking_events_info S '  # noqa: E501
+                'ON H.identifier=S.identifier WHERE S.validator_index=?',
                 (UNKNOWN_VALIDATOR_INDEX,),
             )
             for entry in cursor:
@@ -699,21 +744,38 @@ class Eth2(EthereumModule):
                 staking_changes,
             )
             write_cursor.executemany(
-                'UPDATE history_events SET notes=? WHERE identifier=?',
+                'UPDATE history_events SET extra_data=null, notes=? WHERE identifier=?',
                 history_changes,
-            )
-            write_cursor.executemany(
-                'UPDATE evm_events_info SET extra_data=null WHERE identifier=?',
-                [(x[1],) for x in staking_changes],
             )
             write_cursor.executemany(
                 'INSERT OR IGNORE INTO eth2_validators(validator_index, public_key, ownership_proportion) VALUES(?, ?, ?)',  # noqa: E501
                 validators,
             )
 
+    def _adjust_blockproduction_at_account_modification(
+            self,
+            address: ChecksumEvmAddress,
+            event_type: Literal[HistoryEventType.INFORMATIONAL, HistoryEventType.STAKING],
+    ) -> None:
+        """Modify any existing block proposals to be staking and no longer informational
+           if the fee recipient is the newly added address and vice versa if the fee recipient
+           is the removed address then turn to informational."""
+        with self.database.user_write() as write_cursor:
+            write_cursor.execute(
+                'UPDATE history_events SET type=? WHERE entry_type=? AND sequence_index=0 AND location_label=?',  # noqa: E501
+                (
+                    event_type.serialize(),
+                    HistoryBaseEntryType.ETH_BLOCK_EVENT.serialize_for_db(),
+                    address,
+                ),
+            )
+
     # -- Methods following the EthereumModule interface -- #
     def on_account_addition(self, address: ChecksumEvmAddress) -> None:
-        """Just add validators to DB."""
+        """
+        - Add validators to the DB for the new address if any
+        - Adjust the existing block production events to maybe not be informational.
+        """
         try:
             self.detect_and_refresh_validators([address])
         except RemoteError as e:
@@ -722,8 +784,20 @@ class Eth2(EthereumModule):
                 f' If you have Eth2 staked balances the final balance results may not be accurate',
             )
 
+        self._adjust_blockproduction_at_account_modification(address, HistoryEventType.STAKING)
+
     def on_account_removal(self, address: ChecksumEvmAddress) -> None:
-        pass
+        """
+        Adjust existing block production events to become informational if they involve the address
+        """
+        self._adjust_blockproduction_at_account_modification(address, HistoryEventType.INFORMATIONAL)  # noqa: E501
+
+        with self.database.conn.write_ctx() as write_cursor:
+            self.database.delete_dynamic_cache(
+                write_cursor=write_cursor,
+                name=DBCacheDynamic.WITHDRAWALS_TS,
+                address=address,
+            )
 
     def deactivate(self) -> None:
         with self.database.user_write() as write_cursor:

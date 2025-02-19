@@ -1,19 +1,26 @@
-import type {
-  EditHistoryEventPayload,
-  NewHistoryEventPayload,
-} from '@/types/history/events';
+import { useMessageStore } from '@/store/message';
+import { useHistoryEvents } from '@/composables/history/events/index';
 import type HistoryEventAssetPriceForm from '@/components/history/events/forms/HistoryEventAssetPriceForm.vue';
+import type { EditHistoryEventPayload, NewHistoryEventPayload } from '@/types/history/events';
 
 export const useHistoryEventsForm = createSharedComposable(() => {
   const { setMessage } = useMessageStore();
-  const { editHistoryEvent, addHistoryEvent } = useHistoryEvents();
+  const { addHistoryEvent, editHistoryEvent } = useHistoryEvents();
+
+  const defaultNotes = ref<boolean>(false);
+  const getPayloadNotes = (newNotes?: string | null, oldNotes?: string | null): undefined | string => {
+    if (!get(defaultNotes) || newNotes !== oldNotes)
+      return newNotes ?? undefined;
+
+    return undefined;
+  };
 
   const saveHistoryEventHandler = async (
     payload: NewHistoryEventPayload | EditHistoryEventPayload,
-    assetPriceForm: Ref<InstanceType<typeof HistoryEventAssetPriceForm> | null>,
+    assetPriceForm: Ref<InstanceType<typeof HistoryEventAssetPriceForm> | undefined>,
     errorMessages: Ref<Record<string, string[]>>,
     reset: () => any,
-  ) => {
+  ): Promise<boolean> => {
     const submitPriceResult = await get(assetPriceForm)!.submitPrice(payload);
 
     if (!submitPriceResult.success) {
@@ -23,9 +30,7 @@ export const useHistoryEventsForm = createSharedComposable(() => {
 
     const edit = 'identifier' in payload;
 
-    const result = !edit
-      ? await addHistoryEvent(payload)
-      : await editHistoryEvent(payload);
+    const result = !edit ? await addHistoryEvent(payload) : await editHistoryEvent(payload);
 
     if (result.success) {
       reset();
@@ -47,7 +52,8 @@ export const useHistoryEventsForm = createSharedComposable(() => {
   };
 
   return {
-    ...useForm<boolean>(),
+    defaultNotes,
+    getPayloadNotes,
     saveHistoryEventHandler,
   };
 });

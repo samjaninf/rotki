@@ -126,6 +126,7 @@ def test_add_get_evm_transactions(data_dir, username, sql_vm_instructions_cb):
             has_premium=True,
         )
         assert result == [tx1, tx3]
+    data.logout()
 
 
 def test_query_also_internal_evm_transactions(data_dir, username, sql_vm_instructions_cb):
@@ -265,7 +266,7 @@ def test_query_also_internal_evm_transactions(data_dir, username, sql_vm_instruc
         assert len(errors) == 0
         assert len(warnings) == 0
 
-        result, total_filter_count = dbevmtx.get_evm_transactions_and_limit_info(
+        result = dbevmtx.get_evm_transactions(
             cursor=cursor,
             filter_=EvmTransactionsFilterQuery.make(
                 accounts=[EvmAccount(ETH_ADDRESS3, chain_id=ChainID.ETHEREUM)],
@@ -274,11 +275,10 @@ def test_query_also_internal_evm_transactions(data_dir, username, sql_vm_instruc
             has_premium=True,
         )
         assert {x.tx_hash for x in result} == {tx_hashes[0], tx_hashes[2], tx_hashes[3]}
-        assert total_filter_count == 3
 
         # Now try transaction query by relevant addresses and see we get more due to the
         # internal tx mappings
-        result, total_filter_count = dbevmtx.get_evm_transactions_and_limit_info(
+        result = dbevmtx.get_evm_transactions(
             cursor=cursor,
             filter_=EvmTransactionsFilterQuery.make(
                 accounts=[EvmAccount(ETH_ADDRESS1)],
@@ -286,7 +286,6 @@ def test_query_also_internal_evm_transactions(data_dir, username, sql_vm_instruc
             has_premium=True,
         )
         assert result == [tx1, tx3, tx4, tx5]
-        assert total_filter_count == 4
 
         result = dbevmtx.get_evm_transactions(
             cursor=cursor,
@@ -307,3 +306,4 @@ def test_query_also_internal_evm_transactions(data_dir, username, sql_vm_instruc
             has_premium=True,
         )
         assert result == [tx1, tx3, tx4]
+    data.logout()

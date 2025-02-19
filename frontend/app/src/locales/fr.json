@@ -25,14 +25,13 @@
   },
   "account_balances": {
     "confirm_delete": {
-      "description_address": "Êtes-vous sûr de vouloir supprimer {count} adresse(s)",
+      "description_address": "Êtes-vous sûr de vouloir supprimer l'adresse {address} de la chaîne {chain} ?",
       "description_xpub": "Êtes-vous sûr de vouloir supprimer {address}",
       "title": "Suppression de compte"
     },
     "data_table": {
       "loading": "Veuillez patienter pendant que rotki interroge la blockchain..."
     },
-    "delete_tooltip": "Supprimer le(s) compte(s) sélectionné(s)",
     "detect_tokens": {
       "tooltip": {
         "last_detected": "Dernière détection : {time}",
@@ -42,11 +41,7 @@
     },
     "edit_tooltip": "Modifier le compte",
     "headers": {
-      "num_of_detected_tokens": "Nb. de tokens détectés",
-      "ownership": "Propriété",
-      "usd_value": "Valeur en {symbol}",
-      "usd_value_eth": "Valeur totale en {symbol} des actifs du compte",
-      "validator": "Index du validateur | Clé publique"
+      "usd_value": "Valeur en {symbol}"
     },
     "refresh_tooltip": "Actualiser les soldes {blockchain} en ignorant toutes les entrées en cache"
   },
@@ -72,14 +67,6 @@
       "xpub_non_empty": "Le champ XPUB ne peut pas être vide"
     }
   },
-  "account_group_header": {
-    "copy_tooltip": "Copier le xpub dans le presse-papiers",
-    "delete_tooltip": "Supprimer l'entrée et tous les comptes en dessous",
-    "derivation_path": "Chemin de dérivation",
-    "edit_tooltip": "Modifier l'étiquette et les tags du xpub",
-    "standalone": "Indépendant",
-    "xpub": "xpub :"
-  },
   "account_management": {
     "about_tooltip": "Afficher le modal à propos de l'application",
     "creation": {
@@ -103,7 +90,6 @@
       "title": "Paramètres d'exportation CSV"
     },
     "messages": {
-      "account_for_assets_movements": "Erreur lors du paramétrage du compte pour les mouvements d'actifs : {message}",
       "cost_basis": {
         "disabled": "Calcul du coût de base passé désactivé avec succès",
         "enabled": "Calcul du coût de base passé activé avec succès",
@@ -136,7 +122,6 @@
     }
   },
   "account_settings_display": {
-    "account_asset_movement": "Les frais de mouvement des actifs du compte ont été pris en compte :",
     "cost_basis_fees": "Les frais de coût de base ont été pris en compte :",
     "cost_basis_method": "Méthode de coût de base :",
     "crypto2crypto": "Les échanges crypto à crypto ont été pris en compte :",
@@ -200,7 +185,6 @@
     },
     "trade": {
       "labels": {
-        "account_for_assets_movements": "Prendre en compte les frais de mouvements d'actifs",
         "calculate_past_cost_basis": "Calculer le coût de base passé lors de la création du rapport",
         "include_fees_in_cost_basis": "Prendre en compte les frais dans le coût de base",
         "cost_basis_method": "Méthode de coût de base",
@@ -222,16 +206,6 @@
       "task": {
         "description": "Ajout d'un validateur de staking ETH",
         "title": "Ajout du validateur : {id}"
-      }
-    },
-    "asset_movements": {
-      "error": {
-        "description": "Échec de la requête pour {exchange} : {error}",
-        "title": "Dépôts & retraits pour {exchange}"
-      },
-      "task": {
-        "description": "Récupération des dépôts & retraits pour {exchange}",
-        "title": "Dépôts & retraits de l'échange"
       }
     },
     "assets": {
@@ -309,7 +283,6 @@
             "existed": "A déjà été ajouté auparavant",
             "is_contract": "Est une adresse de contrat ETH"
           },
-          "description": "Échec de l'ajout de {addresses} nouveaux comptes {blockchain} : {error}",
           "failed_list_description": "Échec de l'ajout de {addresses} nouveaux comptes {blockchain}. Veuillez vérifier à nouveau si ces compte(s) sont valides :\n {list}"
         },
         "success": {
@@ -439,15 +412,6 @@
         },
         "task": {
           "title": "Interrogation des airdrops"
-        }
-      },
-      "balancer_balances": {
-        "error": {
-          "description": "Échec de la requête des soldes Balancer : {message}",
-          "title": "Requête des soldes Balancer"
-        },
-        "task": {
-          "title": "Interrogation des soldes Balancer"
         }
       },
       "balances": {
@@ -665,7 +629,7 @@
     },
     "history_events_export": {
       "message": {
-        "failure": "Échec de l'exportation des événements historiques",
+        "failure": "Échec de l'exportation des événements historiques: {description}",
         "success": "Événements historiques exportés avec succès en CSV"
       },
       "title": "Exportation des événements historiques"
@@ -846,10 +810,10 @@
       },
       "refresh_general_cache": {
         "error": {
-          "message": "Échec du rafraîchissement du cache général : {message}"
+          "message": "Échec de l'actualisation des données du protocole {name}: {message}"
         },
         "task": {
-          "title": "Rafraîchissement du cache général (Curve, MakerDAO, Yearn)"
+          "title": "Actualisation des données du protocole ({name})"
         }
       },
       "tag_add": {
@@ -915,22 +879,22 @@
     },
     "transactions_redecode": {
       "error": {
-        "description": "Échec de la récupération des événements à partir des transactions : {error}",
-        "title": "Récupération des événements à partir des transactions"
+        "description": "Échec du décodage des événements des transactions : {error}",
+        "title": "Décodage des événements des transactions"
       },
       "task": {
-        "description": "Récupération des événements des transactions",
-        "title": "Récupération des événements des transactions Evm"
+        "description": "Décodage des événements des transactions : {tx} ({chain})",
+        "title": "Décodage des événements de transaction"
       }
     },
-    "transactions_redecode_missing": {
+    "transactions_redecode_by_chain": {
       "error": {
-        "description": "Échec de la récupération des événements manquants des transactions pour la chaîne {chain} : {error}",
-        "title": "Récupération des événements manquants des transactions"
+        "description": "Échec du décodage des événements de {chain} : {error}",
+        "title": "Décodage des événements des transactions"
       },
       "task": {
-        "description": "Récupération des événements de transactions pour la chaîne {chain}",
-        "title": "Récupération des événements manquants des transactions Evm"
+        "description": "Décodage des transactions pour les événements {chain}",
+        "title": "Décodage des événements de transaction"
       }
     },
     "unignore": {
@@ -947,10 +911,6 @@
       "title": "Module activé"
     },
     "view_addresses": "Voir les adresses demandées pour {name}"
-  },
-  "address_account_form": {
-    "hint": "Lorsqu'il est coché, cette adresse sera suivie pour toutes les chaînes EVM prises en charge (Ethereum, Optimism, etc.)",
-    "label": "Ajouter à toutes les chaînes EVM prises en charge"
   },
   "address_book": {
     "actions": {
@@ -1011,15 +971,11 @@
           "global_address_book": "Annuaire d'adresses global",
           "hardcoded_mappings": "Mappages codés en dur",
           "private_address_book": "Annuaire d'adresses privé"
-        },
-        "title": "L'ordre de priorité des noms retournés est le suivant. De haut en bas, le premier nom trouvé sera affiché."
+        }
       },
       "private": "Privé",
       "private_description": "L'annuaire d'adresses est enregistré uniquement pour ce compte."
     }
-  },
-  "address_name_priority_setting": {
-    "data_name": "priorité"
   },
   "airdrops": {
     "headers": {
@@ -1157,7 +1113,6 @@
     },
     "newly_detected": {
       "accept_selected": "Accepter les jetons sélectionnés",
-      "ignore_selected": "Ignorer les jetons sélectionnés",
       "seen_during": "Vu pendant",
       "select_deselect_all_tokens": "Sélectionner/Désélectionner tous les jetons",
       "subtitle": "Inspecter la liste des jetons détectés récemment et ajouter tous les jetons spam à la liste des jetons ignorés"
@@ -1171,7 +1126,7 @@
     "underlying_tokens": "Jetons sous-jacents"
   },
   "asset_update": {
-    "advanced": "Avancé",
+    "advanced": "Options avancées",
     "description": "Une version {remote} de la base de données d'actifs est disponible. Voulez-vous mettre à jour depuis la version {local} ?",
     "manual": {
       "check": "Vérifier la mise à jour",
@@ -1187,13 +1142,11 @@
         "title": "Réinitialiser la base de données d'actifs"
       },
       "hard_reset": "Réinitialisation complète",
-      "hard_reset_hint": "Cette option réinitialisera également les actifs que vous avez ajoutés manuellement.",
       "hard_restore_confirmation": {
         "message": "Il existe des actifs qui seront supprimés et qui pourraient entraîner un état incohérent dans ce compte ou d'autres comptes dans le système. Confirmez cette action uniquement si vous savez ce que vous faites.",
         "title": "Opération dangereuse"
       },
       "soft_reset": "Restauration partielle",
-      "soft_reset_hint": "Cette option ne réinitialisera pas les actifs que vous avez ajoutés manuellement.",
       "subtitle": "Supprimer les actifs personnalisés et réinitialiser la base de données d'actifs à son état initial. Attention : Cette opération peut affecter d'autres utilisateurs dans le même système utilisant la base de données pour les actifs.",
       "success": {
         "description": "La base de données d'actifs a été restaurée avec succès. Vous devrez maintenant vous reconnecter pour appliquer les changements.",
@@ -1413,15 +1366,6 @@
   "backend_settings_button": {
     "tooltip": "Modifier les paramètres du backend. Le changement des paramètres entraînera le redémarrage du backend rotki."
   },
-  "backup_manager": {
-    "backup_button": "Créer une nouvelle sauvegarde",
-    "delete_selected": "Supprimer les sauvegardes sélectionnées",
-    "title": "Sauvegardes de la base de données utilisateur"
-  },
-  "balancer": {
-    "loading": "Veuillez patienter pendant le chargement de vos pools de liquidités...",
-    "premium": "Fonctionnalité Balancer "
-  },
   "binance_market_selector": {
     "default_label": "Filtrer la paire de marché",
     "query_all": {
@@ -1441,10 +1385,6 @@
   },
   "blockchain_balances": {
     "add_account": "Ajouter un compte",
-    "balances": {
-      "common": "Solde {chain}",
-      "eth2": "de participation Ethereum"
-    },
     "evm_detection": {
       "title": "Détecter les comptes EVM",
       "tooltip": "Détecter les activités de tous les comptes EVM enregistrés dans d'autres chaînes EVM, et les enregistrer."
@@ -1453,15 +1393,6 @@
       "add_title": "Ajouter un compte blockchain",
       "edit_subtitle": "Modifier les détails du compte",
       "edit_title": "Modifier le compte blockchain"
-    },
-    "metamask_import": {
-      "error": {
-        "description": "L'importation des adresses à partir de Metamask n'a pas pu être terminée : {error}",
-        "title": "Importation d'adresse Metamask"
-      }
-    },
-    "per_asset": {
-      "title": "Solde blockchain par actif"
     },
     "title": "Solde blockchain par actif"
   },
@@ -1500,7 +1431,6 @@
       "with": "avec"
     },
     "details": {
-      "fee": "Frais",
       "link": "Lien",
       "title": "Détails de la transaction"
     },
@@ -1544,7 +1474,6 @@
     "entry_type": "Type d'entrée",
     "account": "Compte",
     "actions": {
-      "accept": "Accepter",
       "add": "Ajouter",
       "back": "Retour",
       "cancel": "Annuler",
@@ -1552,7 +1481,8 @@
       "close": "Fermer",
       "confirm": "Confirmer",
       "continue": "Continuer",
-      "copy": "Copier dans le presse-papier",
+      "copy": "Copier",
+      "copy_to_clipboard": "Copier dans le presse-papier",
       "create": "Créer",
       "delete": "Supprimer",
       "dismiss": "Rejeter",
@@ -1571,7 +1501,6 @@
       "pull": "Tirer",
       "push": "Pousser",
       "save": "Enregistrer",
-      "save_continue": "Sauvegarder et continuer",
       "search": "Rechercher",
       "skip": "Sauter",
       "terminate": "Terminer",
@@ -1594,7 +1523,14 @@
     "details": "Détails",
     "events": "Événements",
     "here": "ici",
+    "filter": {
+      "date_hint": "format {format} HH:mm:ss (les secondes sont facultatives)",
+      "end_date": "filtrer par la date de fin de la période",
+      "start_date": "filtrer par la date de début de la période"
+    },
+    "fee": "Frais",
     "ignored_in_accounting": "Ignoré dans la comptabilité",
+    "important_notice": "Remarque importante :",
     "location": "Emplacement",
     "multi_chain": "Multi Chaîne",
     "name": "Nom",
@@ -1917,23 +1853,19 @@
       "select_image_source": "Sélectionner la source de mise en cache d'images à effacer",
       "subtitle": "Vous permet de purger la mise en cache d'images par rotki",
       "success": "Le cache a été effacé avec succès",
-      "title": "Effacer la mise en cache d'images",
-      "tooltip": "Effacer le cache d'images pour la source sélectionnée"
+      "title": "Effacer la mise en cache d'images"
     },
     "refresh_cache": {
       "confirm": {
-        "message": "Es-tu sûr de vouloir actualiser la mise en cache pour {source} ?",
-        "title": "Confirmer l'actualisation de la mise en cache"
+        "message": "Êtes-vous sûr de vouloir actualiser les données du protocole pour {source}?",
+        "title": "Confirmer l'actualisation des données du protocole"
       },
-      "error": "Échec de l'actualisation de la mise en cache pour {source} : {message}",
-      "label": {
-        "general_cache": "Mise en cache générale (Curve, MakerDAO, Yearn)"
-      },
-      "select_cache": "Sélectionner la mise en cache à actualiser",
-      "subtitle": "Vous permet de rafraîchir les données mises en cache par rotki",
-      "success": "Le cache a été effacé avec succès",
-      "title": "Actualiser la mise en cache",
-      "tooltip": "Rafraîchir la mise en cache pour la source sélectionnée"
+      "error": "Échec de l'effacement des données du protocole pour {source}: {message}",
+      "select_cache": "Sélectionner les données du protocole à actualiser",
+      "subtitle": "Permet d'actualiser les données du protocole dans rotki",
+      "success": "Les données du protocole ont été effacées avec succès",
+      "title": "Actualiser les données du protocole",
+      "tooltip": "Actualiser les données du protocole pour la source sélectionnée"
     },
     "title": "Gérer les données"
   },
@@ -1973,19 +1905,6 @@
       "message": "Il y a eu un problème lors du chargement de la liste des sauvegardes disponibles : {message}",
       "title": "Chargement de la sauvegarde de la base de données"
     }
-  },
-  "database_info_display": {
-    "directory": "Répertoire de la base de données :",
-    "globaldb": "Base de données globale",
-    "globaldb_assets": "Version des actifs :",
-    "globaldb_schema": "Version du schéma :",
-    "title": "Informations sur la base de données",
-    "userdb": "Base de données utilisateur",
-    "userdb_size": "Taille sur disque :",
-    "userdb_version": "Version de la base de données :"
-  },
-  "database_manager": {
-    "refresh_tooltip": "Actualiser la liste des sauvegardes de la base de données"
   },
   "date_format_help": {
     "directive": {
@@ -2061,31 +1980,6 @@
       }
     }
   },
-  "deposit_withdrawals": {
-    "filter": {
-      "action": "filtrer par l'action",
-      "asset": "filtrer par l'actif",
-      "date_hint": "format {format} HH:mm:ss (les secondes sont facultatives)",
-      "end_date": "filtrer par la date de fin de la période",
-      "location": "filtrer par l'emplacement",
-      "start_date": "filtrer par la date de début de la période"
-    }
-  },
-  "deposits_withdrawals": {
-    "details": {
-      "no_details": "Aucun détail trouvé.",
-      "title": "Détails"
-    },
-    "headers": {
-      "action": "Action",
-      "fee": "Frais"
-    },
-    "label": "mouvements d'actifs",
-    "loading": "Patientez s'il vous plaît pendant que vos mouvements d'actifs se chargent...",
-    "refresh_tooltip": " Rafraîchir les dépôts et les retraits",
-    "selected": "{count} élément(s) sélectionné(s)",
-    "title": "Dépôts et retraits Exchange"
-  },
   "docker_warning": {
     "action": "Oui, je comprends",
     "documentation": "documentation",
@@ -2121,7 +2015,6 @@
     "public_key": "Clé publique"
   },
   "eth2_page": {
-    "no_premium": "Le staking ETH est",
     "toggle": {
       "withdrawal": "Dépositaire",
       "hint": "Changer le mode de filtrage et d'affichage entre les validateurs ETH2 et les adresses ETH1",
@@ -2168,10 +2061,8 @@
     "loading_error": {
       "title": "Chargement des nœuds RPC {chain}"
     },
-    "private_node": "Ce nœud est privé et a été ajouté par l'utilisateur",
-    "private_node_hint": "Les nœuds privés ont la priorité sur les nœuds publics",
     "public_node": "Ce nœud est public",
-    "weight": "Poids du nœud {weight}%"
+    "weight": "{weight}%"
   },
   "exchange_balances": {
     "add_exchange": "Ajouter une plateforme d'échange",
@@ -2185,16 +2076,9 @@
     "tabs": {
       "balances": "Soldes",
       "savings_interest_history": "Historique des intérêts d'épargne"
-    },
-    "title": "Soldes des plateformes d'échange"
+    }
   },
   "exchange_keys_form": {
-    "api_key": {
-      "non_empty": "Le champ Clé API ne peut être vide."
-    },
-    "api_secret": {
-      "non_empty": "Le champ Secret API ne peut être vide."
-    },
     "edit": {
       "activate_tooltip": "Modifier les clés API pour la plateforme d'échange.",
       "deactivate_tooltip": "Annuler la modification des clés API pour la plateforme d'échange."
@@ -2202,9 +2086,6 @@
     "exchange": "Plateforme d'Échange",
     "name": {
       "non_empty": "Le champ Nom ne peut être vide."
-    },
-    "passphrase": {
-      "non_empty": "Le champ Phrase d'Authentification ne peut être vide."
     }
   },
   "exchange_settings": {
@@ -2261,7 +2142,6 @@
   "external_services": {
     "api_key": "Clé API",
     "beaconchain": {
-      "delete_tooltip": "Supprime la clé API Beaconcha.in",
       "description": "rotki utilise Beaconcha.in pour obtenir des informations sur le staking ETH dans votre portefeuille. Une clé API est uniquement nécessaire si vous êtes soumis à une limitation de taux.",
       "hint": "Entrer votre clé API Beaconcha.in",
       "title": "Beaconcha.in"
@@ -2276,18 +2156,11 @@
       "message": "Voulez-vous vraiment supprimer cette clé API ?",
       "title": "Supprimer la Clé API"
     },
-    "covalent": {
-      "delete_tooltip": "Supprime la clé API Covalent",
-      "description": "rotki peut utiliser Covalent pour obtenir des données historiques pour diverses chaînes",
-      "hint": "Entrer votre clé API Covalent",
-      "title": "Covalent"
-    },
     "credential": {
       "username": "Nom d'Utilisateur",
       "password": "Mot de Passe"
     },
     "cryptocompare": {
-      "delete_tooltip": "Supprime la clé API CryptoCompare",
       "description": "rotki utilise cryptocompare pour obtenir des informations de prix sur les actifs de votre portefeuille. Une clé API est uniquement nécessaire si vous disposez de nombreux actifs et êtes soumis à une limitation de taux.",
       "hint": "Entrer votre clé API CryptoCompare",
       "title": "CryptoCompare"
@@ -2303,7 +2176,6 @@
     },
     "get_api_key": "Vous pouvez demander une clé API {link}",
     "loopring": {
-      "delete_tooltip": "Supprimer la clé API Loopring",
       "description": "Utilisé pour interroger les soldes Loopring. Cette clé API ne pourra interroger que le compte qui a généré cette clé.",
       "hint": "Entrer votre clé API Loopring",
       "not_enabled": "Le module Loopring n'est pas activé. Vos soldes ne seront pas récupérés à moins que vous n'activiez le module Loopring",
@@ -2311,14 +2183,12 @@
       "title": "Loopring"
     },
     "monerium": {
-      "delete_tooltip": "Supprime les informations d'identification Monerium",
       "description": "Utilisé pour afficher correctement les transactions Monerium avec les informations pertinentes.",
       "title": "Monerium",
       "understand": "Je comprends le risque",
       "warning": "À l'heure actuelle, Monerium utilise uniquement une authentification de base, il ne s'agit donc pas de données en lecture seule."
     },
     "opensea": {
-      "delete_tooltip": "Supprimer votre clé API Opensea",
       "description": "Utilisé pour interroger les informations et soldes NFT sur Opensea.",
       "hint": "Entrer votre clé API Opensea",
       "title": "Opensea"
@@ -2354,8 +2224,7 @@
       "hint": "Heure à laquelle la transaction a eu lieu"
     },
     "fee": {
-      "hint": "[Facultatif] Frais, le cas échéant, de la transaction",
-      "label": "Frais"
+      "hint": "[Facultatif] Frais, le cas échéant, de la transaction"
     },
     "fee_currency": {
       "hint": "[Facultatif] L'actif utilisé pour les frais",
@@ -2397,76 +2266,29 @@
       "non_empty_fee": "Les frais ne peuvent être vides lorsque la devise des frais est entrée",
       "non_empty_fee_currency": "La devise des frais ne peut être vide lorsque les frais sont entrés",
       "non_empty_quote": "L'actif de cotation ne peut être vide",
-      "non_empty_quote_amount": "Le montant de l'actif de cotation ne peut être vide",
       "non_empty_rate": "Le taux ne peut être vide"
     }
   },
   "file_upload": {
-    "change_file": "Changer de fichier",
     "date_input_format": {
       "hint": "Utilisez ce format si le format de date dans votre fichier est : {format}",
       "placeholder": "Saisir le format de date personnalisé",
       "switch_label": "Utiliser le format de date personnalisé pour analyser votre fichier"
     },
-    "drop_area": "Déposez le fichier ou",
     "import_complete": "L'importation a été effectuée avec succès.",
     "loading": "Chargement",
     "many_files_selected": "Un seul fichier doit être sélectionné",
     "only_files": "Seuls les fichiers {fileFilter} sont autorisés",
-    "select_file": "Sélectionner un fichier",
-    "selected_file": "Fichier sélectionné : {name}",
     "task": {
       "title": "Importation d'un fichier csv pour la source : {source}"
     }
   },
   "frontend_settings": {
-    "hint": {
-      "refresh": "À quelle fréquence (en minutes) vos soldes seront automatiquement mis à jour"
-    },
-    "label": {
-      "abbreviate_number": "Utiliser des abréviations pour les grands nombres.",
-      "animations": "Réduire les animations. Ce paramètre améliorera les performances de l'application. NOTE : Vous verrez des animations qui ne sont pas fluides, dans le but de réduire l'utilisation des ressources système.",
-      "enable_alias_names": "Afficher le nom d'alias pour les adresses de blockchain.",
-      "query_period": "Période de requête en secondes",
-      "query_period_hint": "À quelle fréquence (en secondes) le backend sera vérifié pour les messages,",
-      "refresh": "Définir la période de mise à jour automatique",
-      "refresh_enabled": "Activé",
-      "scramble": "Embrouiller les données. Utilisez ceci lors de la partage d'écrans avec d'autres personnes, par exemple lors du dépôt de rapports de bogues. NOTE : Ce paramètre ne persiste pas entre les sessions.",
-      "scramble_multiplier": "Multiplicateur de brouillage",
-      "show_graph_range_selector": "Afficher le sélecteur de plage pour le graphique en ligne",
-      "zero_based": "Utiliser zéro comme valeur la plus faible pour les graphiques",
-      "zero_based_hint": "Par défaut, la valeur la plus faible est la valeur minimale dans la période sélectionnée"
-    },
     "subtitle": {
-      "abbreviate_number": "Par exemple, 1.234.567 deviendra 1,23 M lorsque ce paramètre est activé",
-      "alias_names": "Nom d'alias pour les adresses",
-      "graph_basis": "Base du graphique",
-      "query": "Requête de statut périodique",
-      "refresh": " Rafraîchissement automatique des soldes",
-      "scramble_multiplier": "Multiplicateur utilisé lors de l'embrouillement des soldes. Cela affectera le montant et la valeur en devise.",
-      "show_graph_range_selector": "Afficher le sélecteur de plage"
+      "alias_names": "Nom d'alias pour les adresses"
     },
     "title": "Paramètres spécifiques à l'interface utilisateur",
     "validation": {
-      "animations": {
-        "error": "Erreur lors de la configuration de l'état des animations : {message}"
-      },
-      "enable_alias_names": {
-        "error": "Échec de la modification de la visibilité des noms d'alias"
-      },
-      "periodic_query": {
-        "error": "Erreur lors de la configuration de la période de requête",
-        "invalid_period": "La période doit être comprise entre {start} et {end}",
-        "non_empty": "Veuillez entrer le nombre de secondes"
-      },
-      "refresh_period": {
-        "error": "Échec lors de la configuration de la période de rafraîchissement",
-        "invalid_period": "La période doit être comprise entre {start} et {end} min",
-        "non_empty": "Veuillez entrer le nombre de minutes"
-      },
-      "scramble": {
-        "error": "Erreur lors de la configuration du mode embrouillement : {message}"
-      },
       "timeframe": {
         "error": "Échec lors de la configuration du délai par défaut pour l'utilisateur",
         "success": "Le délai par défaut est défini sur {timeframe}"
@@ -2485,7 +2307,7 @@
       },
       "labels": {
         "floating_precision": "Précision flottante",
-        "main_currency": "Sélectionner la devise principale",
+        "main_currency": "Devise principale",
         "main_currency_subtitle": "Sélectionnez comme devise principale"
       },
       "title": "Paramètres des montants"
@@ -2532,29 +2354,18 @@
       }
     },
     "labels": {
-      "anonymous_analytics": "Est-ce que des analyses d'utilisation anonymes doivent être envoyées ?",
-      "balance_saving_frequency": "Fréquence de sauvegarde des données de solde en heures",
       "btc_derivation_gap": "Limite d'écart de dérivation BTC",
       "date_display_format": "Format d'affichage de la date",
       "date_input_format": "Format d'entrée de la date",
-      "display_date_in_localtime": "Afficher la date dans le fuseau horaire local et non dans l'UTC pour l'exportation CSV.",
-      "dot_rpc_endpoint": "Point de terminaison RPC du nœud Polkadot",
-      "force_saved_language_setting_in_machine_hint": "Ce paramètre est enregistré dans vos paramètres d'utilisateur. Activez ce paramètre pour le conserver lorsque vous êtes déconnecté.",
-      "ksm_rpc_endpoint": "Point de terminaison RPC du nœud Kusama",
-      "language": "Langue sélectionnée",
       "treat_eth2_as_eth": "Faut-il traiter ETH2 (ETH en jeu) comme ETH",
-      "version_update_check": "Période de vérification de la mise à jour de la version dans l'application",
-      "version_update_check_enabled": "Activé",
       "chains_to_skip_detection": "Réseaux EVM pour lesquels la détection automatique des jetons doit être ignorée"
     },
-    "language_contribution_tooltip": "Cette fonctionnalité est expérimentale et peut ne pas fonctionner correctement pour certaines langues. C'est parce que toutes les phrases statiques dans l'application doivent être traduites manuellement et que c'est un processus long et en cours. Par conséquent, nous avons besoin de votre contribution pour l'accélérer. Cliquez ici pour plus d'informations.",
     "nft_setting": {
       "allow_all_confirmation": {
         "message": "Êtes-vous sûr de vouloir autoriser les images de tous les domaines.",
         "title": "Autoriser les images de tous les domaines"
       },
       "label": {
-        "include_nfts": "Inclure les NFT dans les graphiques et la valeur nette totale",
         "include_nfts_hint": "Par défaut, les graphiques et le tableau de bord incluent la valeur de tous les NFT.",
         "render_setting": {
           "allow_all": "Autoriser toutes les images",
@@ -2566,7 +2377,6 @@
         "whitelisted_domain_entries": "aucune entrée | {count} entrée unique | {count} entrées uniques"
       },
       "subtitle": {
-        "include_nfts": "Inclure les NFT dans les graphiques et les montants totaux",
         "nft_images_rendering_setting": "Paramètres d'affichage des images NFT",
         "nft_images_rendering_setting_hint": "L'affichage des images NFT à partir de serveurs malveillants peut entraîner une fuite de votre vie privée, lisez plus {link}"
       },
@@ -2592,15 +2402,6 @@
     },
     "title": "Paramètres généraux",
     "validation": {
-      "analytics": {
-        "error": "Erreur lors de la configuration de l'analyse d'utilisation anonyme"
-      },
-      "balance_frequency": {
-        "error": "Erreur lors de la configuration de la fréquence de sauvegarde des données de solde sur {frequency}",
-        "invalid_frequency": "La fréquence doit être comprise entre {start} et {end} heures",
-        "non_empty": "Veuillez entrer le nombre d'heures",
-        "success": "La fréquence de sauvegarde des données est définie sur {frequency} heures"
-      },
       "btc_derivation_gap": {
         "error": "Erreur lors de la configuration de la limite d'écart de dérivation BTC",
         "success": "La limite d'écart de dérivation BTC a été modifiée avec succès en {limit}"
@@ -2625,26 +2426,10 @@
         "error": "Erreur lors de la configuration du séparateur décimal",
         "success": "Le séparateur décimal est défini sur {decimalSeparator}"
       },
-      "display_date_in_localtime": {
-        "error": "Erreur lors de la configuration de l'affichage de la date dans le fuseau horaire local"
-      },
-      "dot_rpc": {
-        "error": "Erreur lors de la configuration du point de terminaison RPC du nœud Polkadot",
-        "success_set": "Le point de terminaison RPC du nœud Polkadot est défini sur {endpoint}",
-        "success_unset": "Le point de terminaison RPC du nœud Polkadot a été supprimé avec succès"
-      },
       "floating_precision": {
         "error": "Erreur lors de la configuration de la précision flottante sur {precision}",
         "non_empty": "Veuillez entrer la précision flottante",
         "success": "La précision flottante est définie sur {precision}"
-      },
-      "ksm_rpc": {
-        "error": "Erreur lors de la configuration du point de terminaison RPC du nœud Kusama",
-        "success_set": "Le point de terminaison RPC du nœud Kusama est défini sur {endpoint}",
-        "success_unset": "Le point de terminaison RPC du nœud Kusama a été supprimé avec succès"
-      },
-      "language": {
-        "error": "Erreur lors de la modification de la langue"
       },
       "thousand_separator": {
         "error": "Erreur lors de la configuration du séparateur de milliers",
@@ -2653,17 +2438,11 @@
       "treat_eth2_as_eth": {
         "error": "Erreur lors de la modification du paramètre pour traiter ETH2 (Staked ETH) comme ETH"
       },
-      "version_update_check_frequency": {
-        "error": "Erreur lors de la configuration de la fréquence de vérification de la mise à jour de la version",
-        "invalid_frequency": "La fréquence doit être comprise entre {start} et {end} heures",
-        "non_empty": "Veuillez entrer la fréquence"
-      },
       "chains_to_skip_detection": {
         "error": "Erreur lors de la configuration des réseaux EVM à ignorer pour la détection automatique des jetons",
         "success": "Les réseaux EVM pour lesquels ignorer la détection automatique des jetons ont été enregistrés avec succès"
       }
-    },
-    "version_update_check_hint": "À quelle fréquence (en heures) la version de l'application sera vérifiée pour les mises à jour"
+    }
   },
   "generate": {
     "custom_selection": "Personnalisé",
@@ -2765,8 +2544,7 @@
         "unwhitelist_title": "Échec de la suppression de l'actif de la liste blanche",
         "whitelist_message": "Le jeton ne peut pas être ajouté aux actifs de la liste blanche : {message}",
         "whitelist_title": "Échec de l'ajout de l'actif à la liste blanche"
-      },
-      "hint": "L'actif est dans la liste blanche, ce qui signifie que l'algorithme rotki ne le marquera pas comme un actif spam. Pour pouvoir ignorer cet actif, vous devez le supprimer de la liste blanche."
+      }
     }
   },
   "ignore_buttons": {
@@ -2826,13 +2604,11 @@
       "line_one": "Les opérations/dépôts/retraits de CoinTracking ne comprennent pas les frais.",
       "line_three": "Les transactions ETH/BTC sont traitées comme des dépôts/retraits, elles ne sont donc pas importées dans rotki. Pour importer des transactions ETH, il vous suffit d'ajouter vos comptes dans {0} et ils seront importés automatiquement pour vous.",
       "line_two": "Toutes les opérations importées de CoinTracking seront toujours considérées comme des achats en raison de la façon dont les données sont représentées.",
-      "link": "Comptes/Solde de la blockchain",
       "name": "CoinTracking",
       "preferred": "Pour cette raison, il est préférable de se connecter directement à vos échanges pour importer les données depuis là. Si vous ne le faites pas, une grande partie de la précision est perdue."
     },
     "cryptocom": {
       "line_four": "Seules les transactions sont importées ici (pour le rapport fiscal), si vous souhaitez que les actifs s'affichent dans vos soldes rotki, vous devez les ajouter manuellement en tant que soldes manuels : {0}",
-      "line_four_link": "Comptes/Solde manuel",
       "line_one": "[Stade précoce] Ce script d'importation peut manquer certains types de transactions, comme les retraits. Comme nous ne pouvons pas avoir une liste exhaustive de tous les types, nous le développons en utilisant ce que nous savons au moment donné. Si vous pensez que l'importation de script peut être améliorée et que vous pouvez aider en fournissant plus de types de données, {0}.",
       "line_one_link": "faites-le nous savoir",
       "line_three": "Les opérations de change/dépôts/retraits de crypto.com ne comprennent pas les détails des frais. Ils sont soit abandonnés au moment de l'écriture (août 2020) ou gérés dans le montant échangé.",
@@ -2856,7 +2632,6 @@
     "note": "Notes importantes pour l'importation de données à partir des exports CSV de {0}.",
     "notice": "Ces plates-formes peuvent modifier leur format de manière incompatible de manière rétroactive assez souvent. Par conséquent, cet import peut cesser de fonctionner. Si cela se produit, {link} et nous verrons ce que nous pouvons faire.",
     "notice_link": "ouvrez un problème avec rotki",
-    "notice_warning": "Remarque importante :",
     "select_source": {
       "title": "Sélectionner la source"
     },
@@ -2883,20 +2658,17 @@
     }
   },
   "input_mode_select": {
+    "import_from_wallet": {
+      "label": "Importer des adresses à partir du portefeuille du navigateur",
+      "missing": "Nous ne pouvons détecter aucun portefeuille dans ce navigateur",
+      "missing_tooltip": {
+        "wallet_is_not_installed": "Aucun portefeuille n'est installé dans ce navigateur. Vous pouvez aller dans le magasin d'extensions de votre navigateur et en installer un.",
+        "wallet_is_not_enabled": "L'extension pour le portefeuille est désactivée. Vous pouvez l'activer dans le menu Extensions/Add-Ons, en fonction de votre navigateur.",
+        "title": "Here are the common cause:"
+      }
+    },
     "manual_add": {
       "label": "Manuel"
-    },
-    "metamask_import": {
-      "label": "MetaMask",
-      "metamask": "* Vous serez invité à importer vos adresses à partir de MetaMask après avoir cliqué sur 'enregistrer'.",
-      "missing": "* L'importation d'adresses à partir de MetaMask est désactivée. MetaMask n'a pas pu être détecté.",
-      "missing_tooltip": {
-        "copy_url": "copier cette URL de page",
-        "metamask_is_not_enabled": "MetaMask n'est pas activé. Vous pouvez l'activer dans le menu 'Extensions / Composants complémentaires', selon votre navigateur.",
-        "metamask_is_not_installed": "Ce navigateur n'a pas MetaMask installé. Vous pouvez télécharger MetaMask {link}.",
-        "metamask_is_not_supported_by_browser": "Assurez-vous d'ouvrir cette page avec un navigateur compatible répertorié {link}. Si ce n'est pas le cas, {copy} et ouvrez-le manuellement dans un navigateur compatible.",
-        "title": "Voici les causes courantes :"
-      }
     },
     "xpub_add": {
       "label": "XPUB"
@@ -2911,20 +2683,7 @@
     }
   },
   "kraken_staking_events": {
-    "filter": {
-      "asset": "filtre par l'actif mis en jeu",
-      "date_hint": "format {format} HH:mm:ss (les secondes sont optionnelles)",
-      "end_date": "filtre par la date de fin des événements de mise en jeu",
-      "start_date": "filtre par la date de début des événements de mise en jeu",
-      "type": "filtre par le type des événements de mise en jeu"
-    },
-    "refresh_tooltip": "Rafraîchir vos événements de mise en jeu Kraken",
-    "types": {
-      "receive_staked_asset": "recevoir un actif mis en jeu",
-      "stake_asset": "mettre en jeu un actif",
-      "staking_reward": "récompense de mise en jeu",
-      "unstake_asset": "retirer un actif mis en jeu"
-    }
+    "refresh_tooltip": "Rafraîchir vos événements de mise en jeu Kraken"
   },
   "kraken_staking_overview": {
     "current": "actuel",
@@ -3092,7 +2851,7 @@
     "label_username": "Nom de profil",
     "logout": "Déconnexion",
     "migrating_data": {
-      "current": "Étape {currentStep} sur {totalSteps} de la migration des données {currentVersion} est appliquée.",
+      "current": "L'étape {currentStep} de {totalSteps} de la migration de données {currentVersion} est en cours d'application.",
       "title": "Migration des données",
       "warning": "La migration des données {currentVersion} est en cours. Veuillez ne pas fermer l'application jusqu'à ce qu'elle soit terminée."
     },
@@ -3108,7 +2867,7 @@
     },
     "title": "Déverrouiller le compte",
     "upgrading_db": {
-      "current": "Étape {currentStep} sur {totalSteps} de la mise à niveau de la base de données v{currentVersion} est appliquée.",
+      "current": "L'étape {currentStep} de {totalSteps} de la mise à niveau de la base de données v{currentVersion} est en cours d'application.",
       "title": "Mise à niveau de la base de données",
       "warning": "La base de données est en cours de mise à niveau depuis la version {fromVersion} vers {toVersion}. Veuillez ne pas fermer l'application jusqu'à ce qu'elle soit terminée."
     },
@@ -3142,7 +2901,6 @@
     "import": {
       "subtitle": "Restaurer les actifs de l'utilisateur à partir d'une archive zip"
     },
-    "title": "Exporter/Importer les actifs de l'utilisateur",
     "warning": "Cette fonctionnalité est conçue pour vous permettre de déplacer facilement vos actifs d'une instance de rotki à une autre. Elle nécessite que les deux instances soient de la même version. L'utilisation de cette fonctionnalité entre différentes versions peut entraîner des erreurs."
   },
   "managed_asset_content": {
@@ -3182,9 +2940,6 @@
     }
   },
   "manual_balances_table": {
-    "columns": {
-      "label": "Étiquette"
-    },
     "delete_dialog": {
       "message": "Voulez-vous vraiment supprimer cette entrée ?",
       "title": "Supprimer le solde manuel"
@@ -3240,7 +2995,6 @@
       "disable_all": "Désactiver tout",
       "enable_all": "Activer tout"
     },
-    "all_accounts": "Tous",
     "filter": "Rechercher un module",
     "select_accounts_hint": "Sélectionnez les comptes pour lesquels les données seront récupérées pour chaque sous-module. Si aucune adresse n'est sélectionnée, les données seront récupérées pour toutes les adresses disponibles",
     "table": {
@@ -3249,17 +3003,15 @@
     }
   },
   "module_settings": {
-    "active_modules_description": "Seules les données des modules sélectionnés seront interrogées. Si aucun module n'est sélectionné, la consultation pour tous les modules supportés sera désactivée.",
-    "hint": "* Veuillez noter que après l'activation d'un module, vous devez vous déconnecter et vous reconnecter pour que l'activation prenne effet",
     "title": "Paramètres du module"
   },
   "navigation_menu": {
-    "accounts_balances": "Comptes & Soldes",
-    "accounts_balances_sub": {
+    "balances": "Soldes",
+    "balances_sub": {
       "blockchain_balances": "Soldes de la blockchain",
       "exchange_balances": "Soldes d'échange",
       "manual_balances": "Soldes manuels",
-      "non_fungible_balances": "Soldes non fongibles"
+      "non_fungible_balances": "Soldes NFT"
     },
     "api_keys": "Clés d'API",
     "api_keys_sub": {
@@ -3274,10 +3026,8 @@
       "deposits_sub": {
         "liquidity": "Pools de liquidité",
         "liquidity_sub": {
-          "balancer": "Balancer",
           "sushiswap": "Sushiswap",
-          "uniswap_v2": "Uniswap v2",
-          "uniswap_v3": "Uniswap v3"
+          "uniswap_v2": "Uniswap v2"
         },
         "protocols": "Protocoles"
       },
@@ -3286,7 +3036,6 @@
     },
     "history": "Historique",
     "history_sub": {
-      "deposits_withdrawals": "Dépôts & Retraits d'échange",
       "history_events": "Événements historiques",
       "trades": "Échanges d'échange"
     },
@@ -3309,7 +3058,7 @@
     "settings": "Paramètres",
     "settings_sub": {
       "accounting": "Comptabilité",
-      "data_security": "Données & Sécurité",
+      "database": "Base de données",
       "general": "Général",
       "modules": "Modules"
     },
@@ -3359,8 +3108,7 @@
       "price_in_asset": "Prix dans l'actif"
     },
     "ignore": "Ignorer NFT",
-    "refresh": "Actualiser les soldes",
-    "title": "Soldes non fongibles"
+    "refresh": "Actualiser les soldes"
   },
   "notes_menu": {
     "delete_confirmation": "Êtes-vous sûr de vouloir supprimer cette note?",
@@ -3387,11 +3135,6 @@
       "in_this_page_tooltip": "Notes spécialisées pour la section \"{page}\""
     },
     "tooltip": "Notes"
-  },
-  "notification": {
-    "copy": "Copier",
-    "copy_tooltip": "Copier le message dans le presse-papiers",
-    "dismiss_tooltip": "Rejeter la notification"
   },
   "notification_indicator": {
     "tooltip": "Notifications"
@@ -3478,7 +3221,6 @@
     "to_asset": "Vers l'actif"
   },
   "oracles": {
-    "manual_latest": "Manuel dernières",
     "uniswap_v2": "Uniswap V2",
     "uniswap_v3": "Uniswap V3"
   },
@@ -3562,7 +3304,7 @@
       "rewards": {
         "consensus": {
           "description": "Basé sur le prix actuel de ETH",
-          "title": "Récompenses du Niveau de Consensus"
+          "title": "Récompenses du niveau de consensus"
         },
         "el": "Couche d'exécution",
         "withdrawn_cl": "Retiré de la couche de consensus"
@@ -3785,7 +3527,6 @@
     "was_worth": "valait"
   },
   "prioritized_list": {
-    "add_tooltip": "Ajouter le {name} à la liste",
     "all_added": "Aucun {namePluralized} désactivé",
     "disabled_items": "{num} {namePluralized} désactivés",
     "item": {
@@ -3926,7 +3667,6 @@
       "hint": "Laissez ce champ vide pour supprimer les données de tous les modules DeFi"
     },
     "label": "Sélectionner une source de données",
-    "tooltip": "Supprimer les données en cache de la source sélectionnée",
     "transactions": "Transactions"
   },
   "queried_address_dialog": {
@@ -4009,9 +3749,6 @@
       "title": "Emplacements de participation"
     }
   },
-  "statistics": {
-    "no_premium_label": "Les statistiques sont"
-  },
   "statistics_graph_settings": {
     "infer_zero_timed_balances": {
       "label": "Infer zéro timed balances pour les actifs qui n'ont pas de solde à un moment précis. C'est utile pour montrer les périodes de solde zéro dans les graphiques.",
@@ -4063,12 +3800,10 @@
       "example": "type != evm event"
     },
     "hint": {
-      "description": "* tapez le filtre puis appuyez sur entrée, par exemple.",
+      "description": "Tapez le filtre puis appuyez sur entrée, par exemple.",
       "example": "start = 26/05/2022"
     },
-    "hint_filter": "Les filtres combinés seront appliqués en même temps",
     "label": "Filtres disponibles",
-    "no_suggestions": "Aucune suggestion trouvée pour {search}",
     "saved_filters": {
       "actions": {
         "add": "Enregistrer le filtre actuel dans la liste",
@@ -4083,6 +3818,7 @@
         "title": "Échec de l'enregistrement du filtre"
       }
     },
+    "start_typing": "Saisissez la valeur du filtre {search}",
     "title": "Filtres disponibles",
     "unsupported_filter": "Filtre non pris en charge:"
   },
@@ -4091,7 +3827,6 @@
       "background": "Arrière-plan",
       "foreground": "Premier plan"
     },
-    "refresh_tooltip": "Crée une combinaison de couleurs aléatoire",
     "validation": {
       "empty_name": "Veuillez fournir un nom à l'étiquette"
     }
@@ -4104,8 +3839,6 @@
       "message": "Voulez-vous vraiment supprimer {tagToDelete} ? Cela supprimera également toutes les correspondances de cette étiquette.",
       "title": "Confirmer la suppression d'étiquette"
     },
-    "my_tags": "Mes étiquettes",
-    "subtitle": "Créer de nouvelles étiquettes ou modifier les existantes",
     "title": "Gestionnaire d'étiquettes"
   },
   "task_manager": {
@@ -4133,7 +3866,6 @@
       "add_event": "Ajouter un nouvel événement",
       "add_event_here": "Ajouter un nouvel événement ici",
       "redecode_events": "Recoder les événements",
-      "reset_customized_events": "Réinitialiser les événements personnalisés",
       "delete_transaction": "Supprimer une transaction et des événements"
     },
     "dialog": {
@@ -4163,8 +3895,11 @@
           "title": "Impossible de Supprimer Événement"
         },
         "reset": {
-          "message": "Êtes-vous sûr de vouloir réinitialiser ces événements. Cette action supprimera tous les événements personnalisés, et les re-codera.",
-          "title": "Réinitialiser événements"
+          "message": "Cette transaction comporte des événements personnalisés",
+          "options": {
+            "keep_custom_events": "Ne supprimez pas mes événements personnalisés",
+            "remove_custom_events": "Supprimer les événements personnalisés et redécoder la transaction"
+          }
         }
       },
       "customized_event": "Événement personnalisé",
@@ -4177,9 +3912,7 @@
         }
       },
       "export": {
-        "confirmation_message": "Êtes-vous sûr de vouloir exporter ce document avec les filtres sélectionnés appliqués?",
-        "csv_export_error": "Il y a eu une erreur avec l'exportation",
-        "download_failed": "Le téléchargement du CSV n'est pas possible"
+        "confirmation_message": "Êtes-vous sûr de vouloir exporter ce document avec les filtres sélectionnés appliqués?"
       },
       "form": {
         "address": {
@@ -4250,11 +3983,6 @@
           "validation": {
             "non_empty": "Le champ destinataire de commission ne peut pas être vide.",
             "valid": "L'adresse du destinataire de commission est invalide, remplissez-la avec une adresse valide"
-          }
-        },
-        "fiat_value": {
-          "validation": {
-            "non_empty": "Le champ valeur {currency} ne peut pas être vide."
           }
         },
         "is_exit": {
@@ -4338,8 +4066,7 @@
             "some": "{successful} de {total} événements externes ignorés ont été traités",
             "title": "Événements ignorés traités"
           }
-        },
-        "title": "Événements ignorés"
+        }
       },
       "view": {
         "hide": "Masquer les événements",
@@ -4500,9 +4227,6 @@
       "private_mode": {
         "description": "Masquer le montant et le pourcentage",
         "label": "Privé"
-      },
-      "scramble": {
-        "label": "Brouiller"
       },
       "semi_private_mode": {
         "description": "Masquer le montant et afficher le pourcentage",

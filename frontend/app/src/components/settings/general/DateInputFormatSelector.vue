@@ -1,8 +1,19 @@
 <script setup lang="ts">
 import { displayDateFormatter } from '@/data/date-formatter';
 import { DateFormat } from '@/types/date-format';
+import ListItem from '@/components/common/ListItem.vue';
 
-const rootAttrs = useAttrs();
+defineOptions({
+  inheritAttrs: false,
+});
+
+const modelValue = defineModel<string>({ required: true });
+
+defineProps<{
+  label: string;
+  errorMessages: string[];
+  successMessages: string[];
+}>();
 
 const selections = [
   {
@@ -25,16 +36,16 @@ const { t } = useI18n();
 
 <template>
   <RuiMenuSelect
-    v-bind="rootAttrs"
+    v-bind="$attrs"
+    v-model="modelValue"
+    :label="label"
+    :success-messages="successMessages"
+    :error-messages="errorMessages"
     :options="selections"
     :item-height="68"
     key-attr="value"
     text-attr="value"
     variant="outlined"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
   >
     <template #item="{ item }">
       <ListItem

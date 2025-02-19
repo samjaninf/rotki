@@ -1,42 +1,46 @@
-import {
-  NotificationCategory,
-  type NotificationPayload,
-  Severity,
-} from '@rotki/common/lib/messages';
-import type {
-  HistoricalPrice,
-  HistoricalPriceFormPayload,
-  ManualPricePayload,
-} from '@/types/prices';
+import { NotificationCategory, type NotificationPayload, Severity } from '@rotki/common';
+import { startPromise } from '@shared/utils';
+import { useNotificationsStore } from '@/store/notifications';
+import { useMessageStore } from '@/store/message';
+import { useHistoricCachePriceStore } from '@/store/prices/historic';
+import { useAssetPricesApi } from '@/composables/api/assets/prices';
+import type { HistoricalPrice, HistoricalPriceFormPayload, ManualPricePayload } from '@/types/prices';
+import type { Ref } from 'vue';
 
-export function useHistoricPrices(filter: Ref<{ fromAsset?: string; toAsset?: string }>, t: ReturnType<typeof useI18n>['t']) {
+interface UseHistoricPricesReturn {
+  items: Ref<HistoricalPrice[]>;
+  loading: Ref<boolean>;
+  save: (data: HistoricalPriceFormPayload, update: boolean) => Promise<boolean>;
+  deletePrice: (item: HistoricalPrice) => Promise<void>;
+  refresh: (payload?: { modified?: boolean; additionalEntry?: HistoricalPrice }) => Promise<void>;
+}
+
+export function useHistoricPrices(
+  t: ReturnType<typeof useI18n>['t'],
+  filter?: Ref<{ fromAsset?: string; toAsset?: string }>,
+): UseHistoricPricesReturn {
   const loading = ref(false);
-  const items: Ref<HistoricalPrice[]> = ref([]);
+  const items = ref<HistoricalPrice[]>([]);
 
-  const {
-    editHistoricalPrice,
-    addHistoricalPrice,
-    fetchHistoricalPrices,
-    deleteHistoricalPrice,
-  } = useAssetPricesApi();
+  const { addHistoricalPrice, deleteHistoricalPrice, editHistoricalPrice, fetchHistoricalPrices } = useAssetPricesApi();
   const { resetHistoricalPricesData } = useHistoricCachePriceStore();
   const { setMessage } = useMessageStore();
   const { notify } = useNotificationsStore();
 
-  const fetchPrices = async (payload?: Partial<ManualPricePayload>) => {
+  const fetchPrices = async (payload?: Partial<ManualPricePayload>): Promise<void> => {
     set(loading, true);
     try {
       set(items, await fetchHistoricalPrices(payload));
     }
     catch (error: any) {
       const notification: NotificationPayload = {
-        title: t('price_table.fetch.failure.title'),
+        category: NotificationCategory.DEFAULT,
+        display: true,
         message: t('price_table.fetch.failure.message', {
           message: error.message,
         }),
-        display: true,
         severity: Severity.ERROR,
-        category: NotificationCategory.DEFAULT,
+        title: t('price_table.fetch.failure.title'),
       };
       notify(notification);
     }
@@ -45,10 +49,7 @@ export function useHistoricPrices(filter: Ref<{ fromAsset?: string; toAsset?: st
     }
   };
 
-  const refresh = async (payload?: {
-    modified?: boolean;
-    additionalEntry?: HistoricalPrice;
-  }) => {
+  const refresh = async (payload?: { modified?: boolean; additionalEntry?: HistoricalPrice }): Promise<void> => {
     await fetchPrices(get(filter));
 
     if (payload?.modified) {
@@ -60,7 +61,7 @@ export function useHistoricPrices(filter: Ref<{ fromAsset?: string; toAsset?: st
     }
   };
 
-  const save = async (data: HistoricalPriceFormPayload, update: boolean) => {
+  const save = async (data: HistoricalPriceFormPayload, update: boolean): Promise<boolean> => {
     try {
       if (update)
         return await editHistoricalPrice(data);
@@ -69,62 +70,62 @@ export function useHistoricPrices(filter: Ref<{ fromAsset?: string; toAsset?: st
     }
     catch (error: any) {
       const values = { message: error.message };
-      const title = update
-        ? t('price_management.edit.error.title')
-        : t('price_management.add.error.title');
+      const title = update ? t('price_management.edit.error.title') : t('price_management.add.error.title');
       const description = update
         ? t('price_management.edit.error.description', values)
         : t('price_management.add.error.description', values);
       setMessage({
-        title,
         description,
         success: false,
+        title,
       });
 
       return false;
     }
   };
 
-  const deletePrice = async (item: HistoricalPrice) => {
+  const deletePrice = async (item: HistoricalPrice): Promise<void> => {
     const { price, ...payload } = item;
     try {
       await deleteHistoricalPrice(payload);
       await refresh({
-        modified: true,
         additionalEntry: item,
+        modified: true,
       });
     }
     catch (error: any) {
       const notification: NotificationPayload = {
-        title: t('price_table.delete.failure.title'),
+        category: NotificationCategory.DEFAULT,
+        display: true,
         message: t('price_table.delete.failure.message', {
           message: error.message,
         }),
-        display: true,
         severity: Severity.ERROR,
-        category: NotificationCategory.DEFAULT,
+        title: t('price_table.delete.failure.title'),
       };
       notify(notification);
     }
   };
 
-  watch(
-    filter,
-    async () => {
-      await refresh();
-    },
-    { deep: true },
-  );
+  if (filter) {
+    watch(
+      filter,
+      async () => {
+        await refresh();
+      },
+      { deep: true },
+    );
+  }
 
   onBeforeMount(() => {
     startPromise(refresh());
   });
 
   return {
+    deletePrice,
     items,
     loading,
-    save,
-    deletePrice,
     refresh,
+    save,
   };
 }

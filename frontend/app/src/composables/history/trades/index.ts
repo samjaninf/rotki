@@ -1,19 +1,34 @@
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
 import { ApiValidationError, type ValidationErrors } from '@/types/api/errors';
+import { mapCollectionEntriesWithMeta } from '@/utils/history';
+import { mapCollectionResponse } from '@/utils/collection';
+import { logger } from '@/utils/logging';
+import { isTaskCancelled } from '@/utils';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useExchangesStore } from '@/store/exchanges';
+import { useHistoryStore } from '@/store/history';
+import { useTradesApi } from '@/composables/api/history/trades';
+import { useStatusUpdater } from '@/composables/status';
+import { useLocations } from '@/composables/locations';
+import { awaitParallelExecution } from '@/utils/await-parallel-execution';
 import type { MaybeRef } from '@vueuse/core';
 import type { Collection, CollectionResponse } from '@/types/collection';
 import type { EntryWithMeta } from '@/types/history/meta';
-import type {
-  NewTrade,
-  Trade,
-  TradeEntry,
-  TradeRequestPayload,
-} from '@/types/history/trade';
+import type { NewTrade, Trade, TradeEntry, TradeRequestPayload } from '@/types/history/trade';
 import type { TaskMeta } from '@/types/task';
 import type { ActionStatus } from '@/types/action';
 
-export function useTrades() {
+interface UseTradesReturn {
+  refreshTrades: (userInitiated?: boolean, location?: string) => Promise<void>;
+  fetchTrades: (payload: MaybeRef<TradeRequestPayload>) => Promise<Collection<TradeEntry>>;
+  addExternalTrade: (trade: NewTrade) => Promise<ActionStatus<ValidationErrors | string>>;
+  editExternalTrade: (trade: Trade) => Promise<ActionStatus<ValidationErrors | string>>;
+  deleteExternalTrade: (tradesIds: string[]) => Promise<ActionStatus>;
+}
+
+export function useTrades(): UseTradesReturn {
   const { fetchAssociatedLocations } = useHistoryStore();
   const { connectedExchanges } = storeToRefs(useExchangesStore());
   const { exchangeName } = useLocations();
@@ -22,55 +37,50 @@ export function useTrades() {
   const { notify } = useNotificationsStore();
 
   const {
+    addExternalTrade: addExternalTradeCaller,
+    deleteExternalTrade: deleteExternalTradeCaller,
+    editExternalTrade: editExternalTradeCaller,
     getTrades,
     getTradesTask,
-    addExternalTrade: addExternalTradeCaller,
-    editExternalTrade: editExternalTradeCaller,
-    deleteExternalTrade: deleteExternalTradeCaller,
   } = useTradesApi();
 
   const syncTradesTask = async (location: string): Promise<boolean> => {
     const taskType = TaskType.TRADES;
 
     const defaults: TradeRequestPayload = {
-      limit: 0,
-      offset: 0,
       ascending: [false],
-      orderByAttributes: ['timestamp'],
-      onlyCache: false,
+      limit: 0,
       location,
+      offset: 0,
+      onlyCache: false,
+      orderByAttributes: ['timestamp'],
     };
 
     const { taskId } = await getTradesTask(defaults);
     const exchange = exchangeName(location);
     const taskMeta = {
-      title: t('actions.trades.task.title'),
       description: t('actions.trades.task.description', {
         exchange,
       }),
       location,
+      title: t('actions.trades.task.title'),
     };
 
     try {
-      await awaitTask<CollectionResponse<EntryWithMeta<Trade>>, TaskMeta>(
-        taskId,
-        taskType,
-        taskMeta,
-        true,
-      );
+      await awaitTask<CollectionResponse<EntryWithMeta<Trade>>, TaskMeta>(taskId, taskType, taskMeta, true);
       return true;
     }
     catch (error: any) {
       if (!isTaskCancelled(error)) {
         notify({
+          display: true,
+          message: t('actions.trades.error.description', {
+            error: error.message,
+            exchange,
+          }),
           title: t('actions.trades.error.title', {
             exchange,
           }),
-          message: t('actions.trades.error.description', {
-            exchange,
-            error: error.message,
-          }),
-          display: true,
         });
       }
     }
@@ -78,12 +88,8 @@ export function useTrades() {
     return false;
   };
 
-  const refreshTrades = async (
-    userInitiated = false,
-    location?: string,
-  ): Promise<void> => {
-    const { setStatus, isFirstLoad, resetStatus, fetchDisabled }
-      = useStatusUpdater(Section.TRADES);
+  const refreshTrades = async (userInitiated = false, location?: string): Promise<void> => {
+    const { fetchDisabled, isFirstLoad, resetStatus, setStatus } = useStatusUpdater(Section.TRADES);
 
     if (fetchDisabled(userInitiated)) {
       logger.info('skipping trade refresh');
@@ -91,13 +97,13 @@ export function useTrades() {
     }
 
     await fetchAssociatedLocations();
-    const locations = location
-      ? [location]
-      : get(connectedExchanges).map(x => x.location);
+    const locations = location ? [location] : get(connectedExchanges).map(x => x.location);
 
     try {
       setStatus(isFirstLoad() ? Status.LOADING : Status.REFRESHING);
-      await Promise.all(locations.map(syncTradesTask));
+      await awaitParallelExecution(locations, location => location, async (location) => {
+        await syncTradesTask(location);
+      }, 2);
       await fetchAssociatedLocations();
       setStatus(Status.LOADED);
     }
@@ -107,9 +113,7 @@ export function useTrades() {
     }
   };
 
-  const fetchTrades = async (
-    payload: MaybeRef<TradeRequestPayload>,
-  ): Promise<Collection<TradeEntry>> => {
+  const fetchTrades = async (payload: MaybeRef<TradeRequestPayload>): Promise<Collection<TradeEntry>> => {
     const result = await getTrades({
       ...get(payload),
       onlyCache: true,
@@ -117,9 +121,7 @@ export function useTrades() {
     return mapCollectionEntriesWithMeta<Trade>(mapCollectionResponse(result));
   };
 
-  const addExternalTrade = async (
-    trade: NewTrade,
-  ): Promise<ActionStatus<ValidationErrors | string>> => {
+  const addExternalTrade = async (trade: NewTrade): Promise<ActionStatus<ValidationErrors | string>> => {
     let success = false;
     let message: ValidationErrors | string = '';
     try {
@@ -133,12 +135,10 @@ export function useTrades() {
     }
 
     await fetchAssociatedLocations();
-    return { success, message };
+    return { message, success };
   };
 
-  const editExternalTrade = async (
-    trade: Trade,
-  ): Promise<ActionStatus<ValidationErrors | string>> => {
+  const editExternalTrade = async (trade: Trade): Promise<ActionStatus<ValidationErrors | string>> => {
     let success = false;
     let message: ValidationErrors | string = '';
     try {
@@ -152,12 +152,10 @@ export function useTrades() {
     }
 
     await fetchAssociatedLocations();
-    return { success, message };
+    return { message, success };
   };
 
-  const deleteExternalTrade = async (
-    tradesIds: string[],
-  ): Promise<ActionStatus> => {
+  const deleteExternalTrade = async (tradesIds: string[]): Promise<ActionStatus> => {
     let success = false;
     let message = '';
     try {
@@ -168,14 +166,14 @@ export function useTrades() {
     }
 
     await fetchAssociatedLocations();
-    return { success, message };
+    return { message, success };
   };
 
   return {
-    refreshTrades,
-    fetchTrades,
     addExternalTrade,
-    editExternalTrade,
     deleteExternalTrade,
+    editExternalTrade,
+    fetchTrades,
+    refreshTrades,
   };
 }

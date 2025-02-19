@@ -1,3 +1,4 @@
+import re
 from contextlib import ExitStack
 from typing import Final
 from unittest.mock import MagicMock, patch
@@ -5,10 +6,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from gql.transport.exceptions import TransportQueryError
 
-from rotkehlchen.chain.ethereum.graph import Graph, format_query_indentation
+from rotkehlchen.chain.ethereum.graph import Graph
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import RemoteError
 
+RE_MULTIPLE_WHITESPACE: Final = re.compile(r'\s+')
 UNISWAP_GRAPH_ID: Final = 'A3Np3RQbaBA6oKJgiwDJeo5T3zrYfGHPWFYayMwtNDum'
 TEST_QUERY_1: Final = (
     """
@@ -24,6 +26,15 @@ TEST_QUERY_1: Final = (
     }}}}
     """
 )
+
+
+def format_query_indentation(querystr: str) -> str:
+    """Format a triple quote and indented GraphQL query by:
+    - Removing returns
+    - Replacing multiple inner whitespaces with one
+    - Removing leading and trailing whitespaces
+    """
+    return RE_MULTIPLE_WHITESPACE.sub(' ', querystr).strip()
 
 
 def test_exception_retries(database, add_subgraph_api_key):  # pylint: disable=unused-argument

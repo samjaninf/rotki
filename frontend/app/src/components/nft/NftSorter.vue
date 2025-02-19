@@ -1,11 +1,11 @@
 <script setup lang="ts">
+const sortByModel = defineModel<string>('sortBy', { required: true });
+
 const props = defineProps<{
-  sortBy: string;
   sortDesc: boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:sort-by', sortBy: string): void;
   (e: 'update:sort-desc', sortDesc: boolean): void;
 }>();
 
@@ -14,8 +14,6 @@ const { sortDesc: sortDescending } = toRefs(props);
 function toggleSortDesc() {
   emit('update:sort-desc', !get(sortDescending));
 }
-
-const sortByModel = useKebabVModel(props, 'sortBy', emit);
 
 const { t } = useI18n();
 
@@ -47,7 +45,7 @@ const sortProperties = [
           class="rounded-r-none"
           @click="toggleSortDesc()"
         >
-          <RuiIcon :name="sortDescending ? 'sort-desc' : 'sort-asc'" />
+          <RuiIcon :name="sortDescending ? 'lu-arrow-down-a-z' : 'lu-arrow-down-a-z'" />
         </RuiButton>
       </template>
       <span v-if="sortDescending">

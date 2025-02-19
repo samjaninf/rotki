@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { useAppRoutes } from '@/router/routes';
+import NavigationMenuItem from '@/components/NavigationMenuItem.vue';
+import type { RuiIcons } from '@rotki/ui-library';
+import type { RouteLocationRaw } from 'vue-router';
 
 interface NavItemDetails {
   readonly text: string;
-  readonly route: string;
+  readonly route: RouteLocationRaw;
   readonly class?: string;
-  readonly icon: string;
+  readonly icon: RuiIcons;
   readonly image?: string;
   readonly component?: any;
 }
@@ -38,175 +41,209 @@ const { appRoutes } = useAppRoutes();
 const Routes = get(appRoutes);
 const navItems: MenuItem[] = [
   {
-    type: 'item',
     class: 'dashboard',
+    type: 'item',
     ...Routes.DASHBOARD,
   },
   {
+    class: 'accounts',
     type: 'group',
-    class: 'accounts-balances',
-    ...Routes.ACCOUNTS_BALANCES,
+    ...Routes.ACCOUNTS,
     items: [
       {
+        class: 'accounts-evm',
         type: 'item',
-        class: 'accounts-balances-blockchain',
-        ...Routes.ACCOUNTS_BALANCES_BLOCKCHAIN,
+        ...Routes.ACCOUNTS_EVM,
       },
       {
+        class: 'accounts-bitcoin',
         type: 'item',
-        class: 'accounts-balances-exchange',
-        ...Routes.ACCOUNTS_BALANCES_EXCHANGE,
+        ...Routes.ACCOUNTS_BITCOIN,
       },
       {
+        class: 'accounts-substrate',
         type: 'item',
-        class: 'accounts-balances-manual',
-        ...Routes.ACCOUNTS_BALANCES_MANUAL,
-      },
-      {
-        type: 'item',
-        class: 'accounts-balances-non-fungible',
-        ...Routes.ACCOUNTS_BALANCES_NON_FUNGIBLE,
+        ...Routes.ACCOUNTS_SUBSTRATE,
       },
     ],
   },
   {
-    type: 'item',
+    class: 'balances',
+    type: 'group',
+    ...Routes.BALANCES,
+    items: [
+      {
+        class: 'balances-blockchain',
+        type: 'item',
+        ...Routes.BALANCES_BLOCKCHAIN,
+      },
+      {
+        class: 'balances-exchange',
+        type: 'item',
+        ...Routes.BALANCES_EXCHANGE,
+      },
+      {
+        class: 'balances-manual',
+        type: 'item',
+        ...Routes.BALANCES_MANUAL,
+      },
+      {
+        class: 'balances-non-fungible',
+        type: 'item',
+        ...Routes.BALANCES_NON_FUNGIBLE,
+      },
+    ],
+  },
+  {
     class: 'nfts',
+    type: 'item',
     ...Routes.NFTS,
   },
   {
-    type: 'group',
     class: 'history',
+    type: 'group',
     ...Routes.HISTORY,
     items: [
       {
-        type: 'item',
         class: 'history-trades',
+        type: 'item',
         ...Routes.HISTORY_TRADES,
       },
       {
-        type: 'item',
-        class: 'history-deposits-withdrawals',
-        ...Routes.HISTORY_DEPOSITS_WITHDRAWALS,
-      },
-      {
-        type: 'item',
         class: 'history-events',
+        type: 'item',
         ...Routes.HISTORY_EVENTS,
       },
     ],
   },
   {
-    type: 'group',
     class: 'defi',
+    type: 'group',
     ...Routes.DEFI,
     items: [
       {
-        type: 'item',
         class: 'defi-overview',
+        type: 'item',
         ...Routes.DEFI_OVERVIEW,
       },
       {
-        type: 'item',
         class: 'defi-deposits',
+        type: 'item',
         ...Routes.DEFI_DEPOSITS,
       },
       {
-        type: 'item',
         class: 'defi-liabilities',
+        type: 'item',
         ...Routes.DEFI_LIABILITIES,
       },
       {
-        type: 'item',
         class: 'defi-airdrops',
+        type: 'item',
         ...Routes.DEFI_AIRDROPS,
       },
     ],
   },
   {
-    type: 'item',
     class: 'statistics',
+    type: 'group',
     ...Routes.STATISTICS,
+    items: [
+      {
+        class: 'statistics-graph',
+        type: 'item',
+        ...Routes.STATISTICS_GRAPHS,
+      },
+      {
+        class: 'statistics-history-events',
+        type: 'item',
+        ...Routes.STATISTICS_HISTORY_EVENTS,
+      },
+    ],
   },
   {
-    type: 'item',
     class: 'staking',
+    type: 'item',
     ...Routes.STAKING,
-    route: Routes.STAKING.route.split(':')[0],
+    route: '/staking',
   },
   {
-    type: 'item',
     class: 'profit-loss-report',
+    type: 'item',
     ...Routes.PROFIT_LOSS_REPORTS,
   },
   {
     type: 'divider',
   },
   {
-    type: 'group',
+    class: 'tag-manager',
+    type: 'item',
+    ...Routes.TAG_MANAGER,
+  },
+  {
     class: 'asset-manager',
+    type: 'group',
     ...Routes.ASSET_MANAGER,
     items: [
       {
-        type: 'item',
         class: 'asset-manager-managed',
+        type: 'item',
         ...Routes.ASSET_MANAGER_MANAGED,
       },
       {
-        type: 'item',
         class: 'asset-manager-custom',
+        type: 'item',
         ...Routes.ASSET_MANAGER_CUSTOM,
       },
       {
-        type: 'item',
         class: 'asset-manager-more',
+        type: 'item',
         ...Routes.ASSET_MANAGER_MORE,
       },
     ],
   },
   {
-    type: 'group',
     class: 'price-manager',
+    type: 'group',
     ...Routes.PRICE_MANAGER,
     items: [
       {
-        type: 'item',
         class: 'price-manager-latest',
+        type: 'item',
         ...Routes.PRICE_MANAGER_LATEST,
       },
       {
-        type: 'item',
         class: 'price-manager-historic',
+        type: 'item',
         ...Routes.PRICE_MANAGER_HISTORIC,
       },
     ],
   },
   {
-    type: 'item',
     class: 'address-book-manager',
+    type: 'item',
     ...Routes.ADDRESS_BOOK_MANAGER,
   },
   {
     type: 'divider',
   },
   {
-    type: 'group',
     class: 'api-keys',
+    type: 'group',
     ...Routes.API_KEYS,
     items: [
       {
-        type: 'item',
         class: 'api-keys-premium',
+        type: 'item',
         ...Routes.API_KEYS_ROTKI_PREMIUM,
       },
       {
-        type: 'item',
         class: 'api-keys-exchanges',
+        type: 'item',
         ...Routes.API_KEYS_EXCHANGES,
       },
       {
-        type: 'item',
         class: 'api-keys-external-services',
+        type: 'item',
         ...Routes.API_KEYS_EXTERNAL_SERVICES,
       },
     ],
@@ -223,6 +260,13 @@ const navItems: MenuItem[] = [
     ...Routes.CALENDAR,
   },
 ];
+
+const route = useRoute();
+const router = useRouter();
+
+function isRouteMatch(location: RouteLocationRaw) {
+  return route.path.startsWith(router.resolve(location).path);
+}
 </script>
 
 <template>
@@ -230,10 +274,12 @@ const navItems: MenuItem[] = [
     class="p-2"
     :class="{ '!p-0': isMini }"
   >
-    <template v-for="(navItem, i) in navItems">
+    <template
+      v-for="(navItem, i) in navItems"
+      :key="i"
+    >
       <RouterLink
         v-if="navItem.type === 'item'"
-        :key="i"
         :to="navItem.route"
         custom
       >
@@ -245,7 +291,7 @@ const navItems: MenuItem[] = [
               :text="navItem.text"
               :icon="navItem.icon"
               :image="navItem.image"
-              :active="isActive"
+              :active="isActive || isRouteMatch(navItem.route)"
               :icon-component="navItem.component"
             />
           </a>
@@ -253,13 +299,12 @@ const navItems: MenuItem[] = [
       </RouterLink>
       <template v-else-if="navItem.type === 'group'">
         <RouterLink
-          :key="navItem.route"
+          :key="navItem.route.toString()"
           :to="navItem.route"
           custom
         >
           <template #default="{ isActive: isActiveParent }">
             <NavigationMenuItem
-              :key="i"
               :class="`navigation__${navItem.class}`"
               :mini="isMini"
               :text="navItem.text"
@@ -285,7 +330,7 @@ const navItems: MenuItem[] = [
                         :icon="subNavItem.icon"
                         :image="subNavItem.image"
                         :icon-component="subNavItem.component"
-                        :active="isActive"
+                        :active="isActive || isRouteMatch(subNavItem.route)"
                         sub-menu
                       />
                     </a>

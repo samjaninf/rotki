@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { type Module, SUPPORTED_MODULES } from '@/types/modules';
-import type { Nullable } from '@/types';
+import { useConfirmStore } from '@/store/confirm';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useSettingsStore } from '@/store/settings';
+import { useQueriedAddressesStore } from '@/store/session/queried-addresses';
+import QueriedAddressDialog from '@/components/defi/QueriedAddressDialog.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import type { Nullable } from '@rotki/common';
 
 interface ModuleWithStatus {
   readonly identifier: Module;
@@ -12,8 +18,8 @@ const props = defineProps<{
 }>();
 
 const { modules } = toRefs(props);
-const manageModule: Ref<Nullable<Module>> = ref(null);
-const confirmEnable: Ref<Nullable<Module>> = ref(null);
+const manageModule = ref<Nullable<Module>>(null);
+const confirmEnable = ref<Nullable<Module>>(null);
 
 const supportedModules = SUPPORTED_MODULES;
 
@@ -25,8 +31,8 @@ const moduleStatus = computed(() => {
   const active = get(activeModules);
   return get(modules)
     .map(module => ({
-      identifier: module,
       enabled: active.includes(module),
+      identifier: module,
     }))
     .sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1));
 });
@@ -77,11 +83,8 @@ const { show } = useConfirmStore();
 function showConfirmation() {
   show(
     {
+      message: t('active_modules.enable.description', getName(get(confirmEnable))),
       title: t('active_modules.enable.title'),
-      message: t(
-        'active_modules.enable.description',
-        getName(get(confirmEnable)),
-      ),
       type: 'info',
     },
     enableModule,
@@ -94,43 +97,40 @@ function showConfirmation() {
     <RuiCard
       no-padding
       class="px-1 py-0.5 bg-white dark:bg-rui-grey-900"
+      content-class="flex items-center justify-center"
     >
-      <div class="flex items-center justify-center">
-        <div
-          v-for="module in moduleStatus"
-          :key="module.identifier"
-          class="flex"
+      <div
+        v-for="module in moduleStatus"
+        :key="module.identifier"
+        class="flex"
+      >
+        <RuiTooltip
+          :popper="{ placement: 'top' }"
+          :open-delay="400"
         >
-          <RuiTooltip
-            :popper="{ placement: 'top' }"
-            :open-delay="400"
-          >
-            <template #activator>
-              <RuiButton
-                variant="text"
-                icon
-                size="sm"
-                :class="module.enabled ? null : 'grayscale'"
-                @click="onModulePress(module)"
-              >
-                <AppImage
-                  width="24px"
-                  height="24px"
-                  contain
-                  :src="icon(module.identifier)"
-                />
-              </RuiButton>
-            </template>
-            <span v-if="module.enabled">
-              {{
-                t('active_modules.view_addresses', getName(module.identifier))
-              }}
-            </span>
-            <span v-else>
-              {{ t('active_modules.activate', getName(module.identifier)) }}
-            </span>
-          </RuiTooltip>
-        </div>
+          <template #activator>
+            <RuiButton
+              variant="text"
+              icon
+              size="sm"
+              :class="module.enabled ? null : 'grayscale'"
+              @click="onModulePress(module)"
+            >
+              <AppImage
+                width="24px"
+                height="24px"
+                contain
+                :src="icon(module.identifier)"
+              />
+            </RuiButton>
+          </template>
+          <span v-if="module.enabled">
+            {{ t('active_modules.view_addresses', getName(module.identifier)) }}
+          </span>
+          <span v-else>
+            {{ t('active_modules.activate', getName(module.identifier)) }}
+          </span>
+        </RuiTooltip>
       </div>
     </RuiCard>
     <QueriedAddressDialog

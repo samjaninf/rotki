@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { MaybeRef } from '@vueuse/core';
 import type { MatchedKeyword, SearchMatcher } from '@/types/filtering';
+import type { FilterSchema } from '@/composables/use-pagination-filter/types';
 
 enum CustomAssetFilterKeys {
   NAME = 'name',
@@ -12,53 +13,42 @@ enum CustomAssetFilterValueKeys {
   CUSTOM_ASSET_TYPE = 'custom_asset_type',
 }
 
-export type Matcher = SearchMatcher<
-  CustomAssetFilterKeys,
-  CustomAssetFilterValueKeys
->;
+export type Matcher = SearchMatcher<CustomAssetFilterKeys, CustomAssetFilterValueKeys>;
 
 export type Filters = MatchedKeyword<CustomAssetFilterValueKeys>;
 
-export function useCustomAssetFilter(suggestions: MaybeRef<string[]>) {
-  const filters: Ref<Filters> = ref({});
+export function useCustomAssetFilter(suggestions: MaybeRef<string[]>): FilterSchema<Filters, Matcher> {
+  const filters = ref<Filters>({});
 
   const { t } = useI18n();
 
-  const matchers: ComputedRef<Matcher[]> = computed(() => [
-    {
-      key: CustomAssetFilterKeys.NAME,
-      keyValue: CustomAssetFilterValueKeys.NAME,
-      description: t('assets.filter.name'),
-      string: true,
-      suggestions: () => [],
-      hint: t('assets.filter.name_hint'),
-      validate: () => true,
-    },
-    {
-      key: CustomAssetFilterKeys.CUSTOM_ASSET_TYPE,
-      keyValue: CustomAssetFilterValueKeys.CUSTOM_ASSET_TYPE,
-      description: t('assets.filter.type'),
-      string: true,
-      suggestions: () => get(suggestions),
-      hint: t('assets.filter.type_hint'),
-      validate: (value: string) => get(suggestions).includes(value),
-    },
-  ]);
-
-  const updateFilter = (newFilters: Filters) => {
-    set(filters, newFilters);
-  };
+  const matchers = computed<Matcher[]>(() => [{
+    description: t('assets.filter.name'),
+    hint: t('assets.filter.name_hint'),
+    key: CustomAssetFilterKeys.NAME,
+    keyValue: CustomAssetFilterValueKeys.NAME,
+    string: true,
+    suggestions: (): string[] => [],
+    validate: (): boolean => true,
+  }, {
+    description: t('assets.filter.type'),
+    hint: t('assets.filter.type_hint'),
+    key: CustomAssetFilterKeys.CUSTOM_ASSET_TYPE,
+    keyValue: CustomAssetFilterValueKeys.CUSTOM_ASSET_TYPE,
+    string: true,
+    suggestions: (): string[] => get(suggestions),
+    validate: (value: string): boolean => get(suggestions).includes(value),
+  }]);
 
   const OptionalString = z.string().optional();
   const RouteFilterSchema = z.object({
-    [CustomAssetFilterValueKeys.NAME]: OptionalString,
     [CustomAssetFilterValueKeys.CUSTOM_ASSET_TYPE]: OptionalString,
+    [CustomAssetFilterValueKeys.NAME]: OptionalString,
   });
 
   return {
     filters,
     matchers,
-    updateFilter,
     RouteFilterSchema,
   };
 }

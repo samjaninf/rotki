@@ -1,6 +1,14 @@
 import { api } from '@/services/rotkehlchen-api';
+import { useNfts } from '@/composables/assets/nft';
+import type { ComputedRef, Ref } from 'vue';
 
-export function useNftImage(mediaUrl: Ref<string | null>) {
+interface UseNftImageReturnType {
+  shouldRender: ComputedRef<boolean>;
+  isVideo: Ref<boolean>;
+  renderedMedia: ComputedRef<string>;
+}
+
+export function useNftImage(mediaUrl: Ref<string | null>): UseNftImageReturnType {
   const { shouldRenderImage } = useNfts();
 
   const isMediaVideo = async (url: string): Promise<boolean> => {
@@ -14,9 +22,9 @@ export function useNftImage(mediaUrl: Ref<string | null>) {
     }
   };
 
-  const placeholder = './assets/images/placeholder.svg';
+  const placeholder = './assets/images/placeholder/image.svg';
 
-  const shouldRender: ComputedRef<boolean> = computed(() => {
+  const shouldRender = computed<boolean>(() => {
     const media = get(mediaUrl);
 
     if (!media)
@@ -25,9 +33,9 @@ export function useNftImage(mediaUrl: Ref<string | null>) {
     return shouldRenderImage(media);
   });
 
-  const checkingType: Ref<boolean> = ref(false);
+  const checkingType = ref<boolean>(false);
 
-  const isVideo: Ref<boolean> = ref(false);
+  const isVideo = ref<boolean>(false);
 
   watch([mediaUrl, shouldRender], async ([media, shouldRender], [prevMedia, prevShouldRender]) => {
     if (media === prevMedia && shouldRender === prevShouldRender)
@@ -52,8 +60,8 @@ export function useNftImage(mediaUrl: Ref<string | null>) {
   });
 
   return {
-    shouldRender,
     isVideo,
     renderedMedia,
+    shouldRender,
   };
 }

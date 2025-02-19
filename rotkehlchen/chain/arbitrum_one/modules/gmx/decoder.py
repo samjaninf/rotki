@@ -1,7 +1,6 @@
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset, CryptoAsset
 from rotkehlchen.chain.arbitrum_one.decoding.interfaces import ArbitrumDecoderInterface
 from rotkehlchen.chain.arbitrum_one.modules.gmx.constants import (
@@ -30,7 +29,7 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
@@ -68,18 +67,18 @@ class GmxDecoder(ArbitrumDecoderInterface):
         if context.tx_log.topics[0] != SWAP_TOPIC:
             return DEFAULT_DECODING_OUTPUT
 
-        account = hex_or_bytes_to_address(context.tx_log.data[0:32])
+        account = bytes_to_address(context.tx_log.data[0:32])
         if self.base.is_tracked(account) is False:
             return DEFAULT_DECODING_OUTPUT
 
-        token_out = self.base.get_or_create_evm_asset(hex_or_bytes_to_address(context.tx_log.data[32:64]))  # noqa: E501
-        token_in = self.base.get_or_create_evm_asset(hex_or_bytes_to_address(context.tx_log.data[64:96]))  # noqa: E501
+        token_out = self.base.get_or_create_evm_asset(bytes_to_address(context.tx_log.data[32:64]))
+        token_in = self.base.get_or_create_evm_asset(bytes_to_address(context.tx_log.data[64:96]))
         amount_out = asset_normalized_value(
-            amount=hex_or_bytes_to_int(context.tx_log.data[96:128]),
+            amount=int.from_bytes(context.tx_log.data[96:128]),
             asset=token_out,
         )
         amount_in = asset_normalized_value(
-            amount=hex_or_bytes_to_int(context.tx_log.data[128:160]),
+            amount=int.from_bytes(context.tx_log.data[128:160]),
             asset=token_in,
         )
 
@@ -88,22 +87,22 @@ class GmxDecoder(ArbitrumDecoderInterface):
             if (
                 event.asset == token_out and
                 event.event_type == HistoryEventType.SPEND and
-                event.balance.amount == amount_out
+                event.amount == amount_out
             ):
                 event.counterparty = CPT_GMX
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.SPEND
-                event.notes = f'Swap {event.balance.amount} {token_out.symbol} in GMX'
+                event.notes = f'Swap {event.amount} {token_out.symbol} in GMX'
                 out_event = event
             elif (
                 event.asset == token_in and
                 event.event_type == HistoryEventType.RECEIVE and
-                event.balance.amount == amount_in
+                event.amount == amount_in
             ):
                 event.counterparty = CPT_GMX
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
-                event.notes = f'Receive {event.balance.amount} {token_in.symbol} as the result of a GMX swap'  # noqa: E501
+                event.notes = f'Receive {event.amount} {token_in.symbol} as the result of a GMX swap'  # noqa: E501
                 in_event = event
 
         if not (out_event and in_event):
@@ -138,7 +137,7 @@ class GmxDecoder(ArbitrumDecoderInterface):
         else:
             return DEFAULT_DECODING_OUTPUT
 
-        account = hex_or_bytes_to_address(context.tx_log.topics[1])
+        account = bytes_to_address(context.tx_log.topics[1])
         if self.base.is_tracked(account) is False:
             return DEFAULT_DECODING_OUTPUT
 
@@ -164,7 +163,7 @@ class GmxDecoder(ArbitrumDecoderInterface):
                 event.location_label == account and
                 event.event_type == base_event_type and
                 (
-                    (verb_text == 'increase' and event.balance.amount == transferred_amount) or
+                    (verb_text == 'increase' and event.amount == transferred_amount) or
                     verb_text == 'decrease'  # when it is a decrease we don't know the amount that will be received  # noqa: E501
                 ) and
                 _asset_matches(token=path_token, event_asset=event.asset)
@@ -175,12 +174,12 @@ class GmxDecoder(ArbitrumDecoderInterface):
                 position_type = 'long position' if is_long is True else 'short position'
                 event_asset = event.asset.resolve_to_asset_with_symbol()
                 if verb_text == 'increase':
-                    event.balance.amount = amount_change  # we will create a fee event
+                    event.amount = amount_change  # we will create a fee event
                     note_proposition = 'with'
                 else:
                     note_proposition = 'withdrawing'
 
-                event.notes = f'{verb_text.capitalize()} {position_type} {note_proposition} {event.balance.amount} {event_asset.symbol} in GMX'  # noqa: E501
+                event.notes = f'{verb_text.capitalize()} {position_type} {note_proposition} {event.amount} {event_asset.symbol} in GMX'  # noqa: E501
 
                 # And now create a new event for the fee
                 context.decoded_events.append(self.base.make_event_from_transaction(
@@ -189,7 +188,7 @@ class GmxDecoder(ArbitrumDecoderInterface):
                     event_type=HistoryEventType.SPEND,
                     event_subtype=HistoryEventSubType.FEE,
                     asset=A_ETH,
-                    balance=Balance(amount=fee_amount),
+                    amount=fee_amount,
                     location_label=event.location_label,
                     notes=f'Spend {fee_amount} ETH as GMX fee',
                     counterparty=CPT_GMX,
@@ -209,9 +208,9 @@ class GmxDecoder(ArbitrumDecoderInterface):
         if context.tx_log.topics[0] != STAKE_GMX:
             return DEFAULT_DECODING_OUTPUT
 
-        account = hex_or_bytes_to_address(context.tx_log.data[0:32])
-        token_addrs = hex_or_bytes_to_address(context.tx_log.data[32:64])
-        amount_raw = hex_or_bytes_to_int(context.tx_log.data[64:96])
+        account = bytes_to_address(context.tx_log.data[0:32])
+        token_addrs = bytes_to_address(context.tx_log.data[32:64])
+        amount_raw = int.from_bytes(context.tx_log.data[64:96])
 
         staked_token = self.base.get_or_create_evm_asset(address=token_addrs)
         amount = asset_normalized_value(amount=amount_raw, asset=staked_token)
@@ -220,23 +219,23 @@ class GmxDecoder(ArbitrumDecoderInterface):
             if (
                 event.location_label == account and
                 event.event_type == HistoryEventType.SPEND and
-                event.balance.amount == amount
+                event.amount == amount
             ):
                 event.counterparty = CPT_GMX
                 event.event_type = HistoryEventType.STAKING
-                event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                event.event_subtype = HistoryEventSubType.DEPOSIT_FOR_WRAPPED
                 # the contract when staking GMX also creates transfers for (sGMX, sbGMX, sbfGMX)
                 asset = event.asset.resolve_to_crypto_asset()
                 event.notes = f'Stake {amount} {asset.symbol} in GMX'
             elif (
                 event.location_label == account and
                 event.event_type == HistoryEventType.RECEIVE and
-                event.balance.amount == amount
+                event.amount == amount
             ):
                 event.counterparty = CPT_GMX
                 event.event_subtype = HistoryEventSubType.RECEIVE_WRAPPED
                 asset = event.asset.resolve_to_crypto_asset()
-                event.notes = f'Receive {event.balance.amount} {asset.symbol} after staking in GMX'
+                event.notes = f'Receive {event.amount} {asset.symbol} after staking in GMX'
 
         return DEFAULT_DECODING_OUTPUT
 

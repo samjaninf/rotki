@@ -1,5 +1,11 @@
 import { TaskType } from '@/types/task-type';
 import { ApiValidationError, type ValidationErrors } from '@/types/api/errors';
+import { logger } from '@/utils/logging';
+import { isTaskCancelled } from '@/utils';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useInterop } from '@/composables/electron-interop';
+import { useAssetsApi } from '@/composables/api/assets';
 import type {
   ApplyUpdateResult,
   AssetDBVersion,
@@ -11,16 +17,25 @@ import type {
 import type { TaskMeta } from '@/types/task';
 import type { ActionStatus } from '@/types/action';
 
-export function useAssets() {
+interface UseAssetsReturn {
+  checkForUpdate: () => Promise<AssetUpdateCheckResult>;
+  applyUpdates: (payload: AssetUpdatePayload) => Promise<ApplyUpdateResult>;
+  mergeAssets: (payload: AssetMergePayload) => Promise<ActionStatus<string | ValidationErrors>>;
+  importCustomAssets: (file: File) => Promise<ActionStatus>;
+  exportCustomAssets: () => Promise<ActionStatus>;
+  restoreAssetsDatabase: (resetType: 'hard' | 'soft') => Promise<ActionStatus>;
+}
+
+export function useAssets(): UseAssetsReturn {
   const { awaitTask } = useTaskStore();
   const { t } = useI18n();
-  const { appSession, openDirectory } = useInterop();
+  const { appSession, getPath, openDirectory } = useInterop();
   const {
     checkForAssetUpdate,
-    performUpdate,
-    mergeAssets: mergeAssetsCaller,
-    importCustom,
     exportCustom,
+    importCustom,
+    mergeAssets: mergeAssetsCaller,
+    performUpdate,
     restoreAssetsDatabase: restoreAssetsDatabaseCaller,
   } = useAssetsApi();
 
@@ -30,13 +45,9 @@ export function useAssets() {
     try {
       const taskType = TaskType.ASSET_UPDATE;
       const { taskId } = await checkForAssetUpdate();
-      const { result } = await awaitTask<AssetDBVersion, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: t('actions.assets.versions.task.title').toString(),
-        },
-      );
+      const { result } = await awaitTask<AssetDBVersion, TaskMeta>(taskId, taskType, {
+        title: t('actions.assets.versions.task.title'),
+      });
 
       return {
         updateAvailable: result.local < result.remote && result.newChanges > 0,
@@ -45,15 +56,15 @@ export function useAssets() {
     }
     catch (error: any) {
       if (!isTaskCancelled(error)) {
-        const title = t('actions.assets.versions.task.title').toString();
+        const title = t('actions.assets.versions.task.title');
         const description = t('actions.assets.versions.error.description', {
           message: error.message,
         }).toString();
 
         notify({
-          title,
-          message: description,
           display: true,
+          message: description,
+          title,
         });
       }
       return {
@@ -62,19 +73,12 @@ export function useAssets() {
     }
   };
 
-  const applyUpdates = async ({
-    version,
-    resolution,
-  }: AssetUpdatePayload): Promise<ApplyUpdateResult> => {
+  const applyUpdates = async ({ resolution, version }: AssetUpdatePayload): Promise<ApplyUpdateResult> => {
     try {
       const { taskId } = await performUpdate(version, resolution);
-      const { result } = await awaitTask<AssetUpdateResult, TaskMeta>(
-        taskId,
-        TaskType.ASSET_UPDATE_PERFORM,
-        {
-          title: t('actions.assets.update.task.title').toString(),
-        },
-      );
+      const { result } = await awaitTask<AssetUpdateResult, TaskMeta>(taskId, TaskType.ASSET_UPDATE_PERFORM, {
+        title: t('actions.assets.update.task.title'),
+      });
 
       if (typeof result === 'boolean') {
         return {
@@ -82,20 +86,20 @@ export function useAssets() {
         };
       }
       return {
-        done: false,
         conflicts: result,
+        done: false,
       };
     }
     catch (error: any) {
       if (!isTaskCancelled(error)) {
-        const title = t('actions.assets.update.task.title').toString();
+        const title = t('actions.assets.update.task.title');
         const description = t('actions.assets.update.error.description', {
           message: error.message,
         }).toString();
         notify({
-          title,
-          message: description,
           display: true,
+          message: description,
+          title,
         });
       }
       return {
@@ -109,10 +113,7 @@ export function useAssets() {
     targetIdentifier,
   }: AssetMergePayload): Promise<ActionStatus<string | ValidationErrors>> => {
     try {
-      const success = await mergeAssetsCaller(
-        sourceIdentifier,
-        targetIdentifier,
-      );
+      const success = await mergeAssetsCaller(sourceIdentifier, targetIdentifier);
       return {
         success,
       };
@@ -123,15 +124,16 @@ export function useAssets() {
         message = error.getValidationErrors({ sourceIdentifier, targetIdentifier });
 
       return {
-        success: false,
         message,
+        success: false,
       };
     }
   };
 
   const importCustomAssets = async (file: File): Promise<ActionStatus> => {
     try {
-      const { taskId } = await importCustom(file, !appSession);
+      const path = getPath(file);
+      const { taskId } = await importCustom(path ?? file);
       await awaitTask<boolean, TaskMeta>(taskId, TaskType.IMPORT_ASSET, {
         title: t('actions.assets.import.task.title'),
       });
@@ -145,8 +147,8 @@ export function useAssets() {
         logger.error(error);
 
       return {
-        success: false,
         message: error.message,
+        success: false,
       };
     }
   };
@@ -155,13 +157,11 @@ export function useAssets() {
     try {
       let file: string | undefined;
       if (appSession) {
-        const directory = await openDirectory(
-          t('common.select_directory').toString(),
-        );
+        const directory = await openDirectory(t('common.select_directory').toString());
         if (!directory) {
           return {
+            message: t('assets.backup.missing_directory'),
             success: false,
-            message: t('assets.backup.missing_directory').toString(),
           };
         }
         file = directory;
@@ -170,20 +170,15 @@ export function useAssets() {
     }
     catch (error: any) {
       return {
-        success: false,
         message: error.message,
+        success: false,
       };
     }
   };
 
-  const restoreAssetsDatabase = async (
-    resetType: 'hard' | 'soft',
-  ): Promise<ActionStatus> => {
+  const restoreAssetsDatabase = async (resetType: 'hard' | 'soft'): Promise<ActionStatus> => {
     try {
-      const { taskId } = await restoreAssetsDatabaseCaller(
-        resetType,
-        resetType === 'hard',
-      );
+      const { taskId } = await restoreAssetsDatabaseCaller(resetType, resetType === 'hard');
       await awaitTask<boolean, TaskMeta>(taskId, TaskType.RESET_ASSET, {
         title: t('actions.assets.reset.task.title'),
       });
@@ -197,18 +192,18 @@ export function useAssets() {
         logger.error(error);
 
       return {
-        success: false,
         message: error.message,
+        success: false,
       };
     }
   };
 
   return {
-    checkForUpdate,
     applyUpdates,
-    mergeAssets,
-    importCustomAssets,
+    checkForUpdate,
     exportCustomAssets,
+    importCustomAssets,
+    mergeAssets,
     restoreAssetsDatabase,
   };
 }

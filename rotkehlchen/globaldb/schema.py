@@ -183,7 +183,9 @@ CREATE TABLE IF NOT EXISTS asset_collections(
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     symbol TEXT NOT NULL,
-    UNIQUE (name, symbol)
+    main_asset TEXT NOT NULL UNIQUE,
+    FOREIGN KEY(main_asset) REFERENCES assets(identifier) ON UPDATE CASCADE ON DELETE CASCADE,
+    UNIQUE(name, symbol)
 );
 """
 
@@ -212,6 +214,12 @@ INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('D', 4);
 INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('E', 5);
 /* DEFILLAMA */
 INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('F', 6);
+/* UNISWAPV2 */
+INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('G', 7);
+/* UNISWAPV3 */
+INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('H', 8);
+/* ALCHEMY */
+INSERT OR IGNORE INTO price_history_source_types(type, seq) VALUES ('I', 9);
 """
 
 DB_CREATE_PRICE_HISTORY = """
@@ -242,14 +250,14 @@ CREATE TABLE IF NOT EXISTS binance_pairs (
 DB_CREATE_ADDRESS_BOOK = """
 CREATE TABLE IF NOT EXISTS address_book (
     address TEXT NOT NULL,
-    blockchain TEXT,
+    blockchain TEXT NOT NULL,
     name TEXT NOT NULL,
     PRIMARY KEY(address, blockchain)
 );
 """
 
 # Similar to the common_asset_details table this table is used for custom assets that the user
-# wants to to track. Also we use the asset identifier to relate this table with the assets table
+# wants to track. Also we use the asset identifier to relate this table with the assets table
 # allowing a cascade on delete. The notes fields allows for adding relevant information about the
 # asset by the user. The type field is a string field that is filled by the user. This allows to
 # createsomething like a label so the user can visually see what kind of assets (s)he has. All the
@@ -288,7 +296,7 @@ CREATE TABLE IF NOT EXISTS unique_cache (
 DB_CREATE_CONTRACT_ABI = """
 CREATE TABLE IF NOT EXISTS contract_abi (
     id INTEGER NOT NULL PRIMARY KEY,
-    value TEXT NOT NULL,
+    value TEXT NOT NULL UNIQUE,
     name TEXT
 );
 """
@@ -324,6 +332,20 @@ CREATE TABLE IF NOT EXISTS location_unsupported_assets (
 );
 """
 
+DB_CREATE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_assets_identifier ON assets (identifier);
+CREATE INDEX IF NOT EXISTS idx_evm_tokens_identifier ON evm_tokens (identifier, chain, protocol);
+CREATE INDEX IF NOT EXISTS idx_multiasset_mappings_asset ON multiasset_mappings (asset);
+CREATE INDEX IF NOT EXISTS idx_asset_collections_main_asset ON asset_collections (main_asset);
+CREATE INDEX IF NOT EXISTS idx_user_owned_assets_asset_id ON user_owned_assets (asset_id);
+CREATE INDEX IF NOT EXISTS idx_common_assets_identifier ON common_asset_details (identifier);
+CREATE INDEX IF NOT EXISTS idx_price_history_identifier ON price_history (from_asset, to_asset);
+CREATE INDEX IF NOT EXISTS idx_location_mappings_identifier ON location_asset_mappings (local_id);
+CREATE INDEX IF NOT EXISTS idx_underlying_tokens_lists_identifier ON underlying_tokens_list (identifier, parent_token_entry);
+CREATE INDEX IF NOT EXISTS idx_binance_pairs_identifier ON binance_pairs (base_asset, quote_asset);
+CREATE INDEX IF NOT EXISTS idx_multiasset_mappings_identifier ON multiasset_mappings (asset);
+"""  # noqa: E501
+
 DB_SCRIPT_CREATE_TABLES = f"""
 PRAGMA foreign_keys=off;
 BEGIN TRANSACTION;
@@ -349,6 +371,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_DEFAULT_RPC_NODES}
 {DB_CREATE_LOCATION_ASSET_MAPPINGS}
 {DB_CREATE_LOCATION_UNSUPPORTED_ASSETS}
+{DB_CREATE_INDEXES}
 COMMIT;
 PRAGMA foreign_keys=on;
 """

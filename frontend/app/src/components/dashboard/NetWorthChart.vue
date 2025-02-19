@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import {
+  type NetValue,
   type TimeFramePeriod,
   type Timeframe,
   type Timeframes,
   getTimeframeByRange,
-} from '@rotki/common/lib/settings/graphs';
-import {
-  Chart,
-  type ChartConfiguration,
-  type ChartOptions,
-  type TooltipOptions,
-} from 'chart.js';
+} from '@rotki/common';
+import { Chart, type ChartConfiguration, type ChartOptions, type TooltipOptions } from 'chart.js';
 import dayjs from 'dayjs';
-import type { NetValue } from '@rotki/common/lib/statistics';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useGraph, useTooltip } from '@/composables/graphs';
+import ExportSnapshotDialog from '@/components/dashboard/ExportSnapshotDialog.vue';
+import SnapshotActionButton from '@/components/dashboard/SnapshotActionButton.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import GraphTooltipWrapper from '@/components/graphs/GraphTooltipWrapper.vue';
 import type { ValueOverTime } from '@/types/graphs';
 
 type ActiveRangeButton = 'start' | 'end' | 'both';
@@ -28,7 +30,7 @@ const { t } = useI18n();
 const { chartData } = toRefs(props);
 const { graphZeroBased, showGraphRangeSelector } = storeToRefs(useFrontendSettingsStore());
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
-const { dark } = useTheme();
+const { isDark } = useRotkiTheme();
 
 const selectedTimestamp = ref<number>(0);
 const selectedBalance = ref<number>(0);
@@ -43,7 +45,7 @@ const chartId = 'net-worth-chart__chart';
 const tooltipId = 'net-worth-chart__tooltip';
 const rangeId = 'net-worth-chart__range';
 
-const { tooltipContent, tooltipDisplayOption, calculateTooltipPosition } = useTooltip(tooltipId);
+const { calculateTooltipPosition, tooltipContent, tooltipDisplayOption } = useTooltip(tooltipId);
 
 const balanceData = ref<ValueOverTime[]>([]);
 const showVirtualCurrentData = ref<boolean>(true);
@@ -77,16 +79,16 @@ interface Bound {
 }
 
 const displayedXRange = ref<Bound>({
-  min: 0,
   max: 0,
+  min: 0,
   range: 0,
 });
 
 function calculateXRange() {
   if (!chart) {
     set(displayedXRange, {
-      min: 0,
       max: 0,
+      min: 0,
       range: 0,
     });
     return;
@@ -98,8 +100,8 @@ function calculateXRange() {
   const max = +xAxis.max!;
 
   set(displayedXRange, {
-    min,
     max,
+    min,
     range: max - min,
   });
 }
@@ -108,8 +110,8 @@ const dataTimeRange = computed<Bound>(() => {
   const data = get(balanceData);
   if (data.length === 0) {
     return {
-      min: 0,
       max: 0,
+      min: 0,
       range: 0,
     };
   }
@@ -119,15 +121,15 @@ const dataTimeRange = computed<Bound>(() => {
 
   if (!last) {
     return {
-      min: 0,
       max: first.x,
+      min: 0,
       range: first.x,
     };
   }
 
   return {
-    min: first.x,
     max: last.x,
+    min: first.x,
     range: last.x - first.x,
   };
 });
@@ -136,8 +138,8 @@ const dataValueRange = computed<Bound>(() => {
   const data = get(balanceData);
   if (data.length === 0) {
     return {
-      min: 0,
       max: 0,
+      min: 0,
       range: 0,
     };
   }
@@ -146,26 +148,26 @@ const dataValueRange = computed<Bound>(() => {
   const max = Math.max(...data.map(item => item.y));
 
   return {
-    min,
     max,
+    min,
     range: max - min,
   };
 });
 
 const activeTimeframe = computed<Timeframe>(() => {
-  const { min, max } = get(displayedXRange);
+  const { max, min } = get(displayedXRange);
   return getTimeframeByRange(min, max);
 });
 
 const rangeTimeframe = computed<Timeframe>(() => {
   const range = get(dataTimeRange);
-  const { min, max } = range;
+  const { max, min } = range;
   return getTimeframeByRange(min, max);
 });
 
 watch(activeTimeframe, () => updateChart(true, false));
 
-function transformData({ times, data }: NetValue) {
+function transformData({ data, times }: NetValue) {
   const newBalances: ValueOverTime[] = [];
 
   let showVirtual = true;
@@ -206,29 +208,32 @@ function prepareData() {
 }
 
 watch(chartData, () => {
-  prepareData();
+  if (chart) {
+    prepareData();
+  }
 });
 
-const { getCanvasCtx, baseColor, gradient, fontColor, backgroundColor } = useGraph(chartId);
+const { backgroundColor, baseColor, fontColor, getCanvasCtx, gradient, gridColor } = useGraph(chartId);
 const { getCanvasCtx: getRangeCanvasCtx } = useGraph(rangeId);
 
 function createDatasets(isRange = false) {
   const borderColor = () => get(baseColor);
 
   const dataset = {
-    data: [],
-    tension: 0.1,
-    fill: true,
     backgroundColor: () => (!isRange ? get(gradient) : 'transparent'),
     borderColor,
     borderWidth: 2,
-    pointRadius: 1,
-    pointHoverRadius: !isRange ? 6 : 0,
-    pointHoverBorderWidth: !isRange ? 2 : 0,
-    pointBorderColor: 'transparent',
+    cubicInterpolationMode: 'monotone',
+    data: [],
+    fill: true,
     pointBackgroundColor: 'transparent',
-    pointHoverBorderColor: borderColor,
+    pointBorderColor: 'transparent',
     pointHoverBackgroundColor: () => get(backgroundColor),
+    pointHoverBorderColor: borderColor,
+    pointHoverBorderWidth: !isRange ? 2 : 0,
+    pointHoverRadius: !isRange ? 6 : 0,
+    pointRadius: 1,
+    tension: 0.1,
   };
 
   return [dataset];
@@ -236,44 +241,42 @@ function createDatasets(isRange = false) {
 
 function createScales(isRange = false) {
   const x: any = {
-    type: 'time',
+    border: {
+      color: () => get(gridColor),
+      display: true,
+    },
     grid: {
       display: false,
       drawBorder: !isRange,
     },
     ticks: {
-      display: isRange || !get(showGraphRangeSelector),
-      color: () => get(fontColor),
       autoSkip: true,
-      maxRotation: 0,
+      color: () => get(fontColor),
       crossAlign: isRange ? 'center' : 'near',
+      display: isRange || !get(showGraphRangeSelector),
+      maxRotation: 0,
     },
     time: {
-      unit: () =>
-        isRange
-          ? get(rangeTimeframe).xAxisTimeUnit
-          : get(activeTimeframe).xAxisTimeUnit,
-      stepSize: () =>
-        isRange
-          ? get(rangeTimeframe).xAxisStepSize
-          : get(activeTimeframe).xAxisStepSize,
       displayFormats: () => {
         const format = isRange
           ? get(rangeTimeframe).xAxisLabelDisplayFormat
           : get(activeTimeframe).xAxisLabelDisplayFormat;
 
         return {
+          day: format,
           month: format,
           week: format,
-          day: format,
         };
       },
+      stepSize: () => (isRange ? get(rangeTimeframe).xAxisStepSize : get(activeTimeframe).xAxisStepSize),
+      unit: () => (isRange ? get(rangeTimeframe).xAxisTimeUnit : get(activeTimeframe).xAxisTimeUnit),
     },
+    type: 'time',
   };
 
   const y: any = {
-    display: false,
     beginAtZero: () => (isRange ? false : get(graphZeroBased)),
+    display: false,
   };
 
   if (isRange) {
@@ -312,11 +315,9 @@ function createTooltip(): Partial<TooltipOptions> {
     const time = dayjs(x).format(get(activeTimeframe).tooltipTimeFormat);
 
     set(tooltipContent, {
-      value: bigNumberify(y),
+      currentBalance: get(showVirtualCurrentData) && item.dataIndex === get(balanceData).length - 1,
       time: `${time}`,
-      currentBalance:
-        get(showVirtualCurrentData)
-        && item.dataIndex === get(balanceData).length - 1,
+      value: bigNumberify(y),
     });
 
     nextTick(() => {
@@ -329,9 +330,9 @@ function createTooltip(): Partial<TooltipOptions> {
 
   return {
     enabled: false,
-    mode: 'index',
-    intersect: false,
     external,
+    intersect: false,
+    mode: 'index',
   };
 }
 
@@ -345,22 +346,21 @@ function createChart(): Chart {
 
   const options: ChartOptions = {
     animation: (() => !get(activeRangeButton)) as any,
-    maintainAspectRatio: false,
     clip: 8,
-    interaction: {
-      mode: 'index',
-      intersect: false,
-    },
     hover: { intersect: false },
-    scales: scales as any,
+    interaction: {
+      intersect: false,
+      mode: 'index',
+    },
+    maintainAspectRatio: false,
     plugins: {
       legend: { display: false },
       tooltip,
       zoom: {
         limits: {
           x: {
-            min: 'original',
             max: 'original',
+            min: 'original',
             minRange: oneHourTimestamp,
           },
         },
@@ -375,12 +375,13 @@ function createChart(): Chart {
         },
       },
     },
+    scales: scales as any,
   };
 
   const config: ChartConfiguration = {
-    type: 'line',
     data: { datasets },
     options,
+    type: 'line',
   };
 
   return new Chart(context, config);
@@ -390,8 +391,7 @@ watch(dataTimeRange, (dataTimeRange) => {
   if (!chart)
     return;
 
-  chart.options.plugins!.zoom!.zoom!.drag!.enabled
-    = dataTimeRange.range > oneHourTimestamp;
+  chart.options.plugins!.zoom!.zoom!.drag!.enabled = dataTimeRange.range > oneHourTimestamp;
   updateChart(false, false);
 });
 
@@ -402,9 +402,7 @@ function createRange() {
 
   const options: ChartOptions = {
     animation: false,
-    responsive: true,
     maintainAspectRatio: false,
-    scales: scales as any,
     plugins: {
       legend: {
         display: false,
@@ -413,12 +411,14 @@ function createRange() {
         enabled: false,
       },
     },
+    responsive: true,
+    scales: scales as any,
   };
 
   const config: ChartConfiguration = {
-    type: 'line',
     data: { datasets },
     options,
+    type: 'line',
   };
 
   return new Chart(context, config);
@@ -428,8 +428,10 @@ function setup() {
   chart?.destroy();
   clearData();
   chart = createChart();
-  if (get(showGraphRangeSelector))
+  if (get(showGraphRangeSelector)) {
+    range?.destroy();
     range = createRange();
+  }
 
   prepareData();
 }
@@ -438,7 +440,7 @@ onMounted(() => {
   setup();
 });
 
-watch(dark, () => {
+watch(isDark, () => {
   updateChart(true, false);
 });
 
@@ -464,23 +466,14 @@ function canvasClicked(event: MouseEvent) {
     if (get(isDblClick))
       return;
 
-    const axisData = chart?.getElementsAtEventForMode(
-      event,
-      'index',
-      { intersect: false },
-      false,
-    );
+    const axisData = chart?.getElementsAtEventForMode(event, 'index', { intersect: false }, false);
 
     if (axisData && axisData.length > 0) {
       const index = axisData[0].index;
       const balanceDataVal = get(balanceData);
       const data = balanceDataVal[index];
 
-      if (
-        data.x
-        && data.y
-        && !(get(showVirtualCurrentData) && index === balanceDataVal.length - 1)
-      ) {
+      if (data.x && data.y && !(get(showVirtualCurrentData) && index === balanceDataVal.length - 1)) {
         set(selectedTimestamp, data.x / 1000);
         set(selectedBalance, data.y);
 
@@ -499,7 +492,7 @@ function resetZoom(updateRange = false) {
 
   const xAxis = chart.options!.scales!.x!;
 
-  const { min, max } = get(dataTimeRange);
+  const { max, min } = get(dataTimeRange);
 
   xAxis.min = min;
   xAxis.max = max;
@@ -516,8 +509,8 @@ const rangeMarkerStyle = computed<Record<string, string>>(() => {
 
   return {
     left: `${left * 100}%`,
-    width: `${length * 100}%`,
     transition: get(activeRangeButton) ? 'none' : '0.3s all',
+    width: `${length * 100}%`,
   };
 });
 
@@ -533,15 +526,15 @@ function rangeButtonMouseMove(event: MouseEvent) {
   if (!activeRangeButtonVal || !rangeElem)
     return;
 
-  const { x: elemX, width } = rangeElem.getBoundingClientRect();
+  const { width, x: elemX } = rangeElem.getBoundingClientRect();
   const x = Math.round(event.pageX) - elemX;
   const scale = x / width;
 
-  const { min, max, range } = get(dataTimeRange);
+  const { max, min, range } = get(dataTimeRange);
   if (range < oneHourTimestamp)
     return;
 
-  const { min: displayedMin, max: displayedMax } = get(displayedXRange);
+  const { max: displayedMax, min: displayedMin } = get(displayedXRange);
 
   const chart = getChart();
   if (!chart)
@@ -591,19 +584,11 @@ function rangeButtonMouseMove(event: MouseEvent) {
     let limitedMin = Math.max(min, newMin);
     let limitedMax = Math.min(max, newMax);
 
-    if (limitedMin === min) {
-      limitedMax = Math.min(
-        max,
-        Math.max(limitedMax, limitedMin + oneHourTimestamp),
-      );
-    }
+    if (limitedMin === min)
+      limitedMax = Math.min(max, Math.max(limitedMax, limitedMin + oneHourTimestamp));
 
-    if (limitedMax === max) {
-      limitedMin = Math.max(
-        min,
-        Math.min(limitedMin, limitedMax - oneHourTimestamp),
-      );
-    }
+    if (limitedMax === max)
+      limitedMin = Math.max(min, Math.min(limitedMin, limitedMax - oneHourTimestamp));
 
     xAxis.min = limitedMin;
     xAxis.max = limitedMax;
@@ -623,14 +608,16 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('mouseup', mouseup);
+  chart?.destroy();
+  chart = null;
+  range?.destroy();
+  range = null;
 });
-
-const css = useCssModule();
 </script>
 
 <template>
-  <div :class="css.wrapper">
-    <div :class="css.canvas">
+  <div :class="$style.wrapper">
+    <div :class="$style.canvas">
       <canvas
         :id="chartId"
         @mousedown="canvasMouseDown($event)"
@@ -665,11 +652,11 @@ const css = useCssModule();
       </GraphTooltipWrapper>
     </div>
 
-    <div :class="css.range__wrapper">
+    <div :class="$style.range__wrapper">
       <div
         v-if="showGraphRangeSelector"
         ref="rangeRef"
-        :class="css.range"
+        :class="$style.range"
         @mousemove="rangeButtonMouseMove($event)"
         @dblclick="resetZoom()"
       >
@@ -677,47 +664,37 @@ const css = useCssModule();
 
         <div
           :class="[
-            css.range__marker,
+            $style.range__marker,
             {
-              [css['range__marker--dark']]: dark,
+              [$style['range__marker--dark']]: isDark,
             },
           ]"
           :style="rangeMarkerStyle"
           @mousedown="rangeButtonMouseDown('both', $event)"
         >
-          <div
-            :class="[
-              css.range__marker__limit,
-              css['range__marker__limit--start'],
-            ]"
-          >
+          <div :class="[$style.range__marker__limit, $style['range__marker__limit--start']]">
             <RuiButton
-              :class="css.range__marker__limit__button"
-              :color="dark ? 'primary' : undefined"
+              :class="$style.range__marker__limit__button"
+              :color="isDark ? 'primary' : undefined"
               elevation="1"
               @mousedown.stop="rangeButtonMouseDown('start', $event)"
             >
               <RuiIcon
-                :class="css.range__marker__limit__button__icon"
-                name="equal-line"
+                :class="$style.range__marker__limit__button__icon"
+                name="lu-equal"
               />
             </RuiButton>
           </div>
-          <div
-            :class="[
-              css.range__marker__limit,
-              css['range__marker__limit--end'],
-            ]"
-          >
+          <div :class="[$style.range__marker__limit, $style['range__marker__limit--end']]">
             <RuiButton
-              :class="css.range__marker__limit__button"
-              :color="dark ? 'primary' : undefined"
+              :class="$style.range__marker__limit__button"
+              :color="isDark ? 'primary' : undefined"
               elevation="1"
               @mousedown.stop="rangeButtonMouseDown('end', $event)"
             >
               <RuiIcon
-                :class="css.range__marker__limit__button__icon"
-                name="equal-line"
+                :class="$style.range__marker__limit__button__icon"
+                name="lu-equal"
               />
             </RuiButton>
           </div>
@@ -728,12 +705,8 @@ const css = useCssModule();
         class="grow"
       />
 
-      <div :class="css.snapshot">
-        <SnapshotActionButton>
-          <template #button-icon>
-            <RuiIcon name="arrow-down-s-line" />
-          </template>
-        </SnapshotActionButton>
+      <div :class="$style.snapshot">
+        <SnapshotActionButton />
       </div>
     </div>
 
@@ -768,9 +741,7 @@ const css = useCssModule();
   }
 
   &__marker {
-    @apply absolute w-full h-[90%] top-0 z-[2] cursor-all-scroll;
-
-    background: var(--border-color);
+    @apply absolute w-full h-[90%] top-0 z-[2] cursor-all-scroll bg-black/[0.1];
 
     &__limit {
       @apply flex items-center absolute w-[0.625rem] h-full cursor-ew-resize;
@@ -795,6 +766,14 @@ const css = useCssModule();
           @apply scale-50 scale-y-[0.5] rotate-90;
         }
       }
+    }
+  }
+}
+
+:global(.dark) {
+  .range {
+    &__marker {
+      @apply bg-white/[0.1];
     }
   }
 }

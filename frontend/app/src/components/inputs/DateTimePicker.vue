@@ -3,76 +3,119 @@ import dayjs from 'dayjs';
 import IMask, { type InputMask, MaskedRange } from 'imask';
 import useVuelidate from '@vuelidate/core';
 import { helpers, required } from '@vuelidate/validators';
+import { isEmpty } from 'es-toolkit/compat';
 import { DateFormat } from '@/types/date-format';
 import { toMessages } from '@/utils/validation';
 import { timezones } from '@/data/timezones';
+import { changeDateFormat, convertDateByTimezone, getDateInputISOFormat, guessTimezone, isValidDate } from '@/utils/date';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
 
-const props = withDefaults(
-  defineProps<{
-    label?: string;
-    hint?: string;
-    persistentHint?: boolean;
-    value?: string;
-    limitNow?: boolean;
-    allowEmpty?: boolean;
-    milliseconds?: boolean;
-    disabled?: boolean;
-    errorMessages?: string[];
-    hideDetails?: boolean;
-    dateOnly?: boolean;
-    inputOnly?: boolean;
-  }>(),
-  {
-    label: '',
-    hint: '',
-    persistentHint: false,
-    value: '',
-    limitNow: false,
-    allowEmpty: false,
-    milliseconds: false,
-    disabled: false,
-    errorMessages: () => [],
-    hideDetails: false,
-    dateOnly: false,
-    inputOnly: false,
-  },
-);
+interface DateTimePickerProps {
+  label?: string;
+  hint?: string;
+  persistentHint?: boolean;
+  limitNow?: boolean;
+  allowEmpty?: boolean;
+  milliseconds?: boolean;
+  disabled?: boolean;
+  errorMessages?: string[] | string;
+  hideDetails?: boolean;
+  dateOnly?: boolean;
+  inputOnly?: boolean;
+  hideTimezoneSelector?: boolean;
+  dense?: boolean;
+}
 
-const emit = defineEmits<{ (e: 'input', value: string): void }>();
+const modelValue = defineModel<string>({ required: true });
 
-const { value, allowEmpty, limitNow, errorMessages, milliseconds, dateOnly } = toRefs(props);
+const props = withDefaults(defineProps<DateTimePickerProps>(), {
+  allowEmpty: false,
+  dateOnly: false,
+  dense: false,
+  disabled: false,
+  errorMessages: () => [],
+  hideDetails: false,
+  hideTimezoneSelector: false,
+  hint: '',
+  inputOnly: false,
+  label: '',
+  limitNow: false,
+  milliseconds: false,
+  persistentHint: false,
+});
 
-const imask: Ref<InputMask<any> | null> = ref(null);
+const { allowEmpty, dateOnly, errorMessages, limitNow, milliseconds } = toRefs(props);
+const iMask = ref<InputMask<any>>();
 
 const { t } = useI18n();
 
 const { dateInputFormat } = storeToRefs(useFrontendSettingsStore());
 
-const dateOnlyFormat: ComputedRef<string> = computed(() =>
-  getDateInputISOFormat(get(dateInputFormat)),
-);
+const dateOnlyFormat = computed<string>(() => getDateInputISOFormat(get(dateInputFormat)));
 
-const dateTimeFormat: ComputedRef<string> = computed(
-  () => `${get(dateOnlyFormat)} HH:mm`,
-);
+const dateTimeFormat = computed<string>(() => `${get(dateOnlyFormat)} HH:mm`);
 
-const dateTimeFormatWithSecond: ComputedRef<string> = computed(
-  () => `${get(dateTimeFormat)}:ss`,
-);
+const dateTimeFormatWithSecond = computed<string>(() => `${get(dateTimeFormat)}:ss`);
 
-const dateTimeFormatWithMilliseconds: ComputedRef<string> = computed(
-  () => `${get(dateTimeFormatWithSecond)}.SSS`,
-);
+const dateTimeFormatWithMilliseconds = computed<string>(() => `${get(dateTimeFormatWithSecond)}.SSS`);
 
-const currentValue: Ref<string> = ref('');
-const selectedTimezone: Ref<string> = ref('');
+const currentValue = ref<string>('');
+const selectedTimezone = ref<string>(guessTimezone());
 const inputField = ref();
 
+const dateFormatErrorMessage = computed<string>(() => {
+  const dateFormat = get(dateOnlyFormat);
+  if (get(milliseconds)) {
+    return t('date_time_picker.milliseconds_format', {
+      dateFormat,
+    });
+  }
+  else if (get(dateOnly)) {
+    return t('date_time_picker.date_only_format', {
+      dateFormat,
+    });
+  }
+  else {
+    return t('date_time_picker.default_format', {
+      dateFormat,
+    });
+  }
+});
+
+const rules = {
+  date: {
+    isOnLimit: helpers.withMessage(t('date_time_picker.limit_now'), (v: string): boolean => isDateOnLimit(v)),
+    isValidFormat: helpers.withMessage(
+      () => get(dateFormatErrorMessage),
+      (v: string): boolean => {
+        if (get(allowEmpty) && !v)
+          return true;
+
+        return isValidFormat(v);
+      },
+    ),
+  },
+  timezone: {
+    required: helpers.withMessage(t('date_time_picker.timezone_field.non_empty'), required),
+  },
+};
+
+const v$ = useVuelidate(rules, {
+  date: currentValue,
+  timezone: selectedTimezone,
+}, {
+  $autoDirty: true,
+  $externalResults: computed(() => ({ date: get(errorMessages) })),
+  $stopPropagation: true,
+});
+
 function isValidFormat(date: string): boolean {
-  return isValidDate(date, get(dateOnlyFormat))
+  return (
+    isValidDate(date, get(dateOnlyFormat))
     || isValidDate(date, get(dateTimeFormat))
     || isValidDate(date, get(dateTimeFormatWithSecond))
-    || (get(milliseconds) && isValidDate(date, get(dateTimeFormatWithMilliseconds)));
+    || (get(milliseconds) && isValidDate(date, get(dateTimeFormatWithMilliseconds)))
+  );
 }
 
 function isDateOnLimit(date: string): boolean {
@@ -98,66 +141,16 @@ function isValid(date: string): boolean {
   return isValidFormat(date) && isDateOnLimit(date);
 }
 
-const dateFormatErrorMessage: ComputedRef<string> = computed(() => {
-  const dateFormat = get(dateOnlyFormat);
-  return get(milliseconds)
-    ? t('date_time_picker.milliseconds_format', {
-      dateFormat,
-    })
-    : (
-        get(dateOnly)
-          ? t('date_time_picker.date_only_format', {
-            dateFormat,
-          })
-          : t('date_time_picker.default_format', {
-            dateFormat,
-          })
-      );
-});
+function updateIMaskValue(value: string) {
+  if (!isDefined(iMask)) {
+    return;
+  }
+  nextTick(() => {
+    get(iMask).value = value;
+  });
+}
 
-const rules = {
-  date: {
-    isValidFormat: helpers.withMessage(
-      () => get(dateFormatErrorMessage),
-      (v: string): boolean => {
-        if (get(allowEmpty) && !v)
-          return true;
-
-        return isValidFormat(v);
-      },
-    ),
-    isOnLimit: helpers.withMessage(
-      t('date_time_picker.limit_now'),
-      (v: string): boolean => isDateOnLimit(v),
-    ),
-  },
-  timezone: {
-    required: helpers.withMessage(
-      t('date_time_picker.timezone_field.non_empty'),
-      required,
-    ),
-  },
-};
-
-const v$ = useVuelidate(
-  rules,
-  {
-    date: currentValue,
-    timezone: selectedTimezone,
-  },
-  {
-    $autoDirty: true,
-    $stopPropagation: true,
-    $externalResults: computed(() => ({ date: get(errorMessages) })),
-  },
-);
-
-function onValueChange(value: string) {
-  const imaskVal = get(imask)!;
-
-  if (!value)
-    imaskVal.value = '';
-
+function convertToUserDateFormat(value: string) {
   const millisecondsVal = get(milliseconds);
   const changedDateTimezone = convertDateByTimezone(
     value,
@@ -167,71 +160,68 @@ function onValueChange(value: string) {
     millisecondsVal,
   );
 
-  const newValue = changeDateFormat(
+  return changeDateFormat(
     changedDateTimezone,
     DateFormat.DateMonthYearHourMinuteSecond,
     get(dateInputFormat),
     millisecondsVal,
   );
+}
 
-  if (imaskVal) {
-    imaskVal.value = newValue;
+function onValueChange(value: string) {
+  if (!value && isDefined(iMask)) {
+    updateIMaskValue('');
+  }
+  const newValue = convertToUserDateFormat(value);
+
+  if (isDefined(iMask)) {
+    updateIMaskValue(newValue);
     set(currentValue, newValue);
   }
 }
 
-watch(value, onValueChange);
-watch(selectedTimezone, () => onValueChange(get(value)));
-
-function input(dateTime: string) {
-  emit('input', dateTime);
-}
-
 function emitIfValid(value: string) {
-  if (isValid(value)) {
-    const changedDateTimezone = convertDateByTimezone(
-      value,
-      get(dateInputFormat),
-      get(selectedTimezone),
-      guessTimezone(),
-      get(milliseconds),
-    );
-
-    const formattedValue = changeDateFormat(
-      changedDateTimezone,
-      get(dateInputFormat),
-      DateFormat.DateMonthYearHourMinuteSecond,
-      get(milliseconds),
-    );
-
-    input(formattedValue);
+  if (!isValid(value)) {
+    return;
   }
+  const changedDateTimezone = convertDateByTimezone(
+    value,
+    get(dateInputFormat),
+    get(selectedTimezone),
+    guessTimezone(),
+    get(milliseconds),
+  );
+  const formattedValue = changeDateFormat(
+    changedDateTimezone,
+    get(dateInputFormat),
+    DateFormat.DateMonthYearHourMinuteSecond,
+    get(milliseconds),
+  );
+  set(modelValue, formattedValue);
 }
 
 function setNow() {
   const now = dayjs().tz(get(selectedTimezone));
-  const format = get(milliseconds)
-    ? get(dateTimeFormatWithMilliseconds)
-    : get(dateTimeFormatWithSecond);
+  const format = get(milliseconds) ? get(dateTimeFormatWithMilliseconds) : get(dateTimeFormatWithSecond);
   const nowInString = now.format(format);
   set(currentValue, nowInString);
   emitIfValid(nowInString);
 }
 
-function initImask() {
+function initIMask() {
   const inputWrapper = get(inputField)!;
   const input = inputWrapper.$el.querySelector('input') as HTMLInputElement;
 
   const createBlock = (from: number, to: number) => ({
-    mask: MaskedRange,
     from,
+    mask: MaskedRange,
     to,
   });
 
   const dateBlocks = {
-    YYYY: createBlock(1970, 9999),
-    MM: createBlock(1, 12),
     DD: createBlock(1, 31),
+    MM: createBlock(1, 12),
+    YYYY: createBlock(1970, 9999),
   };
 
   const hourAndMinuteBlocks = {
@@ -249,43 +239,44 @@ function initImask() {
 
   // Find every character '/', ':', ' ', and adds '`' character after it.
   // It is used to prevent the character to shift back.
-  const convertPattern = (pattern: string) =>
-    pattern.replace(/[\s/:]/g, match => `${match}\``);
+  const convertPattern = (pattern: string) => pattern.replace(/[\s/:]/g, match => `${match}\``);
 
   const mask = [
     {
-      mask: convertPattern(get(dateOnlyFormat)),
       blocks: {
         ...dateBlocks,
       },
       lazy: false,
+      mask: convertPattern(get(dateOnlyFormat)),
       overwrite: true,
     },
   ];
 
   if (!get(dateOnly)) {
-    mask.push({
-      mask: convertPattern(get(dateTimeFormat)),
-      blocks: {
-        ...dateBlocks,
-        ...hourAndMinuteBlocks,
+    mask.push(
+      {
+        blocks: {
+          ...dateBlocks,
+          ...hourAndMinuteBlocks,
+        },
+        lazy: false,
+        mask: convertPattern(get(dateTimeFormat)),
+        overwrite: true,
       },
-      lazy: false,
-      overwrite: true,
-    }, {
-      mask: convertPattern(get(dateTimeFormatWithSecond)),
-      blocks: {
-        ...dateBlocks,
-        ...hourAndMinuteBlocks,
-        ...secondBlocks,
+      {
+        blocks: {
+          ...dateBlocks,
+          ...hourAndMinuteBlocks,
+          ...secondBlocks,
+        },
+        lazy: false,
+        mask: convertPattern(get(dateTimeFormatWithSecond)),
+        overwrite: true,
       },
-      lazy: false,
-      overwrite: true,
-    });
+    );
 
     if (get(milliseconds)) {
       mask.push({
-        mask: convertPattern(get(dateTimeFormatWithMilliseconds)),
         blocks: {
           ...dateBlocks,
           ...hourAndMinuteBlocks,
@@ -293,84 +284,98 @@ function initImask() {
           ...millisecondsBlocks,
         },
         lazy: false,
+        mask: convertPattern(get(dateTimeFormatWithMilliseconds)),
         overwrite: true,
       });
     }
   }
 
-  const newImask = IMask(input, {
+  const newIMask = IMask(input, {
     mask,
   });
 
-  set(imask, newImask);
-}
+  if (isDefined(modelValue)) {
+    nextTick(() => {
+      const value = convertToUserDateFormat(get(modelValue));
+      newIMask.value = value;
+      set(currentValue, value);
+    });
+  }
 
-onMounted(() => {
-  set(selectedTimezone, guessTimezone());
-  initImask();
-});
-
-watch(
-  () => get(imask)?.value,
-  (value, prev) => {
-    const unmasked = get(imask)?.unmaskedValue;
+  newIMask.on('accept', () => {
+    const unmasked = get(iMask)?.unmaskedValue;
+    const value = get(iMask)?.value;
+    const prev = get(currentValue);
     set(currentValue, value);
     if (prev === undefined) {
-      // Reset validation when imask just created
+      // Reset validation when iMask just created
       get(v$).$reset();
     }
     if (value && unmasked)
       emitIfValid(value);
-  },
-);
+  });
+
+  set(iMask, newIMask);
+}
 
 function focus() {
   const inputWrapper = get(inputField)!;
   const input = inputWrapper.$el.querySelector('input') as HTMLInputElement;
 
   nextTick(() => {
-    const formattedValue = get(imask)!.value;
+    const formattedValue = get(iMask)!.value;
     input.value = formattedValue;
     set(currentValue, formattedValue);
   });
 }
 
-function filteredListeners(listeners: any) {
-  return {
-    ...listeners,
-    input: () => {},
-  };
-}
+watch(modelValue, onValueChange);
+watch(selectedTimezone, () => onValueChange(get(modelValue)));
+watch(errorMessages, (errors) => {
+  if (!isEmpty(errors))
+    get(v$).$validate();
+});
+
+onMounted(() => {
+  initIMask();
+});
+
+onBeforeUnmount(() => {
+  get(iMask)?.destroy();
+  set(iMask, undefined);
+});
+
+defineExpose({
+  valid: computed(() => !get(v$).$invalid),
+});
 </script>
 
 <template>
   <RuiTextField
     ref="inputField"
-    :value="currentValue"
+    :model-value="currentValue"
     :label="label"
     :hint="hint"
     :disabled="disabled"
     :hide-details="hideDetails"
-    prepend-icon="calendar-line"
+    prepend-icon="lu-calendar-days"
     :persistent-hint="persistentHint"
     variant="outlined"
     color="primary"
     :error-messages="toMessages(v$.date)"
+    :dense="dense"
     @focus="focus()"
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      filteredListeners($listeners)
-    "
   >
     <template
       v-if="!inputOnly"
       #append
     >
       <RuiMenu
+        v-if="!hideTimezoneSelector"
         :popper="{ placement: 'bottom-end' }"
         menu-class="date-time-picker w-[20rem]"
       >
-        <template #activator="{ on }">
+        <template #activator="{ attrs }">
           <RuiButton
             variant="text"
             type="button"
@@ -378,9 +383,9 @@ function filteredListeners(listeners: any) {
             icon
             size="sm"
             class="!p-1.5"
-            v-on="on"
+            v-bind="attrs"
           >
-            <RuiIcon name="earth-line" />
+            <RuiIcon name="lu-earth" />
           </RuiButton>
         </template>
 
@@ -403,7 +408,7 @@ function filteredListeners(listeners: any) {
         class="!p-1.5"
         @click="setNow()"
       >
-        <RuiIcon name="map-pin-time-line" />
+        <RuiIcon name="lu-map-pin-check-inside" />
       </RuiButton>
     </template>
   </RuiTextField>

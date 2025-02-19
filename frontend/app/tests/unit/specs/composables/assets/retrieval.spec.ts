@@ -1,4 +1,10 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CUSTOM_ASSET } from '@/types/asset';
+import { useNotificationsStore } from '@/store/notifications';
+import { useTaskStore } from '@/store/tasks';
+import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useAssetInfoApi } from '@/composables/api/assets/info';
 import { updateGeneralSettings } from '../../../utils/general-settings';
 import type { ERC20Token } from '@/types/blockchain/accounts';
 
@@ -40,9 +46,7 @@ describe('store::assets/retrieval', () => {
         treatEth2AsEth: true,
       });
 
-      const result = get(
-        assetInfoRetrieval.getAssociatedAssetIdentifier('ETH2'),
-      );
+      const result = get(assetInfoRetrieval.getAssociatedAssetIdentifier('ETH2'));
 
       expect(result).toEqual('ETH');
     });
@@ -52,9 +56,7 @@ describe('store::assets/retrieval', () => {
         treatEth2AsEth: false,
       });
 
-      const result = get(
-        assetInfoRetrieval.getAssociatedAssetIdentifier('ETH2'),
-      );
+      const result = get(assetInfoRetrieval.getAssociatedAssetIdentifier('ETH2'));
 
       expect(result).toEqual('ETH2');
     });
@@ -88,9 +90,7 @@ describe('store::assets/retrieval', () => {
     });
 
     it('failed', async () => {
-      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(
-        new Error('failed'),
-      );
+      vi.mocked(useTaskStore().awaitTask).mockRejectedValue(new Error('failed'));
 
       const result = await assetInfoRetrieval.fetchTokenDetails(payload);
 
@@ -132,12 +132,8 @@ describe('store::assets/retrieval', () => {
           isCustomAsset: true,
         });
 
-        expect(get(assetInfoRetrieval.assetName(identifier))).toEqual(
-          assetName,
-        );
-        expect(get(assetInfoRetrieval.assetSymbol(identifier))).toEqual(
-          assetName,
-        );
+        expect(get(assetInfoRetrieval.assetName(identifier))).toEqual(assetName);
+        expect(get(assetInfoRetrieval.assetSymbol(identifier))).toEqual(assetName);
       });
 
       it('isCustomAsset = true', () => {
@@ -173,6 +169,7 @@ describe('store::assets/retrieval', () => {
           [collectionId]: {
             name: collectionName,
             symbol: assetSymbol,
+            mainAsset: identifier,
           },
         });
 
@@ -193,18 +190,15 @@ describe('store::assets/retrieval', () => {
           symbol: assetSymbol,
         });
 
-        expect(get(assetInfoRetrieval.assetName(identifier))).toEqual(
-          collectionName,
-        );
-        expect(get(assetInfoRetrieval.assetSymbol(identifier))).toEqual(
-          assetSymbol,
-        );
+        expect(get(assetInfoRetrieval.assetName(identifier))).toEqual(collectionName);
+        expect(get(assetInfoRetrieval.assetSymbol(identifier))).toEqual(assetSymbol);
       });
 
       it('isCollectionParent = false', () => {
-        const result = get(
-          assetInfoRetrieval.assetInfo(identifier, true, false),
-        );
+        const result = get(assetInfoRetrieval.assetInfo(identifier, {
+          associate: true,
+          collectionParent: false,
+        }));
 
         expect(result).toMatchObject({
           name: assetName,
@@ -226,12 +220,8 @@ describe('store::assets/retrieval', () => {
         symbol: fallbackName,
       });
 
-      expect(get(assetInfoRetrieval.assetName(identifier))).toEqual(
-        fallbackName,
-      );
-      expect(get(assetInfoRetrieval.assetSymbol(identifier))).toEqual(
-        fallbackName,
-      );
+      expect(get(assetInfoRetrieval.assetName(identifier))).toEqual(fallbackName);
+      expect(get(assetInfoRetrieval.assetSymbol(identifier))).toEqual(fallbackName);
     });
   });
 });

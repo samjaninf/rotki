@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { StyleValue } from 'vue/types/jsx';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import HashLink from '@/components/helper/HashLink.vue';
+import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
+import type { StyleValue } from 'vue';
 import type { AssetInfoWithId } from '@/types/asset';
 
 const props = withDefaults(
@@ -15,22 +18,25 @@ const props = withDefaults(
   }>(),
   {
     assetStyled: undefined,
-    opensDetails: false,
-    hideName: false,
     dense: false,
     enableAssociation: true,
+    hideName: false,
     isCollectionParent: false,
     link: false,
+    opensDetails: false,
   },
 );
 
-const { asset, enableAssociation, isCollectionParent } = toRefs(props);
+const { asset } = toRefs(props);
 const { assetInfo } = useAssetInfoRetrieval();
 
-const assetDetails = assetInfo(asset, enableAssociation, isCollectionParent);
+const assetDetails = assetInfo(asset, computed(() => ({
+  associated: props.enableAssociation,
+  collectionParent: props.isCollectionParent,
+})));
 const address = reactify(getAddressFromEvmIdentifier)(asset);
 
-const currentAsset: ComputedRef<AssetInfoWithId> = computed(() => ({
+const currentAsset = computed<AssetInfoWithId>(() => ({
   ...get(assetDetails),
   identifier: get(asset),
 }));

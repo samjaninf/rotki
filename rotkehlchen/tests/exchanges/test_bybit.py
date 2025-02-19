@@ -12,18 +12,20 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.assets import A_ETH, A_SOL, A_USDC
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.timing import DAY_IN_SECONDS
-from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.exchanges.bybit import Bybit, bybit_symbol_to_base_quote
-from rotkehlchen.exchanges.data_structures import AssetMovement, Trade
+from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.types import (
     AssetAmount,
-    AssetMovementCategory,
     Fee,
     Location,
     Price,
     Timestamp,
+    TimestampMS,
     TradeType,
 )
 from rotkehlchen.utils.misc import ts_now
@@ -160,16 +162,32 @@ def test_query_balances(bybit_exchange: Bybit):
         },
     ]}
 
+    funding_balance_response = {
+        'balance': [
+            {'coin': 'BTC', 'transferBalance': '0', 'walletBalance': '0', 'bonus': ''},
+            {'coin': 'MNT', 'transferBalance': '0', 'walletBalance': '0', 'bonus': ''},
+            {'coin': 'EUR', 'transferBalance': '0', 'walletBalance': '0', 'bonus': ''},
+            {'coin': 'XRP', 'transferBalance': '2', 'walletBalance': '2', 'bonus': ''},
+            {'coin': 'ETH', 'transferBalance': '1', 'walletBalance': '1', 'bonus': ''},
+            {'coin': 'USDT', 'transferBalance': '0', 'walletBalance': '0', 'bonus': ''},
+            {'coin': 'USDC', 'transferBalance': '0.05', 'walletBalance': '0.05', 'bonus': ''},
+        ],
+    }
+
     mock_fn = bybit_account_mock(
         is_unified=True,
-        calls={'account/wallet-balance': [balance_response]},
+        calls={
+            'account/wallet-balance': [balance_response],
+            'asset/transfer/query-account-coins-balance': [funding_balance_response],
+        },
     )
     with patch.object(bybit_exchange, '_api_query', side_effect=mock_fn):
         assert bybit_exchange.query_balances()[0] == {
             A_SOL: Balance(amount=FVal('0.119'), usd_value=FVal('8.22967611')),
             Asset('eip155:1/erc20:0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0'): Balance(amount=FVal('20'), usd_value=FVal('16.77825124')),  # noqa: E501
-            A_ETH: Balance(amount=FVal('0.0025'), usd_value=FVal('5.55038468')),
-            A_USDC: Balance(amount=FVal('19.07681'), usd_value=FVal('19.07584719')),
+            A_ETH: Balance(amount=FVal('1.0025'), usd_value=FVal('7.05038468')),  # 1 from funding + 0.0025 from unified account  # noqa: E501
+            A_USDC: Balance(amount=FVal('19.12681'), usd_value=FVal('19.15084719')),
+            Asset('XRP'): Balance(amount=FVal(2), usd_value=FVal(3)),  # only in funding
         }
 
 
@@ -238,34 +256,30 @@ def test_deposit_withdrawals(bybit_exchange: Bybit) -> None:
         ],
     })
     with patch.object(bybit_exchange, '_api_query', side_effect=mock_fn):
-        movements = bybit_exchange.query_online_deposits_withdrawals(
+        movements = bybit_exchange.query_online_history_events(
             start_ts=Timestamp(1701200010),
             end_ts=Timestamp(1701300880),
         )
 
     assert movements == [
         AssetMovement(
-            timestamp=Timestamp(1701200911),
+            timestamp=TimestampMS(1701200911000),
             location=Location.BYBIT,
-            category=AssetMovementCategory.DEPOSIT,
-            address=None,
-            transaction_id='0xe9bce05f14cb35eeb762ed5ce109ab4676ed1459480f6196c82060c4e0c63b27',
+            location_label=bybit_exchange.name,
+            event_type=HistoryEventType.DEPOSIT,
             asset=A_USDC,
             amount=FVal('79.993947'),
-            fee_asset=A_USDC,
-            fee=Fee(ZERO),
-            link='0xe9bce05f14cb35eeb762ed5ce109ab4676ed1459480f6196c82060c4e0c63b27',
+            unique_id='0xe9bce05f14cb35eeb762ed5ce109ab4676ed1459480f6196c82060c4e0c63b27',
+            extra_data={'transaction_id': '0xe9bce05f14cb35eeb762ed5ce109ab4676ed1459480f6196c82060c4e0c63b27'},  # noqa: E501
         ), AssetMovement(
-            timestamp=Timestamp(1701200780),
+            timestamp=TimestampMS(1701200780000),
             location=Location.BYBIT,
-            category=AssetMovementCategory.DEPOSIT,
-            address=None,
-            transaction_id='0xc2433faf5938e4be896127a15815952e99b41412b8aa0fbe239ce24c8bc435ab',
+            location_label=bybit_exchange.name,
+            event_type=HistoryEventType.DEPOSIT,
             asset=A_USDC,
             amount=FVal('20'),
-            fee_asset=A_USDC,
-            fee=Fee(ZERO),
-            link='0xc2433faf5938e4be896127a15815952e99b41412b8aa0fbe239ce24c8bc435ab',
+            unique_id='0xc2433faf5938e4be896127a15815952e99b41412b8aa0fbe239ce24c8bc435ab',
+            extra_data={'transaction_id': '0xc2433faf5938e4be896127a15815952e99b41412b8aa0fbe239ce24c8bc435ab'},  # noqa: E501
         ),
     ]
 
@@ -284,16 +298,13 @@ def test_assets_are_known(bybit_exchange: Bybit):
         try:
             bybit_symbol_to_base_quote(
                 symbol=ticker['symbol'],
-                five_letter_assets=bybit_exchange.five_letter_assets,
-                six_letter_assets=bybit_exchange.six_letter_assets,
+                four_letter_assets={'USDC', 'USDE', 'USDT'},
             )
         except UnknownAsset as e:
             test_warnings.warn(UserWarning(
                 f'Found unknown asset {e.identifier} in Bybit. '
                 f'Support for it has to be added',
             ))
-        except UnprocessableTradePair:
-            test_warnings.warn(UserWarning(f'Found bybit pair that cannot be processed {ticker["symbol"]}'))  # noqa: E501
 
 
 def test_query_old_trades(bybit_exchange: Bybit) -> None:

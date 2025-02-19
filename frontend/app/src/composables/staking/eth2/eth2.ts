@@ -1,15 +1,34 @@
-import { type MaybeRef, objectOmit } from '@vueuse/core';
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import {
+  Blockchain,
+  type EthStakingPayload,
+  type EthStakingPerformance,
+  type EthStakingPerformanceResponse,
+} from '@rotki/common';
+import { omit } from 'es-toolkit';
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
-import type {
-  EthStakingPayload,
-  EthStakingPerformance,
-  EthStakingPerformanceResponse,
-} from '@rotki/common/lib/staking/eth2';
+import { logger } from '@/utils/logging';
+import { isAccountWithBalanceValidator } from '@/utils/blockchain/accounts';
+import { isTaskCancelled } from '@/utils';
+import { useNotificationsStore } from '@/store/notifications';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useTaskStore } from '@/store/tasks';
+import { useEth2Api } from '@/composables/api/staking/eth2';
+import { useStatusUpdater } from '@/composables/status';
+import { usePremium } from '@/composables/premium';
+import type { MaybeRef } from '@vueuse/core';
 import type { TaskMeta } from '@/types/task';
+import type { ComputedRef, Ref } from 'vue';
 
-export function useEth2Staking() {
+interface UseEthStakingReturn {
+  performance: ComputedRef<EthStakingPerformance>;
+  pagination: Ref<EthStakingPayload>;
+  performanceLoading: Ref<boolean>;
+  fetchPerformance: (payload: EthStakingPayload) => Promise<void>;
+  refreshPerformance: (userInitiated: boolean) => Promise<void>;
+}
+
+export function useEth2Staking(): UseEthStakingReturn {
   const defaultPagination = (): EthStakingPayload => ({
     limit: 10,
     offset: 0,
@@ -32,7 +51,7 @@ export function useEth2Staking() {
 
     const taskType = TaskType.STAKING_ETH2;
 
-    const { setStatus, resetStatus, fetchDisabled } = useStatusUpdater(Section.STAKING_ETH2);
+    const { fetchDisabled, resetStatus, setStatus } = useStatusUpdater(Section.STAKING_ETH2);
 
     if (fetchDisabled(userInitiated))
       return false;
@@ -45,13 +64,9 @@ export function useEth2Staking() {
     try {
       setStatus(userInitiated ? Status.REFRESHING : Status.LOADING);
       const { taskId } = await api.refreshStakingPerformance(defaults);
-      await awaitTask<EthStakingPerformanceResponse, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: t('actions.staking.eth2.task.title'),
-        },
-      );
+      await awaitTask<EthStakingPerformanceResponse, TaskMeta>(taskId, taskType, {
+        title: t('actions.staking.eth2.task.title'),
+      });
 
       setStatus(Status.LOADED);
       return true;
@@ -60,11 +75,11 @@ export function useEth2Staking() {
       if (!isTaskCancelled(error)) {
         logger.error(error);
         notify({
-          title: t('actions.staking.eth2.error.title'),
+          display: true,
           message: t('actions.staking.eth2.error.description', {
             error: error.message,
           }),
-          display: true,
+          title: t('actions.staking.eth2.error.title'),
         });
       }
       resetStatus();
@@ -76,55 +91,53 @@ export function useEth2Staking() {
     payload: MaybeRef<EthStakingPayload>,
   ): Promise<EthStakingPerformanceResponse> => {
     assert(get(premium));
-    return await api.fetchStakingPerformance(get(payload));
+    return api.fetchStakingPerformance(get(payload));
   };
 
   const {
-    state,
     execute,
     isLoading: performanceLoading,
+    state,
   } = useAsyncState<EthStakingPerformanceResponse, MaybeRef<EthStakingPayload>[]>(
     fetchStakingPerformance,
-      {
-        validators: {},
-        entriesFound: 0,
-        entriesTotal: 0,
-        sums: {},
-      } satisfies EthStakingPerformanceResponse,
-      {
-        immediate: false,
-        resetOnExecute: false,
-        delay: 0,
-        onError: (error) => {
-          logger.error(error);
-        },
+    {
+      entriesFound: 0,
+      entriesTotal: 0,
+      sums: {},
+      validators: {},
+    } satisfies EthStakingPerformanceResponse,
+    {
+      delay: 0,
+      immediate: false,
+      onError: (error) => {
+        logger.error(error);
       },
+      resetOnExecute: false,
+    },
   );
 
   const performance = computed<EthStakingPerformance>(() => {
     const performance = get(state);
     const accounts = getBlockchainAccounts(Blockchain.ETH2).filter(isAccountWithBalanceValidator);
     return {
-      ...objectOmit(performance, ['validators']),
+      ...omit(performance, ['validators']),
       validators: Object.entries(performance.validators).map(([idx, value]) => {
         const index = parseInt(idx);
 
         const validator = accounts.find(x => x.data.index === index);
         const status = validator?.data?.status;
         const total = validator?.amount;
-        return ({
+        return {
           index,
           status,
           total,
           ...value,
-        });
+        };
       }),
     };
   });
 
-  const fetchPerformance = async (
-    payload: EthStakingPayload,
-  ): Promise<void> => {
+  const fetchPerformance = async (payload: EthStakingPayload): Promise<void> => {
     await execute(0, payload);
   };
 
@@ -138,13 +151,13 @@ export function useEth2Staking() {
     }
   }
 
-  watch(pagination, pagination => fetchPerformance(pagination));
+  watch(pagination, async pagination => fetchPerformance(pagination));
 
   return {
-    performance,
-    pagination,
-    performanceLoading,
     fetchPerformance,
+    pagination,
+    performance,
+    performanceLoading,
     refreshPerformance,
   };
 }

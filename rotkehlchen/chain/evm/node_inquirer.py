@@ -11,19 +11,20 @@ from urllib.parse import urlparse
 import requests
 from ens import ENS
 from eth_abi.exceptions import DecodingError
-from eth_typing import BlockNumber
+from eth_typing.abi import ABI
+from eth_utils.abi import get_abi_output_types
 from requests import RequestException
 from web3 import HTTPProvider, Web3
-from web3._utils.abi import get_abi_output_types
 from web3._utils.contracts import find_matching_event_abi
 from web3._utils.filters import construct_event_filter_params
 from web3.datastructures import MutableAttributeDict
-from web3.exceptions import TransactionNotFound, Web3Exception
-from web3.middleware import geth_poa_middleware
+from web3.exceptions import InvalidAddress, TransactionNotFound, Web3Exception
+from web3.middleware import ExtraDataToPOAMiddleware
 from web3.types import BlockIdentifier, FilterParams
 
 from rotkehlchen.assets.asset import CryptoAsset
 from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
+from rotkehlchen.chain.ethereum.types import LogIterationCallback
 from rotkehlchen.chain.ethereum.utils import MULTICALL_CHUNKS, should_update_protocol_cache
 from rotkehlchen.chain.evm.constants import (
     DEFAULT_TOKEN_DECIMALS,
@@ -44,9 +45,9 @@ from rotkehlchen.errors.misc import (
     RemoteError,
 )
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.externalapis.blockscout import Blockscout
 from rotkehlchen.externalapis.etherscan import Etherscan
 from rotkehlchen.fval import FVal
-from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -67,10 +68,11 @@ from rotkehlchen.types import (
     Timestamp,
 )
 from rotkehlchen.utils.data_structures import LRUCacheWithRemove
-from rotkehlchen.utils.misc import from_wei, get_chunks, hex_or_bytes_to_str
+from rotkehlchen.utils.misc import from_wei, get_chunks
 from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.gnosis.transactions import GnosisWithdrawalsQueryParameters
     from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
@@ -82,27 +84,8 @@ def _connect_task_prefix(chain_name: str) -> str:
     return f'Attempt connection to {chain_name} node'
 
 
-def _is_synchronized(current_block: int, latest_block: int) -> tuple[bool, str]:
-    """ Validate that the evm node is synchronized
-            within 20 blocks of the latest block
-
-        Returns a tuple (results, message)
-            - result: Boolean for confirmation of synchronized
-            - message: A message containing information on what the status is.
-    """
-    message = ''
-    if current_block < (latest_block - 20):
-        message = (
-            f'Found evm node but it is out of sync. {current_block} / '
-            f'{latest_block}. Will use etherscan.'
-        )
-        log.warning(message)
-        return False, message
-
-    return True, message
-
-
 WEB3_LOGQUERY_BLOCK_RANGE = 250000
+MAX_NODE_LOG_QUERY_CALLS = 500  # max queries for a node that can query logs from up to 1000/10_000 blocks  # noqa: E501
 
 
 def _query_web3_get_logs(
@@ -114,6 +97,8 @@ def _query_web3_get_logs(
         event_name: str,
         argument_filters: dict[str, Any],
         initial_block_range: int,
+        log_iteration_cb: LogIterationCallback | None = None,
+        log_iteration_cb_arguments: 'GnosisWithdrawalsQueryParameters | None' = None,
 ) -> list[dict[str, Any]]:
     until_block = web3.eth.block_number if to_block == 'latest' else to_block
     events: list[dict[str, Any]] = []
@@ -137,7 +122,7 @@ def _query_web3_get_logs(
         try:
             new_events_web3: list[dict[str, Any]] = [dict(x) for x in web3.eth.get_logs(filter_args)]  # noqa: E501
         except (Web3Exception, ValueError, KeyError) as e:
-            if isinstance(e, ValueError):
+            if isinstance(e, ValueError | Web3Exception):
                 try:
                     decoded_error = json.loads(str(e).replace("'", '"'))
                 except json.JSONDecodeError:
@@ -149,21 +134,44 @@ def _query_web3_get_logs(
                 msg = 'query returned more than 10000 results'
 
             # errors from: https://infura.io/docs/ethereum/json-rpc/eth-getLogs
-            if msg in {'query returned more than 10000 results', 'query timeout exceeded'}:
+            if msg == 'query returned more than 10000 results':
+                if (until_block - start_block) // 10_000 > MAX_NODE_LOG_QUERY_CALLS:
+                    log.debug(f'Querying logs with a range of 10_000 from {web3} will take too much time. Stopping here')  # noqa: E501
+                    raise
+
+                block_range = initial_block_range = 9999  # ensure that block range doesn't get reset to a range bigger than what is allowed for this node  # noqa: E501
+                continue
+            elif msg == 'eth_getLogs is limited to a 1000 blocks range':  # seen in https://1rpc.io/gnosis  # noqa: E501
+                if (until_block - start_block) // 1_000 > MAX_NODE_LOG_QUERY_CALLS:
+                    log.debug(f'Querying logs with a range of 1000 from {web3} will take too much time. Stopping here')  # noqa: E501
+                    raise
+
+                block_range = initial_block_range = 999
+                continue
+            elif msg == 'query timeout exceeded':
                 block_range //= 2
                 if block_range < 50:
                     raise  # stop retrying if block range gets too small
                 # repeat the query with smaller block range
                 continue
-            # else, well we tried .. reraise the error
-            raise
+            else:  # else, well we tried .. reraise the error
+                raise
 
         # Turn all HexBytes into hex strings
         for e_idx, event in enumerate(new_events_web3):
-            new_events_web3[e_idx]['blockHash'] = event['blockHash'].hex()
-            new_topics = [topic.hex() for topic in event['topics']]
+            new_events_web3[e_idx]['blockHash'] = event['blockHash'].to_0x_hex()
+            new_events_web3[e_idx]['data'] = event['data'].to_0x_hex()
+            new_topics = [topic.to_0x_hex() for topic in event['topics']]
             new_events_web3[e_idx]['topics'] = new_topics
-            new_events_web3[e_idx]['transactionHash'] = event['transactionHash'].hex()
+            new_events_web3[e_idx]['transactionHash'] = event['transactionHash'].to_0x_hex()
+
+        if log_iteration_cb is not None:
+            log_iteration_cb(
+                last_block_queried=end_block,
+                filters=argument_filters,
+                new_events=new_events_web3,
+                cb_arguments=log_iteration_cb_arguments,
+            )
 
         start_block = end_block + 1
         events.extend(new_events_web3)
@@ -173,11 +181,10 @@ def _query_web3_get_logs(
     return events
 
 
-class EvmNodeInquirer(ABC):
+class EvmNodeInquirer(ABC, LockableQueryMixIn):
     """Class containing generic functionality for querying evm nodes
 
     The child class must implement the following methods:
-    - query_highest_block
     - _have_archive
     - _is_pruned
     - get_blocknumber_by_time
@@ -204,6 +211,7 @@ class EvmNodeInquirer(ABC):
             contract_multicall: 'EvmContract',
             native_token: CryptoAsset,
             rpc_timeout: int = DEFAULT_EVM_RPC_TIMEOUT,
+            blockscout: Blockscout | None = None,
     ) -> None:
         self.greenlet_manager = greenlet_manager
         self.database = database
@@ -221,17 +229,29 @@ class EvmNodeInquirer(ABC):
         self.contract_scan = contract_scan
         # Multicall from MakerDAO: https://github.com/makerdao/multicall/
         self.contract_multicall = contract_multicall
+        self.blockscout = blockscout
 
         # A cache for erc20 and erc721 contract info to not requery the info
         self.contract_info_erc20_cache: LRUCacheWithRemove[ChecksumEvmAddress, dict[str, Any]] = LRUCacheWithRemove(maxsize=1024)  # noqa: E501
         self.contract_info_erc721_cache: LRUCacheWithRemove[ChecksumEvmAddress, dict[str, Any]] = LRUCacheWithRemove(maxsize=512)  # noqa: E501
-        self.maybe_connect_to_nodes(when_tracked_accounts=True)
+        # failed_to_connect_nodes keeps the nodes that we couldn't connect while
+        # doing remote queries so they aren't tried again if they get chosen. At the
+        # moment of writing this we don't remove entries from the set after some time.
+        # To force the app to retry a node a restart is needed.
+        self.failed_to_connect_nodes: set[str] = set()
+        LockableQueryMixIn.__init__(self)
+        # Log the available nodes so we have extra information when debugging connection errors.
+        nodes = '\n'.join([str(x.serialize()) for x in self.default_call_order()])  # variable because \ is not valid in f-strings  # noqa: E501
+        log.debug(f'RPC nodes at startup {nodes}')
 
     def maybe_connect_to_nodes(self, when_tracked_accounts: bool) -> None:
         """Start async connect to the saved nodes for the given evm chain if needed.
 
         If `when_tracked_accounts` is True then it will connect when we have some
         tracked accounts in the DB. Otherwise when we have none.
+
+        In ethereum case always connect to nodes. Needed for ENS resolution.
+        For other EVM chains we respect `when_tracked_accounts`.
         """
         if self.connected_to_any_web3() or self.greenlet_manager.has_task(_connect_task_prefix(self.chain_name)):  # noqa: E501
             return
@@ -240,7 +260,10 @@ class EvmNodeInquirer(ABC):
             accounts = self.database.get_blockchain_accounts(cursor)
 
         tracked_accounts_num = len(accounts.get(self.blockchain))
-        if (tracked_accounts_num != 0 and when_tracked_accounts) or (when_tracked_accounts is False and tracked_accounts_num == 0):  # noqa: E501
+        if (
+            (tracked_accounts_num != 0 and when_tracked_accounts) or
+            (tracked_accounts_num == 0 and (when_tracked_accounts is False or self.chain_id == ChainID.ETHEREUM))  # noqa: E501
+        ):
             rpc_nodes = self.database.get_rpc_nodes(blockchain=self.blockchain, only_active=True)
             self.connect_to_multiple_nodes(rpc_nodes)
 
@@ -293,7 +316,7 @@ class EvmNodeInquirer(ABC):
             ordered_list.append(node[0])
             selection.remove(node[0])
 
-        owned_nodes = [node for node in self.web3_mapping if node.owned]
+        owned_nodes = [node.node_info for node in open_nodes if node.node_info.owned]
         if len(owned_nodes) != 0:
             # Assigning one is just a default since we always use it.
             # The weight is only important for the other nodes since they
@@ -322,7 +345,7 @@ class EvmNodeInquirer(ABC):
         )
         result = self.contract_scan.call(
             node_inquirer=self,
-            method_name='etherBalances',
+            method_name='ether_balances',
             arguments=[accounts],
             call_order=call_order if call_order is not None else self.default_call_order(),
         )
@@ -380,16 +403,16 @@ class EvmNodeInquirer(ABC):
                 'validation',  # validation middleware makes an un-needed for us chain ID validation causing 1 extra rpc call per eth_call # noqa: E501
                 'gas_price_strategy',  # We do not need to automatically estimate gas
                 'gas_estimate',
-                'name_to_address',  # we do our own handling for ens names
+                'ens_name_to_address',  # we do our own handling for ens names
         ):
             # https://github.com/ethereum/web3.py/blob/bba87a283d802bbebbfe3f8c7dc47560c7a08583/web3/middleware/validation.py#L137-L142  # noqa: E501
-            with suppress(ValueError):  # If not existing raises ValuError, so ignore
+            with suppress(ValueError):  # If not existing raises ValueError, so ignore
                 web3.middleware_onion.remove(middleware)
 
         if self.chain_id in (ChainID.OPTIMISM, ChainID.POLYGON_POS, ChainID.ARBITRUM_ONE, ChainID.BASE):  # noqa: E501
             # TODO: Is it needed for all non-mainet EVM chains?
             # https://web3py.readthedocs.io/en/stable/middleware.html#why-is-geth-poa-middleware-necessary
-            web3.middleware_onion.inject(geth_poa_middleware, layer=0)
+            web3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
         return web3, rpc_endpoint
 
@@ -421,12 +444,11 @@ class EvmNodeInquirer(ABC):
 
         if is_connected:
             # Also make sure we are actually connected to the right network
-            synchronized = True
             msg = ''
             try:
                 if connectivity_check:
                     try:
-                        network_id = int(web3.net.version)
+                        network_id = int(web3.net.version, 0)  # version can be in hex too. base 0 triggers the prefix check  # noqa: E501
                     except requests.exceptions.RequestException as e:
                         msg = (
                             f'Connected to node {node} at endpoint {rpc_endpoint} but'
@@ -448,26 +470,16 @@ class EvmNodeInquirer(ABC):
                         current_block = web3.eth.block_number  # pylint: disable=no-member
                         if isinstance(current_block, int) is False:  # Check for https://github.com/rotki/rotki/issues/6350  # TODO: Check if web3.py v6 has a check for this # noqa: E501
                             raise RemoteError(f'Found non-int current block:{current_block}')
-                        latest_block = self.query_highest_block()
                     except (requests.exceptions.RequestException, RemoteError) as e:
                         msg = f'Could not query latest block due to {e!s}'
                         log.warning(msg)
-                        synchronized = False
-                    else:
-                        synchronized, msg = _is_synchronized(current_block, latest_block)
+
             except (Web3Exception, ValueError) as e:
                 message = (
                     f'Failed to connect to {self.chain_name} node {node} at endpoint '
                     f'{rpc_endpoint} due to {e!s}'
                 )
                 return False, message
-
-            if not synchronized:
-                log.warning(
-                    f'We could not verify that {self.chain_name} node {node} is '
-                    'synchronized with the network. Balances and other queries '
-                    'may be incorrect.',
-                )
 
             if node.endpoint.endswith('llamarpc.com'):  # temporary. Seems to sometimes switch
                 is_pruned, is_archive = True, False  # between pruned and non-pruned nodes
@@ -492,10 +504,14 @@ class EvmNodeInquirer(ABC):
 
     def connect_to_multiple_nodes(self, nodes: Sequence[WeightedNode]) -> None:
         self.web3_mapping = {}
-        for weighted_node in nodes:
-            if weighted_node.node_info.name == self.etherscan_node_name:
-                continue
 
+        # Remove etherscan nodes and return if all nodes use etherscan,
+        # so we don't query the highest block unnecessarily.
+        nodes = [node for node in nodes if node.node_info.name != self.etherscan_node_name]
+        if len(nodes) == 0:
+            return
+
+        for weighted_node in nodes:
             task_name = f'{_connect_task_prefix(self.chain_name)} {weighted_node.node_info.name!s}'
             self.greenlet_manager.spawn_and_track(
                 after_seconds=None,
@@ -512,11 +528,22 @@ class EvmNodeInquirer(ABC):
         The first node in the call order that gets a successful response returns.
         If none get a result then RemoteError is raised
         """
-        for weighted_node in call_order:
+        for node_idx, weighted_node in enumerate(call_order):
             node_info = weighted_node.node_info
             web3node = self.web3_mapping.get(node_info, None)
-            if web3node is None and node_info.name != self.etherscan_node_name:
-                continue
+            if (
+                web3node is None and
+                node_info.name != self.etherscan_node_name and
+                node_info.name not in self.failed_to_connect_nodes
+            ):
+                success, _ = self.attempt_connect(node=node_info)
+                if success is False:
+                    self.failed_to_connect_nodes.add(node_info.name)
+                    continue
+
+                if (web3node := self.web3_mapping.get(node_info, None)) is None:
+                    log.error(f'Unexpected missing node {node_info} at {self.chain_id}')
+                    continue
 
             if (
                 web3node is not None and
@@ -532,14 +559,23 @@ class EvmNodeInquirer(ABC):
                 if kwargs.get('must_exist', False) is True:
                     continue  # try other nodes, as transaction has to exist
                 return None
+            except InvalidAddress as e:
+                raise RemoteError(  # no need to try other nodes since its not a node problem.
+                    f'Failed to query {node_info.name} for {method!s}: '
+                    f'non-checksum address {e.args[1]}',
+                ) from e
             except (
                     RemoteError,
                     requests.exceptions.RequestException,
                     BlockchainQueryError,
                     Web3Exception,
+                    TypeError,  # happened at the web3 level calling `apply_result_formatters` when the RPC node returned `None` in the response's result # noqa: E501
                     ValueError,  # not removing yet due to possibility of raising from missing trie error  # noqa: E501
             ) as e:
-                log.warning(f'Failed to query {node_info} for {method!s} due to {e!s}')
+                log.warning(
+                    f'Failed to query {node_info.name} with position on the query list {node_idx} '
+                    f'for {method.__name__} due to {e!s}',
+                )
                 # Catch all possible errors here and just try next node call
                 continue
 
@@ -547,12 +583,10 @@ class EvmNodeInquirer(ABC):
 
         # no node in the call order list was successfully queried
         log.error(
-            f'Failed to query {method!s} after trying the following '
-            f'nodes: {[x.node_info.name for x in call_order]}',
+            f'Failed to query {method.__name__} after trying the following '
+            f'nodes: {[x.node_info.name for x in call_order]}. Call parameters were {kwargs}',
         )
-        raise RemoteError(
-            f'Please check your network and confirm sufficient nodes are connected for {self.blockchain!s}.',  # noqa: E501
-        )
+        raise RemoteError(f'Error querying information from {self.blockchain!s}. Checks logs to obtain more information')  # noqa: E501
 
     def _get_latest_block_number(self, web3: Web3 | None) -> int:
         if web3 is not None:
@@ -591,7 +625,7 @@ class EvmNodeInquirer(ABC):
             return self.etherscan.get_block_by_number(num)
 
         block_data: MutableAttributeDict = MutableAttributeDict(web3.eth.get_block(num))  # type: ignore # pylint: disable=no-member
-        block_data['hash'] = hex_or_bytes_to_str(block_data['hash'])
+        block_data['hash'] = block_data['hash'].to_0x_hex()
         return dict(block_data)
 
     def get_code(
@@ -606,7 +640,7 @@ class EvmNodeInquirer(ABC):
         )
 
     def _get_code(self, web3: Web3 | None, account: ChecksumEvmAddress) -> str:
-        """Gets the deployment bytecode at the given address
+        """Gets the deployment bytecode at the given address as a 0x hex string
 
         May raise:
         - RemoteError if Etherscan is used and there is a problem querying it or
@@ -615,12 +649,12 @@ class EvmNodeInquirer(ABC):
         if web3 is None:
             return self.etherscan.get_code(account)
 
-        return hex_or_bytes_to_str(web3.eth.get_code(account))
+        return web3.eth.get_code(account).to_0x_hex()
 
     def _call_contract_etherscan(
             self,
             contract_address: ChecksumEvmAddress,
-            abi: list,
+            abi: ABI,
             method_name: str,
             arguments: list[Any] | None = None,
     ) -> Any:
@@ -631,8 +665,9 @@ class EvmNodeInquirer(ABC):
         reaching etherscan or with the returned result
         """
         web3 = Web3()
+        given_arguments = arguments or []
         contract = web3.eth.contract(address=contract_address, abi=abi)
-        input_data = contract.encode_abi(method_name, args=arguments or [])
+        input_data = contract.encode_abi(method_name, args=given_arguments)
         result = self.etherscan.eth_call(
             to_address=contract_address,
             input_data=input_data,
@@ -645,8 +680,8 @@ class EvmNodeInquirer(ABC):
             )
 
         fn_abi = contract._find_matching_fn_abi(
-            fn_identifier=method_name,
-            args=arguments,
+            method_name,
+            *given_arguments,
         )
         output_types = get_abi_output_types(fn_abi)
         output_data = web3.codec.decode(output_types, bytes.fromhex(result[2:]))
@@ -659,7 +694,7 @@ class EvmNodeInquirer(ABC):
     def call_contract(
             self,
             contract_address: ChecksumEvmAddress,
-            abi: list,
+            abi: ABI,
             method_name: str,
             arguments: list[Any] | None = None,
             call_order: Sequence[WeightedNode] | None = None,
@@ -679,7 +714,7 @@ class EvmNodeInquirer(ABC):
             self,
             web3: Web3 | None,
             contract_address: ChecksumEvmAddress,
-            abi: list,
+            abi: ABI,
             method_name: str,
             arguments: list[Any] | None = None,
             block_identifier: BlockIdentifier = 'latest',
@@ -703,6 +738,8 @@ class EvmNodeInquirer(ABC):
         try:
             method = getattr(contract.caller(block_identifier=block_identifier), method_name)
             result = method(*arguments or [])
+        except InvalidAddress:
+            raise  # propagate to _query() where it's handled properly
         except (Web3Exception, ValueError) as e:
             raise BlockchainQueryError(
                 f'Error doing call on contract {contract_address}: {e!s}',
@@ -873,12 +910,14 @@ class EvmNodeInquirer(ABC):
     def get_logs(
             self,
             contract_address: ChecksumEvmAddress,
-            abi: list,
+            abi: ABI,
             event_name: str,
             argument_filters: dict[str, Any],
             from_block: int,
             to_block: int | Literal['latest'] = 'latest',
             call_order: Sequence[WeightedNode] | None = None,
+            log_iteration_cb: LogIterationCallback | None = None,
+            log_iteration_cb_arguments: 'GnosisWithdrawalsQueryParameters | None' = None,
     ) -> list[dict[str, Any]]:
         if call_order is None:  # Default call order for logs
             call_order = [self.etherscan_node]
@@ -899,17 +938,21 @@ class EvmNodeInquirer(ABC):
             argument_filters=argument_filters,
             from_block=from_block,
             to_block=to_block,
+            log_iteration_cb=log_iteration_cb,
+            log_iteration_cb_arguments=log_iteration_cb_arguments,
         )
 
     def _get_logs(
             self,
             web3: Web3 | None,
             contract_address: ChecksumEvmAddress,
-            abi: list,
+            abi: ABI,
             event_name: str,
             argument_filters: dict[str, Any],
             from_block: int,
             to_block: int | Literal['latest'] = 'latest',
+            log_iteration_cb: LogIterationCallback | None = None,
+            log_iteration_cb_arguments: 'GnosisWithdrawalsQueryParameters | None' = None,
     ) -> list[dict[str, Any]]:
         """Queries logs of an evm contract
         May raise:
@@ -928,15 +971,17 @@ class EvmNodeInquirer(ABC):
             abi_codec=Web3().codec,
             contract_address=contract_address,
             argument_filters=argument_filters,
-            fromBlock=from_block,
-            toBlock=to_block,
+            from_block=from_block,
+            to_block=to_block,
         )
 
-        if event_abi['anonymous']:
+        if event_abi.get('anonymous', False):
             # web3.py does not handle the anonymous events correctly and adds the first topic
-            filter_args['topics'] = filter_args['topics'][1:]
+            filter_args['topics'] = filter_args['topics'][1:]  # pyright: ignore  # I think FilterParams is not well defined. It always has topics
         events: list[dict[str, Any]] = []
         start_block = from_block
+
+        log.debug(f'Ready to query logs for {filter_args} at {contract_address} ({self.chain_id}) from {start_block} to {to_block}')  # noqa: E501
         if web3 is not None:
             events = _query_web3_get_logs(
                 web3=web3,
@@ -947,6 +992,8 @@ class EvmNodeInquirer(ABC):
                 event_name=event_name,
                 argument_filters=argument_filters,
                 initial_block_range=self.logquery_block_range(web3=web3, contract_address=contract_address),  # noqa: E501
+                log_iteration_cb=log_iteration_cb,
+                log_iteration_cb_arguments=log_iteration_cb_arguments,
             )
         else:  # etherscan
             until_block = (
@@ -1026,6 +1073,14 @@ class EvmNodeInquirer(ABC):
                         raise RemoteError(
                             'Couldnt decode an etherscan event due to {str(e)}}',
                         ) from e
+
+                if log_iteration_cb is not None:
+                    log_iteration_cb(
+                        last_block_queried=end_block,
+                        filters=argument_filters,
+                        new_events=new_events,
+                        cb_arguments=log_iteration_cb_arguments,
+                    )
 
                 # etherscan will only return 1000 events in one go. If more than 1000
                 # are returned such as when no filter args are provided then continue
@@ -1182,7 +1237,7 @@ class EvmNodeInquirer(ABC):
                 contract=contract,
                 token_kind=EvmTokenKind.ERC20,
             )
-            log.debug(f'{address} was succesfuly decoded as ERC20 token')
+            log.debug(f'{address} was successfully decoded as ERC20 token')
 
         for prop, value in zip_longest(ERC20_PROPERTIES, decoded):
             if isinstance(value, bytes):
@@ -1193,7 +1248,7 @@ class EvmNodeInquirer(ABC):
 
     def _query_token_contract(
             self,
-            abi: list[dict[str, Any]],
+            abi: ABI,
             properties: tuple[str, ...],
             address: ChecksumEvmAddress,
     ) -> list[tuple[bool, bytes]]:
@@ -1329,16 +1384,6 @@ class EvmNodeInquirer(ABC):
 
     # -- methods to be implemented by child classes --
 
-    @abstractmethod
-    def query_highest_block(self) -> BlockNumber:
-        """
-        Attempts to query an external service for the block height
-
-        Returns the highest blockNumber
-
-        May Raise RemoteError if querying fails
-        """
-
     def get_blocknumber_by_time(
             self,
             ts: Timestamp,
@@ -1396,8 +1441,54 @@ class EvmNodeInquirer(ABC):
     def _get_pruned_check_tx_hash(self) -> EVMTxHash:
         """Returns a transaction hash that can used for checking whether a node is pruned."""
 
-    def _additional_receipt_processing(self, tx_receipt: dict[str, Any]) -> None:  # noqa: B027
+    def _additional_receipt_processing(self, tx_receipt: dict[str, Any]) -> None:
         """Performs additional tx_receipt processing where necessary"""
+
+    @protect_with_lock()
+    def ensure_cache_data_is_updated(
+            self,
+            cache_type: CacheType,
+            query_method: Callable,
+            force_refresh: bool = False,
+            chain_id: ChainID | None = None,
+            cache_key_parts: Sequence[str] | None = None,
+    ) -> bool:
+        """
+        It checks if the cache data is fresh enough and if not, it queries
+        the remote sources of the data and stores it to the globaldb cache tables.
+        Returns true if the cache was modified or false otherwise.
+
+        If the query_method logic fails due to a RemoteError this function handles
+        it and returns False. Other errors aren't handled in this function.
+
+        - cache type: The cache type to check for freshness
+        - query_method: The method that queries the remote source for the data
+        - save_method: The method that saves the data to the cache tables
+        - force_refresh: If True, the cache will be updated even if it is fresh
+        - cache_key_parts: The parts to be used to check cache freshness along with cache_type
+        """
+        if cache_key_parts is None:
+            cache_key_parts = []
+        if (
+            should_update_protocol_cache(cache_type, cache_key_parts) is False and
+            force_refresh is False
+        ):
+            log.debug(f'Not refreshing cache {cache_type}. Queried recently')
+            return False
+
+        try:
+            new_data = query_method(
+                inquirer=self,
+                cache_type=cache_type,
+                msg_aggregator=self.database.msg_aggregator,
+            )
+        except RemoteError as e:
+            log.error(
+                f'Failed to call {query_method} when updating cache {cache_type} due to {e}',
+            )
+            return False
+
+        return new_data is not None
 
 
 class EvmNodeInquirerWithDSProxy(EvmNodeInquirer):
@@ -1415,6 +1506,7 @@ class EvmNodeInquirerWithDSProxy(EvmNodeInquirer):
             dsproxy_registry: 'EvmContract',
             native_token: CryptoAsset,
             rpc_timeout: int = DEFAULT_EVM_RPC_TIMEOUT,
+            blockscout: Blockscout | None = None,
     ) -> None:
         super().__init__(
             greenlet_manager=greenlet_manager,
@@ -1428,6 +1520,7 @@ class EvmNodeInquirerWithDSProxy(EvmNodeInquirer):
             contract_multicall=contract_multicall,
             rpc_timeout=rpc_timeout,
             native_token=native_token,
+            blockscout=blockscout,
         )
         self.proxies_inquirer = EvmProxiesInquirer(
             node_inquirer=self,
@@ -1435,51 +1528,7 @@ class EvmNodeInquirerWithDSProxy(EvmNodeInquirer):
         )
 
 
-class UpdatableCacheDataMixin(LockableQueryMixIn):
-    def __init__(
-            self,
-            database: 'DBHandler',
-    ) -> None:
-        super().__init__()
-        self.database = database
-
-    @protect_with_lock()
-    def ensure_cache_data_is_updated(
-            self,
-            cache_type: CacheType,
-            query_method: Callable,
-            save_method: Callable,
-            force_refresh: bool = False,
-    ) -> bool:
-        """
-        It checks if the cache data is fresh enough and if not, it queries
-        the remote sources of the data and stores it to the globaldb cache tables.
-        Returns true if the cache was modified or false otherwise.
-
-        - cache type: The cache type to check for freshness
-        - query_method: The method that queries the remote source for the data
-        - save_method: The method that saves the data to the cache tables
-        - force_refresh: If True, the cache will be updated even if it is fresh
-        """
-        if (
-            should_update_protocol_cache(cache_type) is False and
-            force_refresh is False
-        ):
-            return False
-
-        new_data = query_method(inquirer=self, cache_type=cache_type)
-        if new_data is None:
-            return False
-        with GlobalDBHandler().conn.write_ctx() as write_cursor:
-            save_method(
-                write_cursor=write_cursor,
-                database=self.database,
-                new_data=new_data,
-            )
-        return True
-
-
-class DSProxyInquirerWithCacheData(EvmNodeInquirerWithDSProxy, UpdatableCacheDataMixin):
+class DSProxyInquirerWithCacheData(EvmNodeInquirerWithDSProxy):
     """This is the inquirer that needs to be used by chains with modules (protocols)
     that store data in the cache tables of the globaldb. For example velodrome in
     optimism and curve in ethereum store data in cache tables."""
@@ -1498,8 +1547,8 @@ class DSProxyInquirerWithCacheData(EvmNodeInquirerWithDSProxy, UpdatableCacheDat
             dsproxy_registry: 'EvmContract',
             native_token: CryptoAsset,
             rpc_timeout: int = DEFAULT_EVM_RPC_TIMEOUT,
+            blockscout: Blockscout | None = None,
     ) -> None:
-        UpdatableCacheDataMixin.__init__(self, database)
         super().__init__(
             greenlet_manager=greenlet_manager,
             database=database,
@@ -1513,4 +1562,5 @@ class DSProxyInquirerWithCacheData(EvmNodeInquirerWithDSProxy, UpdatableCacheDat
             rpc_timeout=rpc_timeout,
             native_token=native_token,
             dsproxy_registry=dsproxy_registry,
+            blockscout=blockscout,
         )

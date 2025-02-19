@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+
 withDefaults(
   defineProps<{
     colspan: number;
@@ -12,11 +15,11 @@ withDefaults(
     entriesFoundTotal?: number;
   }>(),
   {
-    events: false,
-    timeStart: 0,
-    timeEnd: 0,
-    found: undefined,
     entriesFoundTotal: undefined,
+    events: false,
+    found: undefined,
+    timeEnd: 0,
+    timeStart: 0,
   },
 );
 
@@ -29,9 +32,9 @@ const { t } = useI18n();
       :colspan="colspan"
       class="font-medium py-2"
     >
-      <i18n
+      <i18n-t
         v-if="events"
-        path="upgrade_row.events"
+        keypath="upgrade_row.events"
         tag="div"
         class="md:text-center"
       >
@@ -63,18 +66,18 @@ const { t } = useI18n();
             :timestamp="timeEnd"
           />
         </template>
-      </i18n>
-      <i18n
+      </i18n-t>
+      <i18n-t
         v-else
         tag="div"
-        path="upgrade_row.upgrade"
+        keypath="upgrade_row.upgrade"
         class="md:text-center"
       >
         <template #total>
           {{ entriesFoundTotal ? entriesFoundTotal : total }}
         </template>
         <template #limit>
-          {{ found ? found : limit }}
+          {{ found !== undefined ? found : limit }}
         </template>
         <template #label>
           {{ label }}
@@ -86,7 +89,7 @@ const { t } = useI18n();
             color="primary"
           />
         </template>
-      </i18n>
+      </i18n-t>
     </td>
   </tr>
 </template>

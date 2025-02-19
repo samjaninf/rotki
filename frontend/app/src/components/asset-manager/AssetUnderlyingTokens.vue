@@ -1,25 +1,26 @@
 <script setup lang="ts">
-import type { DataTableColumn } from '@rotki/ui-library-compat';
-import type { UnderlyingToken } from '@rotki/common/lib/data';
+import HashLink from '@/components/helper/HashLink.vue';
+import type { DataTableColumn } from '@rotki/ui-library';
+import type { UnderlyingToken } from '@rotki/common';
 
 defineProps<{ tokens: UnderlyingToken[] }>();
 
 const { t } = useI18n();
 
-const tableHeaders = computed<DataTableColumn[]>(() => [
+const tableHeaders = computed<DataTableColumn<UnderlyingToken>[]>(() => [
   {
-    label: t('common.address'),
     key: 'address',
+    label: t('common.address'),
   },
   {
-    label: t('underlying_token_manager.tokens.token_kind'),
+    cellClass: 'text-no-wrap',
     key: 'tokenKind',
-    cellClass: 'text-no-wrap',
+    label: t('underlying_token_manager.tokens.token_kind'),
   },
   {
-    label: t('underlying_token_manager.tokens.weight'),
-    key: 'weight',
     cellClass: 'text-no-wrap',
+    key: 'weight',
+    label: t('underlying_token_manager.tokens.weight'),
   },
 ]);
 </script>

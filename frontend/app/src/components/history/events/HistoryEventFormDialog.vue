@@ -1,49 +1,84 @@
 <script lang="ts" setup>
-import type { HistoryEvent } from '@/types/history/events';
+import { useTemplateRef } from 'vue';
+import { useHistoryEventsForm } from '@/composables/history/events/form';
+import HistoryEventForm from '@/components/history/events/HistoryEventForm.vue';
+import BigDialog from '@/components/dialogs/BigDialog.vue';
+import type { HistoryEvent, HistoryEventEntry } from '@/types/history/events';
+
+const open = defineModel<boolean>('open', { required: true });
 
 const props = withDefaults(
   defineProps<{
-    editableItem?: HistoryEvent;
+    editableItem?: HistoryEventEntry;
     nextSequence?: string;
     loading?: boolean;
     groupHeader?: HistoryEvent;
+    groupEvents?: HistoryEvent[];
   }>(),
   {
     editableItem: undefined,
-    nextSequence: undefined,
-    loading: false,
+    groupEvents: undefined,
     groupHeader: undefined,
+    loading: false,
+    nextSequence: undefined,
   },
 );
 
+const emit = defineEmits<{
+  (e: 'refresh'): void;
+}>();
+
 const { editableItem, groupHeader } = toRefs(props);
 
-const { openDialog, submitting, closeDialog, trySubmit }
-  = useHistoryEventsForm();
+const { defaultNotes } = useHistoryEventsForm();
 
 const { t } = useI18n();
 
-const title: ComputedRef<string> = computed(() =>
+const stateUpdated = ref<boolean>(false);
+const loading = ref<boolean>(false);
+const form = useTemplateRef<InstanceType<typeof HistoryEventForm>>('form');
+
+const title = computed<string>(() =>
   get(editableItem)
     ? t('transactions.events.dialog.edit.title')
     : t('transactions.events.dialog.add.title'),
 );
+
+watchImmediate(editableItem, (editable) => {
+  set(defaultNotes, editable?.defaultNotes);
+});
+
+async function save() {
+  set(loading, true);
+  const success = await get(form)?.save();
+  set(loading, false);
+
+  if (success) {
+    set(open, false);
+    emit('refresh');
+  }
+}
 </script>
 
 <template>
   <BigDialog
-    :display="openDialog"
+    :display="open"
     :title="title"
     :primary-action="t('common.actions.save')"
     :action-disabled="loading"
-    :loading="submitting"
-    @confirm="trySubmit()"
-    @cancel="closeDialog()"
+    :loading="loading"
+    :prompt-on-close="stateUpdated"
+    @confirm="save()"
+    @cancel="open = false"
   >
     <HistoryEventForm
+      ref="form"
+      v-model:state-updated="stateUpdated"
       :group-header="groupHeader"
       :editable-item="editableItem"
       :next-sequence="nextSequence"
+      :default-notes="defaultNotes"
+      :group-events="groupEvents"
     />
   </BigDialog>
 </template>

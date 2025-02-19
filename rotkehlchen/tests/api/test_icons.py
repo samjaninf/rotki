@@ -4,6 +4,7 @@ import urllib.parse
 from http import HTTPStatus
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
 
 import pytest
 import requests
@@ -23,12 +24,19 @@ from rotkehlchen.tests.utils.api import (
 from rotkehlchen.tests.utils.constants import A_DOGE, A_GNO
 from rotkehlchen.utils.misc import ts_now
 
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
+
 
 @pytest.mark.parametrize('start_with_logged_in_user', [False])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
 @pytest.mark.parametrize('file_upload', [True, False])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
-def test_upload_custom_icon(rotkehlchen_api_server, file_upload, data_dir):
+def test_upload_custom_icon(
+        rotkehlchen_api_server: 'APIServer',
+        file_upload: bool,
+        data_dir: Path,
+    ) -> None:
     """Test that uploading custom icon works"""
     root_path = Path(__file__).resolve().parent.parent.parent.parent
     filepath = root_path / 'frontend' / 'app' / 'public' / 'assets' / 'images' / 'protocols' / 'kraken.svg'  # noqa: E501
@@ -59,26 +67,12 @@ def test_upload_custom_icon(rotkehlchen_api_server, file_upload, data_dir):
     assert uploaded_icon.is_file()
     assert filecmp.cmp(uploaded_icon, filepath)
 
-    # query the file using the endpoint
-    response = requests.get(
-        api_url_for(rotkehlchen_api_server, 'asseticonfileresource'),
-        params={'asset': A_GNO.identifier},
-    )
-    assert response.status_code == HTTPStatus.OK
-    response.headers.pop('Date')
-    assert response.headers == {
-        'mimetype': 'image/svg+xml',
-        'Content-Type': 'image/svg+xml',
-        'Content-Length': '563',
-        'ETag': '"9b5e2a97c10bc6e4735b7d19897c0457"',
-    }
-
 
 @pytest.mark.parametrize('start_with_logged_in_user', [False])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
 @pytest.mark.parametrize('file_upload', [True, False])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
-def test_upload_custom_icon_errors(rotkehlchen_api_server, file_upload):
+def test_upload_custom_icon_errors(rotkehlchen_api_server: 'APIServer', file_upload: bool) -> None:
     """Test that common error handling for uploading custom icons"""
     root_path = Path(__file__).resolve().parent.parent.parent.parent
     filepath = root_path / 'frontend' / 'app' / 'public' / 'assets' / 'images' / 'protocols' / 'kraken.svg'  # noqa: E501
@@ -117,7 +111,7 @@ def test_upload_custom_icon_errors(rotkehlchen_api_server, file_upload):
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
-def test_refresh_icon(rotkehlchen_api_server):
+def test_refresh_icon(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that checks refreshing the icon of an asset works."""
     # add icon for an asset
     icon_manager = rotkehlchen_api_server.rest_api.rotkehlchen.icon_manager
@@ -136,23 +130,3 @@ def test_refresh_icon(rotkehlchen_api_server):
     )
     assert_simple_ok_response(response)
     assert icon_filepath.stat().st_ctime > now
-
-
-@pytest.mark.parametrize('use_clean_caching_directory', [True])
-def test_case_insensitive_icon(rotkehlchen_api_server):
-    """
-    Test that providing asset identifier in a case insensitive way still maps to the correct asset
-    """
-    icon_manager = rotkehlchen_api_server.rest_api.rotkehlchen.icon_manager
-    Path(icon_manager.icons_dir / 'ETH_small.png').write_bytes(b'123')
-
-    for identifier in ('ETH', 'eth', 'eTh'):
-        response = requests.get(
-            api_url_for(
-                rotkehlchen_api_server,
-                'asseticonfileresource',
-                asset=identifier,
-            ),
-        )
-        assert response.status_code == HTTPStatus.OK
-        assert response.text == '123'

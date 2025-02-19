@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.modules.constants import AMM_POSSIBLE_COUNTERPARTIES
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
@@ -14,7 +13,7 @@ from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import CPT_METAMASK_SWAPS, METAMASK_FEE_TOPIC, SWAP_SIGNATURE
 
@@ -50,22 +49,22 @@ class MetamaskCommonDecoder(DecoderInterface):
         if context.tx_log.topics[0] != SWAP_SIGNATURE:
             return DEFAULT_DECODING_OUTPUT
 
-        sender = hex_or_bytes_to_address(context.tx_log.topics[2])
+        sender = bytes_to_address(context.tx_log.topics[2])
         if not self.base.is_tracked(sender):
             return DEFAULT_DECODING_OUTPUT
 
         fee_raw = fee_asset_address = fee_asset = None  # extract the fee info
         for log in context.all_logs:
             if log.topics[0] == METAMASK_FEE_TOPIC:
-                fee_raw = hex_or_bytes_to_int(log.data)
+                fee_raw = int.from_bytes(log.data)
                 fee_asset = self.evm_inquirer.native_token
                 fee_asset_address = log.address
                 break
             if (
                 log.topics[0] == ERC20_OR_ERC721_TRANSFER and
-                hex_or_bytes_to_address(log.topics[2]) == self.fee_receiver_address
+                bytes_to_address(log.topics[2]) == self.fee_receiver_address
             ):
-                fee_raw = hex_or_bytes_to_int(log.data)
+                fee_raw = int.from_bytes(log.data)
                 fee_asset_address = log.address
                 break
 
@@ -78,14 +77,17 @@ class MetamaskCommonDecoder(DecoderInterface):
                 event.counterparty = CPT_METAMASK_SWAPS
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.SPEND
-                event.notes = f'Swap {event.balance.amount} {event.asset.resolve_to_asset_with_symbol().symbol} in metamask'  # noqa: E501
+                event.notes = f'Swap {event.amount} {event.asset.resolve_to_asset_with_symbol().symbol} in metamask'  # noqa: E501
                 event.address = self.router_address
                 out_event = event
-            elif event.event_type == HistoryEventType.RECEIVE and event.location_label == sender:  # find the receive event  # noqa: E501
+            elif (
+                    (event.event_type == HistoryEventType.TRADE and event.event_subtype == HistoryEventSubType.RECEIVE) or  # noqa: E501
+                    (event.event_type == HistoryEventType.RECEIVE and event.event_subtype == HistoryEventSubType.NONE and event.location_label == sender)  # noqa: E501
+            ):  # find the receive event
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
                 event.counterparty = CPT_METAMASK_SWAPS
-                event.notes = f'Receive {event.balance.amount} {event.asset.resolve_to_asset_with_symbol().symbol} as the result of a metamask swap'  # noqa: E501
+                event.notes = f'Receive {event.amount} {event.asset.resolve_to_asset_with_symbol().symbol} as the result of a metamask swap'  # noqa: E501
                 event.address = self.router_address
                 # use this index as the event may be a native currency transfer
                 # and appear at the start
@@ -125,11 +127,11 @@ class MetamaskCommonDecoder(DecoderInterface):
         # update the in_event/out_event to adjust their balance with fees
         fee_amount = asset_normalized_value(amount=fee_raw, asset=fee_asset)
         if in_event.asset == fee_asset:
-            in_event.balance.amount += fee_amount
-            in_event.notes = f'Receive {in_event.balance.amount} {fee_asset.symbol} as the result of a metamask swap'  # noqa: E501
+            in_event.amount += fee_amount
+            in_event.notes = f'Receive {in_event.amount} {fee_asset.symbol} as the result of a metamask swap'  # noqa: E501
         elif out_event.asset == fee_asset:
-            out_event.balance.amount -= fee_amount
-            out_event.notes = f'Swap {out_event.balance.amount} {fee_asset.symbol} in metamask'
+            out_event.amount -= fee_amount
+            out_event.notes = f'Swap {out_event.amount} {fee_asset.symbol} in metamask'
 
         # And now create a new event for the fee
         fee_event = self.base.make_event_from_transaction(
@@ -138,7 +140,7 @@ class MetamaskCommonDecoder(DecoderInterface):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=fee_asset,
-            balance=Balance(amount=fee_amount),
+            amount=fee_amount,
             location_label=sender,
             notes=f'Spend {fee_amount} {fee_asset.symbol} as metamask fees',
             counterparty=CPT_METAMASK_SWAPS,

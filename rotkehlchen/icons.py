@@ -1,5 +1,4 @@
 import hashlib
-import itertools
 import logging
 import shutil
 import urllib.parse
@@ -7,12 +6,10 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import gevent
 import requests
 from flask import Response, make_response
 
 from rotkehlchen.assets.asset import Asset, AssetWithNameAndType
-from rotkehlchen.assets.types import AssetType
 from rotkehlchen.constants.misc import (
     ALLASSETIMAGESDIR_NAME,
     ASSETIMAGESDIR_NAME,
@@ -20,10 +17,9 @@ from rotkehlchen.constants.misc import (
     IMAGESDIR_NAME,
 )
 from rotkehlchen.db.settings import CachedSettings
-from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset, WrongAssetType
+from rotkehlchen.errors.asset import UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.externalapis.coingecko import DELISTED_ASSETS, Coingecko
-from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.data_structures import LRUSetCache
 from rotkehlchen.utils.hashing import file_md5
@@ -105,14 +101,7 @@ def maybe_create_image_response(image_path: Path | None) -> Response:
 
 
 class IconManager:
-    """
-    Manages the icons for all the assets of the application
-
-    The get_icon() and the periodic task of query_uncached_icons_batch() may at
-    a point query the same icon but that's fine and not worth of locking mechanism as
-    it should be rather rare and worst case scenario once in a blue moon we waste
-    an API call. In the end the right file would be written on disk.
-    """
+    """Manages the icons for all the assets of the application. Partly moved to colibri"""
 
     def __init__(
             self,
@@ -140,21 +129,6 @@ class IconManager:
                 return icon_path
 
         return None
-
-    def asset_icon_path(
-            self,
-            asset: AssetWithNameAndType,
-    ) -> Path | None:
-        # First try with the custom icon path
-        custom_icon_path = self.custom_iconfile_path(asset)
-        if custom_icon_path is not None:
-            return custom_icon_path
-
-        path = self.iconfile_path(asset)
-        if not path.is_file():
-            return None
-
-        return path
 
     def query_coingecko_for_icon(self, asset: AssetWithNameAndType, coingecko_id: str) -> bool:
         """Queries coingecko for icons of an asset
@@ -189,107 +163,6 @@ class IconManager:
 
         self.iconfile_path(asset).write_bytes(response.content)
         return True
-
-    def get_icon(
-            self,
-            asset: AssetWithNameAndType,
-    ) -> tuple[Path | None, bool]:
-        """
-        Returns the file path of the requested icon and whether it has been scheduled to be
-        queried if the file is not in the system and is possible to obtain it from coingecko.
-
-        If the icon can't be found it returns None.
-
-        If the icon is found cached locally it's returned directly.
-
-        If not, all icons of the asset are queried from coingecko and cached
-        locally before the requested data are returned.
-        """
-        if asset.identifier in self.failed_asset_ids:
-            return None, False
-
-        # check if the asset is in a collection
-        collection_main_asset_id = GlobalDBHandler.get_collection_main_asset(asset.identifier)
-        asset_to_query_icon = asset
-
-        if collection_main_asset_id is not None:
-            # get the asset with the lowest lex order
-            asset_to_query_icon = AssetWithNameAndType(collection_main_asset_id)
-
-        needed_path = self.iconfile_path(asset_to_query_icon)
-        if needed_path.is_file() is True:
-            return needed_path, False
-
-        # Then our only chance is coingecko
-        # If we don't have the image check if this is a valid coingecko asset
-        try:
-            asset_to_query_icon = asset_to_query_icon.resolve_to_asset_with_oracles()
-            coingecko_id = asset_to_query_icon.to_coingecko()
-        except (UnknownAsset, WrongAssetType, UnsupportedAsset):
-            return None, False
-
-        self.greenlet_manager.spawn_and_track(
-            after_seconds=None,
-            task_name='Coingecko icon query',
-            exception_is_error=False,
-            method=self.query_coingecko_for_icon,
-            asset=asset_to_query_icon,
-            coingecko_id=coingecko_id,
-        )
-        return None, True
-
-    def _assets_with_coingecko_id(self) -> dict[str, str]:
-        """Create a mapping of all the assets identifiers to their coingecko id if it is set"""
-        querystr = """
-        SELECT A.identifier, B.coingecko from assets as A JOIN common_asset_details as B
-        ON B.identifier = A.identifier WHERE A.type != ? AND B.coingecko IS NOT NULL AND B.coingecko != ""
-        """  # noqa: E501
-        assets_mappings: dict[str, str] = {}
-        with GlobalDBHandler().conn.read_ctx() as cursor:
-            fiat_type = AssetType.FIAT.serialize_for_db()
-            cursor.execute(querystr, [fiat_type])
-            for entry in cursor:
-                assets_mappings[entry[0]] = entry[1]
-        return assets_mappings
-
-    def query_uncached_icons_batch(self, batch_size: int) -> bool:
-        """Queries a batch of uncached icons for assets
-
-        Returns true if there is more icons left to cache after this batch.
-        """
-        coingecko_integrated_asset = self._assets_with_coingecko_id()
-        coingecko_integrated_asset_ids = set(coingecko_integrated_asset.keys())
-        cached_asset_ids = [
-            str(x.name)[:-10] for x in self.icons_dir.glob('*_small.png') if x.is_file()
-        ]
-        uncached_asset_ids = (
-            coingecko_integrated_asset_ids - set(cached_asset_ids) - self.failed_asset_ids.get_values()  # noqa: E501
-        )
-        log.info(
-            f'Periodic task to query coingecko for {batch_size} uncached asset icons. '
-            f'Uncached assets: {len(uncached_asset_ids)}. Cached assets: {len(cached_asset_ids)}',
-        )
-        assets_to_query = [(asset_id, coingecko_id) for asset_id, coingecko_id in coingecko_integrated_asset.items() if asset_id in uncached_asset_ids]  # noqa: E501
-        for asset_id, coingecko_id in itertools.islice(assets_to_query, batch_size):
-            self.query_coingecko_for_icon(asset=AssetWithNameAndType(asset_id), coingecko_id=coingecko_id)  # noqa: E501
-
-        return len(uncached_asset_ids) > batch_size
-
-    def periodically_query_icons_until_all_cached(
-            self,
-            batch_size: int,
-            sleep_time_secs: float,
-    ) -> None:
-        """Periodically query all uncached icons until we have icons cached for all
-        of the known assets that have coingecko integration"""
-        if batch_size == 0:
-            return
-
-        while True:
-            carry_on = self.query_uncached_icons_batch(batch_size=batch_size)
-            if not carry_on:
-                break
-            gevent.sleep(sleep_time_secs)
 
     def add_icon(self, asset: Asset, icon_path: Path) -> None:
         """Adds the icon in the custom icons directory for the asset

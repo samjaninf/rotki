@@ -1,7 +1,7 @@
 import logging
 from collections import deque
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Final, Literal, Optional, overload
 
 import gevent
 import requests
@@ -37,13 +37,13 @@ from rotkehlchen.constants.assets import (
 )
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
-from rotkehlchen.constants.timing import WEEK_IN_SECONDS
+from rotkehlchen.constants.timing import HOUR_IN_SECONDS, WEEK_IN_SECONDS
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset, WrongAssetType
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp, PriceQueryUnsupportedAsset
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.externalapis.interface import ExternalServiceWithApiKey
+from rotkehlchen.externalapis.interface import ExternalServiceWithApiKeyOptionalDB
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.deserialization import deserialize_price
@@ -53,15 +53,20 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ExternalService, Price, Timestamp
 from rotkehlchen.utils.misc import pairwise, set_user_agent, ts_now
 from rotkehlchen.utils.mixins.penalizable_oracle import PenalizablePriceOracleMixin
+from rotkehlchen.utils.network import create_session
 from rotkehlchen.utils.serialization import jsonloads_dict
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rotkehlchen.db.dbhandler import DBHandler
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
+STARKNET_TOKEN_IDENTIFIER: Final = 'STRK'
+CRYPTOCOMPARE_STARKNET_HISTORICAL_PRICE_CHANGE_TS: Final = Timestamp(1715212800)
 RATE_LIMIT_MSG = 'You are over your rate limit please upgrade your account!'
 CRYPTOCOMPARE_QUERY_RETRY_TIMES = 3
 CRYPTOCOMPARE_RATE_LIMIT_WAIT_TIME = 60
@@ -178,7 +183,7 @@ def _check_hourly_data_sanity(
     """
     index = 0
     for n1, n2 in pairwise(data):
-        diff = n2['time'] - n1['time']
+        diff = n2['TIMESTAMP'] - n1['TIMESTAMP']
         if diff != 3600:
             raise RemoteError(
                 'Unexpected data format in cryptocompare query_endpoint_histohour. '
@@ -189,19 +194,23 @@ def _check_hourly_data_sanity(
         index += 2
 
 
-class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinListInterface, PenalizablePriceOracleMixin):  # noqa: E501
+class Cryptocompare(
+        ExternalServiceWithApiKeyOptionalDB,
+        HistoricalPriceOracleWithCoinListInterface,
+        PenalizablePriceOracleMixin,
+):
     def __init__(self, database: Optional['DBHandler']) -> None:
         HistoricalPriceOracleWithCoinListInterface.__init__(self, oracle_name='cryptocompare')
-        ExternalServiceWithApiKey.__init__(
+        ExternalServiceWithApiKeyOptionalDB.__init__(
             self,
             database=database,
             service_name=ExternalService.CRYPTOCOMPARE,
         )
         PenalizablePriceOracleMixin.__init__(self)
-        self.session = requests.session()
+        self.session = create_session()
         set_user_agent(self.session)
         self.last_histohour_query_ts = 0
-        self.last_rate_limit = 0
+        self.db: DBHandler | None  # type: ignore  # "solve" the self.db discrepancy
 
     def can_query_history(
             self,
@@ -234,48 +243,44 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
         )
         return can_query
 
-    def rate_limited_in_last(
+    @overload
+    def _api_query(
             self,
-            seconds: int | None = CRYPTOCOMPARE_RATE_LIMIT_WAIT_TIME,
-    ) -> bool:
-        """Checks when we were last rate limited by CC and if it was within the given seconds"""
-        if seconds is None:
-            return False
+            url: Literal['https://data-api.cryptocompare.com/index/cc/v1/historical/days', 'https://data-api.cryptocompare.com/index/cc/v1/historical/hours'],
+            params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """This uses Cryptocompare's Data API service.
+        Currently used for handling historical prices after the STARK->STRK ticker change.
+        """
 
-        return ts_now() - self.last_rate_limit <= seconds
+    @overload
+    def _api_query(
+            self,
+            url: Literal['https://min-api.cryptocompare.com/data/price', 'https://min-api.cryptocompare.com/data/all/coinlist'],
+            params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        ...
 
-    def set_database(self, database: 'DBHandler') -> None:
-        """If the cryptocompare instance was initialized without a DB this sets its DB"""
-        msg = 'set_database was called on a cryptocompare instance that already has a DB'
-        assert self.db is None, msg
-        self.db = database
-
-    def unset_database(self) -> None:
-        """Remove the database connection from this cryptocompare instance
-
-        This should happen when a user logs out"""
-        msg = 'unset_database was called on a cryptocompare instance that has no DB'
-        assert self.db is not None, msg
-        self.db = None
-
-    def _api_query(self, path: str) -> dict[str, Any]:
+    def _api_query(
+            self,
+            url: str,
+            params: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """Queries cryptocompare
 
         - May raise RemoteError if there is a problem reaching the cryptocompare server
         or with reading the response returned by the server
         """
-        querystr = f'https://min-api.cryptocompare.com/data/{path}'
-        log.debug('Querying cryptocompare', url=querystr)
-        api_key = self._get_api_key()
-        if api_key:
-            querystr += '?' if '?' not in querystr else '&'
-            querystr += f'api_key={api_key}'
+        params = params if params is not None else {}
+        if api_key := self._get_api_key():
+            params |= {'api_key': api_key}
 
         tries = CRYPTOCOMPARE_QUERY_RETRY_TIMES
         timeout = CachedSettings().get_timeout_tuple()
         while tries >= 0:
+            log.debug('Querying cryptocompare', url=url, params=params)
             try:
-                response = self.session.get(querystr, timeout=timeout)
+                response = self.session.get(url, timeout=timeout, params=params)
             except requests.exceptions.RequestException as e:
                 self.penalty_info.note_failure_or_penalize()
                 raise RemoteError(f'Cryptocompare API request failed due to {e!s}') from e
@@ -311,13 +316,13 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
                     )
 
                 if json_ret.get('Response', 'Success') != 'Success':
-                    error_message = f'Failed to query cryptocompare for: "{querystr}"'
+                    error_message = f'Failed to query cryptocompare for: "{url}"'
                     if 'Message' in json_ret:
                         error_message += f'. Error: {json_ret["Message"]}'
 
                     log.warning(
                         'Cryptocompare query failure',
-                        url=querystr,
+                        url=url,
                         error=error_message,
                         status_code=response.status_code,
                     )
@@ -332,6 +337,25 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
 
         raise AssertionError('We should never get here')
 
+    @overload
+    def _special_case_handling(
+            self,
+            method_name: Literal['query_endpoint_histohour'],
+            from_asset: AssetWithOracles,
+            to_asset: AssetWithOracles,
+            **kwargs: Any,
+    ) -> list[dict[str, Any]]: ...
+
+    @overload
+    def _special_case_handling(
+            self,
+            method_name: Literal['query_current_price', 'query_endpoint_pricehistorical'],
+            from_asset: AssetWithOracles,
+            to_asset: AssetWithOracles,
+            **kwargs: Any,
+    ) -> Price:
+        ...
+
     def _special_case_handling(
             self,
             method_name: Literal[
@@ -342,14 +366,21 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
             from_asset: AssetWithOracles,
             to_asset: AssetWithOracles,
             **kwargs: Any,
-    ) -> Any:
+    ) -> Price | list[dict[str, str]]:
         """Special case handling for queries that need combination of multiple asset queries
 
         This is hopefully temporary and can be taken care of by cryptocompare itself in the future.
 
         For some assets cryptocompare can only figure out the price via intermediaries.
         This function takes care of these special cases."""
-        method = getattr(self, method_name)
+        match method_name:
+            case 'query_endpoint_histohour':
+                method: Callable = self.query_endpoint_histohour
+            case 'query_current_price':
+                method = self.query_current_price
+            case 'query_endpoint_pricehistorical':
+                method = self.query_endpoint_pricehistorical
+
         intermediate_asset = CRYPTOCOMPARE_SPECIAL_CASES_MAPPING[from_asset.identifier]
         try:
             intermediate_asset = intermediate_asset.resolve_to_asset_with_oracles()
@@ -368,38 +399,20 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
             handling_special_case=True,
             **kwargs,
         )
-        result: Any
         if method_name == 'query_endpoint_histohour':
-            result = {
-                'Aggregated': result1['Aggregated'],
-                'TimeFrom': result1['TimeFrom'],
-                'TimeTo': result1['TimeTo'],
-            }
-            result1 = result1['Data']
-            result2 = result2['Data']
             data = []
             for idx, entry in enumerate(result1):
                 entry2 = result2[idx]
                 data.append({
-                    'time': entry['time'],
-                    'high': _multiply_str_nums(entry['high'], entry2['high']),
-                    'low': _multiply_str_nums(entry['low'], entry2['low']),
-                    'open': _multiply_str_nums(entry['open'], entry2['open']),
-                    'volumefrom': entry['volumefrom'],
-                    'volumeto': entry['volumeto'],
-                    'close': _multiply_str_nums(entry['close'], entry2['close']),
-                    'conversionType': entry['conversionType'],
-                    'conversionSymbol': entry['conversionSymbol'],
+                    'TIMESTAMP': entry['TIMESTAMP'],
+                    'HIGH': _multiply_str_nums(entry['HIGH'], entry2['HIGH']),
+                    'LOW': _multiply_str_nums(entry['LOW'], entry2['LOW']),
+                    'OPEN': _multiply_str_nums(entry['OPEN'], entry2['OPEN']),
+                    'CLOSE': _multiply_str_nums(entry['CLOSE'], entry2['CLOSE']),
                 })
-            result['Data'] = data
-            return result
+            return data
 
-        if method_name == 'query_current_price':
-            return result1[0] * result2[0]
-        if method_name == 'query_endpoint_pricehistorical':
-            return result1 * result2
-
-        raise RuntimeError(f'Illegal method_name: {method_name}. Should never happen')
+        return Price(result1 * result2)  # pyright: ignore  # pyright does not see the if above
 
     def query_endpoint_histohour(
             self,
@@ -408,7 +421,7 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
             limit: int,
             to_timestamp: Timestamp,
             handling_special_case: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Returns the full histohour response including TimeFrom and TimeTo
 
         - May raise RemoteError if there is a problem reaching the cryptocompare server
@@ -434,22 +447,31 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
         except UnsupportedAsset as e:
             raise PriceQueryUnsupportedAsset(e.identifier) from e
 
-        query_path = (
-            f'v2/histohour?fsym={cc_from_asset_symbol}&tsym={cc_to_asset_symbol}'
-            f'&limit={limit}&toTs={to_timestamp}'
+        params = {
+            'limit': limit,
+            'market': 'cadli',
+            'to_ts': to_timestamp,
+            'instrument': f'{cc_from_asset_symbol}-{cc_to_asset_symbol}',
+        }  # As of May 9, 2024, Cryptocompare switched the Starknet token from STARK to STRK ticker
+        # with STRK previously being used for the Strike token. This handles that change.
+        if (
+            cc_from_asset_symbol == STARKNET_TOKEN_IDENTIFIER and
+            to_timestamp < CRYPTOCOMPARE_STARKNET_HISTORICAL_PRICE_CHANGE_TS
+        ):
+            params['instrument'] = f'STARK-{cc_to_asset_symbol}'
+
+        return self._api_query(
+            url='https://data-api.cryptocompare.com/index/cc/v1/historical/hours',
+            params=params,
         )
-        result = self._api_query(path=query_path)
-        return result
 
     def query_current_price(
             self,
             from_asset: AssetWithOracles,
             to_asset: AssetWithOracles,
-            match_main_currency: bool,
             handling_special_case: bool = False,
-    ) -> tuple[Price, bool]:
-        """Returns the current price of an asset compared to another asset and `False` value
-        since it never tries to match main currency.
+    ) -> Price:
+        """Returns the current price of an asset compared to another asset.
 
         - May raise RemoteError if there is a problem reaching the cryptocompare server
         or with reading the response returned by the server
@@ -460,13 +482,11 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
             to_asset.identifier in CRYPTOCOMPARE_SPECIAL_CASES
         )
         if special_asset and not handling_special_case:
-            price = self._special_case_handling(
+            return self._special_case_handling(
                 method_name='query_current_price',
                 from_asset=from_asset,
                 to_asset=to_asset,
-                match_main_currency=False,
             )
-            return price, False
 
         try:
             cc_from_asset_symbol = from_asset.to_cryptocompare()
@@ -474,14 +494,19 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
         except UnsupportedAsset as e:
             raise PriceQueryUnsupportedAsset(e.identifier) from e
 
-        query_path = f'price?fsym={cc_from_asset_symbol}&tsyms={cc_to_asset_symbol}'
-        result = self._api_query(path=query_path)
+        result = self._api_query(
+            url='https://min-api.cryptocompare.com/data/price',
+            params={
+                'fsym': cc_from_asset_symbol,
+                'tsyms': cc_to_asset_symbol,
+            },
+        )
         # Up until 23/09/2020 cryptocompare may return {} due to bug.
         # Handle that case by assuming 0 if that happens
         if cc_to_asset_symbol not in result:
-            return ZERO_PRICE, False
+            return ZERO_PRICE
 
-        return Price(FVal(result[cc_to_asset_symbol])), False
+        return Price(FVal(result[cc_to_asset_symbol]))
 
     def query_endpoint_pricehistorical(
             self,
@@ -520,22 +545,36 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
         except UnsupportedAsset as e:
             raise PriceQueryUnsupportedAsset(e.identifier) from e
 
-        query_path = (
-            f'pricehistorical?fsym={cc_from_asset_symbol}&tsyms={cc_to_asset_symbol}'
-            f'&ts={timestamp}'
-        )
-        if to_asset == 'BTC':
-            query_path += '&tryConversion=false'
-        result = self._api_query(query_path)
-        # Up until 23/09/2020 cryptocompare may return {} due to bug.
-        # Handle that case by assuming 0 if that happens
+        params = {
+            'limit': 1,  # number of data points to return, with 1 returning only the closest to to_ts  # noqa: E501
+            'market': 'cadli',  # 24h volume-weighted average index with outlier adjustment
+            'to_ts': timestamp,
+            'instrument': f'{cc_from_asset_symbol}-{cc_to_asset_symbol}',
+        }
+
+        # As of May 9, 2024, Cryptocompare switched the Starknet token from STARK to STRK ticker,
+        # with STRK previously being used for the Strike token. This handles that change.
         if (
-            cc_from_asset_symbol not in result or
-            cc_to_asset_symbol not in result[cc_from_asset_symbol]
+            cc_from_asset_symbol == STARKNET_TOKEN_IDENTIFIER and
+            timestamp < CRYPTOCOMPARE_STARKNET_HISTORICAL_PRICE_CHANGE_TS
         ):
+            params['instrument'] = f'STARK-{cc_to_asset_symbol}'
+
+        result = self._api_query(
+            url='https://data-api.cryptocompare.com/index/cc/v1/historical/days',
+            params=params,
+        )
+        if len(result) == 0:
             return ZERO_PRICE
 
-        return Price(FVal(result[cc_from_asset_symbol][cc_to_asset_symbol]))
+        try:
+            return deserialize_price(result[0]['CLOSE'])
+        except (DeserializationError, KeyError) as e:
+            log.error(f'Failed to retrieve price from Cryptocompare API. Got result: {result}')
+            raise RemoteError(
+                f'Failed to deserialize {cc_from_asset_symbol}-{cc_to_asset_symbol} '
+                f'historical price data from Cryptocompare',
+            ) from e
 
     def _get_histohour_data_for_range(
             self,
@@ -570,47 +609,26 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
             resp = self.query_endpoint_histohour(
                 from_asset=from_asset,
                 to_asset=to_asset,
-                limit=2000,
+                limit=CRYPTOCOMPARE_HOURQUERYLIMIT,
                 to_timestamp=end_date,
             )
-            if all(FVal(x['close']) == ZERO for x in resp['Data']):
+            if all(FVal(x['CLOSE']) == ZERO for x in resp):
                 # all prices zero Means we have reached the end of available prices
                 break
 
-            end_date = Timestamp(end_date - (CRYPTOCOMPARE_HOURQUERYLIMIT * 3600))
-            if end_date != resp['TimeFrom']:
-                # If we get more than we needed, since we are close to the now_ts
-                # then skip all the already included entries
-                diff = abs(end_date - resp['TimeFrom'])
-                # If the start date has less than 3600 secs difference from previous
-                # end date then do nothing. If it has more skip all already included entries
-                if diff >= 3600:
-                    if resp['Data'][diff // 3600]['time'] != end_date:
-                        raise RemoteError(
-                            'Unexpected data format in cryptocompare query_endpoint_histohour. '
-                            'Expected to find the previous date timestamp during '
-                            'cryptocompare historical data fetching',
-                        )
-                    # just add only the part from the previous timestamp and on
-                    resp['Data'] = resp['Data'][diff // 3600:]
-
-            # If last time slot and first new are the same, skip the first new slot
-            last_entry_equal_to_first = (
-                len(calculated_history) != 0 and
-                calculated_history[0]['time'] == resp['Data'][-1]['time']
-            )
-            if last_entry_equal_to_first:
-                resp['Data'] = resp['Data'][:-1]
+            end_date = Timestamp(resp[0]['TIMESTAMP'] - HOUR_IN_SECONDS)
             if len(calculated_history) != 0:
-                calculated_history.extendleft(reversed(resp['Data']))
+                # Check for overlap and merge
+                if calculated_history[0]['TIMESTAMP'] == resp[-1]['TIMESTAMP']:
+                    resp = resp[:-1]
+                calculated_history.extendleft(reversed(resp))
             else:
-                calculated_history = deque(resp['Data'])
+                calculated_history = deque(resp)
 
-            if end_date - to_timestamp <= 3600:
-                # Ending the loop query. Also pop any extra timestamps
+            if end_date - to_timestamp <= HOUR_IN_SECONDS:
                 while (
-                        len(calculated_history) != 0 and
-                        calculated_history[0]['time'] <= to_timestamp
+                    len(calculated_history) != 0 and
+                    calculated_history[0]['TIMESTAMP'] <= to_timestamp
                 ):
                     calculated_history.popleft()
                 break
@@ -723,18 +741,18 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
 
         # Let's always check for data sanity for the hourly prices.
         _check_hourly_data_sanity(calculated_history, from_asset, to_asset)
-        # Turn them into the format we will enter in the DB
+        # Turn them into the format we will enter into the DB
         prices = []
         for entry in calculated_history:
             try:
-                price = Price((deserialize_price(entry['high']) + deserialize_price(entry['low'])) / 2)  # noqa: E501
+                price = Price((deserialize_price(entry['HIGH']) + deserialize_price(entry['LOW'])) / 2)  # noqa: E501
                 if price == ZERO_PRICE:
                     continue  # don't write zero prices
                 prices.append(HistoricalPrice(
                     from_asset=from_asset,
                     to_asset=to_asset,
                     source=HistoricalPriceOracle.CRYPTOCOMPARE,
-                    timestamp=Timestamp(entry['time']),
+                    timestamp=Timestamp(entry['TIMESTAMP']),
                     price=price,
                 ))
             except (DeserializationError, KeyError) as e:
@@ -761,9 +779,9 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
         So how much `to_asset` does 1 unit of `from_asset` cost.
 
         This tries to:
-        1. Find cached cryptocompare values and return them
-        2. If none exist at the moment try the normal historical price endpoint
-        3. Else fail
+        1. Query the historical price endpoint
+        2. Return the price if found
+        3. Fail if no price exists
 
         May raise:
         - PriceQueryUnsupportedAsset if from/to asset is known to miss from cryptocompare
@@ -777,24 +795,7 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
             to_asset = to_asset.resolve_to_asset_with_oracles()
         except (UnknownAsset, WrongAssetType) as e:
             raise PriceQueryUnsupportedAsset(e.identifier) from e
-        # check DB cache
-        price_cache_entry = GlobalDBHandler.get_historical_price(
-            from_asset=from_asset,
-            to_asset=to_asset,
-            timestamp=timestamp,
-            max_seconds_distance=3600,
-            source=HistoricalPriceOracle.CRYPTOCOMPARE,
-        )
-        if price_cache_entry and price_cache_entry.price != ZERO_PRICE:
-            log.debug('Got historical price from cryptocompare', from_asset=from_asset, to_asset=to_asset, timestamp=timestamp, price=price_cache_entry.price)  # noqa: E501
-            return price_cache_entry.price
 
-        # else
-        log.debug(
-            f"Couldn't find historical price from {from_asset} to "
-            f'{to_asset} at timestamp {timestamp} through cryptocompare.'
-            f' Attempting to get daily price...',
-        )
         price = self.query_endpoint_pricehistorical(from_asset, to_asset, timestamp)
         if price == ZERO_PRICE:
             raise NoPriceForGivenTimestamp(
@@ -804,13 +805,6 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
             )
 
         log.debug('Got historical price from cryptocompare', from_asset=from_asset, to_asset=to_asset, timestamp=timestamp, price=price)  # noqa: E501
-        GlobalDBHandler.add_historical_prices(entries=[HistoricalPrice(
-            from_asset=from_asset,
-            to_asset=to_asset,
-            source=HistoricalPriceOracle.CRYPTOCOMPARE,
-            timestamp=timestamp,
-            price=price,
-        )])
         return price
 
     def all_coins(self) -> dict[str, dict[str, Any]]:
@@ -822,13 +816,13 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
         or with reading the response returned by the server
         """
         if (data := self.maybe_get_cached_coinlist(considered_recent_secs=WEEK_IN_SECONDS)) is None:  # noqa: E501
-            data = self._api_query('all/coinlist')
+            data = self._api_query('https://min-api.cryptocompare.com/data/all/coinlist')
             self.cache_coinlist(data)
 
         # As described in the docs
         # https://min-api.cryptocompare.com/documentation?key=Other&cat=allCoinsWithContentEndpoint
         # This is not the entire list of assets in the system, so I am manually adding
-        # here assets I am aware of that they already have historical data for in thei
+        # here assets I am aware of that they already have historical data for in their
         # cryptocompare system
         data['DAO'] = object()
         data['USDT'] = object()
@@ -851,7 +845,7 @@ class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleWithCoinList
         data['GENE*'] = object()
         # This is GazeCoin (https://coinmarketcap.com/currencies/gazecoin/)
         data['GZE'] = object()
-        # This is probaly HarmonyCoin (https://coinmarketcap.com/currencies/harmonycoin-hmc/)
+        # This is probably HarmonyCoin (https://coinmarketcap.com/currencies/harmonycoin-hmc/)
         data['HMC*'] = object()
         # This is IoTChain (https://coinmarketcap.com/currencies/iot-chain/)
         data['ITC'] = object()

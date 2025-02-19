@@ -1,5 +1,4 @@
 <script lang="ts" setup>
-import { Routes } from '@/router/routes';
 import type { HistoryEventEntry } from '@/types/history/events';
 
 const props = defineProps<{
@@ -16,16 +15,16 @@ function onEditRule() {
   const entry = get(event);
 
   const data = {
+    counterparty: '',
     eventSubtype: entry.eventSubtype,
     eventType: entry.eventType,
-    counterparty: '',
   };
 
   if ('counterparty' in entry)
     data.counterparty = entry.counterparty ?? '';
 
   vueRouter.push({
-    path: Routes.SETTINGS_ACCOUNTING,
+    path: '/settings/accounting',
     query: { 'edit-rule': 'true', ...data },
   });
 }
@@ -38,15 +37,15 @@ function onEditRule() {
       :popper="{ placement: 'bottom-end' }"
       close-on-content-click
     >
-      <template #activator="{ on }">
+      <template #activator="{ attrs }">
         <RuiButton
           icon
           variant="text"
           class="!p-2.5"
-          v-on="on"
+          v-bind="attrs"
         >
           <RuiIcon
-            name="more-2-fill"
+            name="lu-ellipsis-vertical"
             size="20"
           />
         </RuiButton>
@@ -59,7 +58,7 @@ function onEditRule() {
           <template #prepend>
             <RuiIcon
               class="text-rui-text-secondary"
-              name="pencil-line"
+              name="lu-pencil"
             />
           </template>
           {{ t('accounting_settings.rule.edit') }}

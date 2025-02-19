@@ -1,6 +1,5 @@
 from typing import Any
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.modules.constants import AMM_POSSIBLE_COUNTERPARTIES
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
@@ -15,7 +14,7 @@ from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import ChecksumEvmAddress
-from rotkehlchen.utils.misc import hex_or_bytes_to_address, hex_or_bytes_to_int
+from rotkehlchen.utils.misc import bytes_to_address
 
 from ..constants import CPT_ONEINCH_V1
 
@@ -26,30 +25,30 @@ SWAPPED = b'\xe2\xce\xe3\xf6\x83`Y\x82\x0bg9C\x85:\xfe\xbd\x9b0&\x12]\xab\rwB\x8
 class Oneinchv1Decoder(DecoderInterface):
 
     def _decode_history(self, context: DecoderContext) -> DecodingOutput:
-        sender = hex_or_bytes_to_address(context.tx_log.topics[1])
+        sender = bytes_to_address(context.tx_log.topics[1])
         if not self.base.is_tracked(sender):
             return DEFAULT_DECODING_OUTPUT
 
-        from_token_address = hex_or_bytes_to_address(context.tx_log.data[0:32])
-        to_token_address = hex_or_bytes_to_address(context.tx_log.data[32:64])
+        from_token_address = bytes_to_address(context.tx_log.data[0:32])
+        to_token_address = bytes_to_address(context.tx_log.data[32:64])
         from_asset = self.base.get_or_create_evm_asset(from_token_address)
         to_asset = self.base.get_or_create_evm_asset(to_token_address)
 
-        from_raw = hex_or_bytes_to_int(context.tx_log.data[64:96])
+        from_raw = int.from_bytes(context.tx_log.data[64:96])
         from_amount = asset_normalized_value(from_raw, from_asset)
-        to_raw = hex_or_bytes_to_int(context.tx_log.data[96:128])
+        to_raw = int.from_bytes(context.tx_log.data[96:128])
         to_amount = asset_normalized_value(to_raw, to_asset)
 
         out_event = in_event = None
         for event in context.decoded_events:
-            if event.event_type == HistoryEventType.SPEND and event.location_label == sender and from_amount == event.balance.amount and from_asset == event.asset:  # noqa: E501
+            if event.event_type == HistoryEventType.SPEND and event.location_label == sender and from_amount == event.amount and from_asset == event.asset:  # noqa: E501
                 # find the send event
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.SPEND
                 event.counterparty = CPT_ONEINCH_V1
                 event.notes = f'Swap {from_amount} {from_asset.symbol} in {CPT_ONEINCH_V1} from {event.location_label}'  # noqa: E501
                 out_event = event
-            elif event.event_type == HistoryEventType.RECEIVE and event.location_label == sender and to_amount == event.balance.amount and to_asset == event.asset:  # noqa: E501
+            elif event.event_type == HistoryEventType.RECEIVE and event.location_label == sender and to_amount == event.amount and to_asset == event.asset:  # noqa: E501
                 # find the receive event
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
@@ -76,10 +75,10 @@ class Oneinchv1Decoder(DecoderInterface):
 
     def _decode_swapped(self, context: DecoderContext) -> DecodingOutput:
         """We use the Swapped event to get the fee kept by 1inch"""
-        to_token_address = hex_or_bytes_to_address(context.tx_log.topics[2])
+        to_token_address = bytes_to_address(context.tx_log.topics[2])
         to_asset = self.base.get_or_create_evm_asset(to_token_address)
-        to_raw = hex_or_bytes_to_int(context.tx_log.data[32:64])
-        fee_raw = hex_or_bytes_to_int(context.tx_log.data[96:128])
+        to_raw = int.from_bytes(context.tx_log.data[32:64])
+        fee_raw = int.from_bytes(context.tx_log.data[96:128])
         if fee_raw == 0:
             return DEFAULT_DECODING_OUTPUT  # no need to do anything for zero fee taken
 
@@ -89,7 +88,7 @@ class Oneinchv1Decoder(DecoderInterface):
             # Edit the full amount in the swap's receive event
             crypto_asset = event.asset.resolve_to_crypto_asset()
             if event.event_type == HistoryEventType.TRADE and event.event_subtype == HistoryEventSubType.RECEIVE and event.counterparty == CPT_ONEINCH_V1:  # noqa: E501
-                event.balance.amount = full_amount
+                event.amount = full_amount
                 event.notes = f'Receive {full_amount} {crypto_asset.symbol} from {CPT_ONEINCH_V1} swap in {event.location_label}'  # noqa: E501
                 sender_address = event.location_label
                 break
@@ -105,7 +104,7 @@ class Oneinchv1Decoder(DecoderInterface):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=to_asset,
-            balance=Balance(amount=fee_amount),
+            amount=fee_amount,
             location_label=sender_address,
             notes=f'Deduct {fee_amount} {to_asset.symbol} from {sender_address} as {CPT_ONEINCH_V1} fees',  # noqa: E501
             counterparty=CPT_ONEINCH_V1,

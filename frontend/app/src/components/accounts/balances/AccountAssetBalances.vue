@@ -1,20 +1,29 @@
 <script setup lang="ts">
-import type { AssetBalance } from '@rotki/common';
-import type {
-  DataTableColumn,
-  DataTableSortData,
-} from '@rotki/ui-library-compat';
+import { getSortItems } from '@/utils/assets';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
+import { CURRENCY_USD } from '@/types/currencies';
+import RowAppend from '@/components/helper/RowAppend.vue';
+import { sum } from '@/utils/balances';
+import type { AssetBalance, BigNumber } from '@rotki/common';
+import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
 
-const props = withDefaults(
-  defineProps<{
-    assets: AssetBalance[];
-    title: string;
-    flat: boolean;
-  }>(),
-  {
-    flat: false,
-  },
-);
+interface AssetWithPrice extends AssetBalance {
+  price: BigNumber;
+}
+
+interface AccountAssetBalancesProps {
+  assets: AssetBalance[];
+  title: string;
+  flat?: boolean;
+}
+
+const props = withDefaults(defineProps<AccountAssetBalancesProps>(), {
+  flat: false,
+});
 
 const { t } = useI18n();
 const { assets } = toRefs(props);
@@ -24,64 +33,62 @@ const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { assetInfo } = useAssetInfoRetrieval();
 const getPrice = (asset: string) => get(assetPrice(asset)) ?? Zero;
 
-const sort: Ref<DataTableSortData> = ref({
+const sort = ref<DataTableSortData<AssetWithPrice>>({
   column: 'usdValue',
   direction: 'desc' as const,
 });
 
-const assetsWithPrice = computed(() =>
+const assetsWithPrice = computed<AssetWithPrice[]>(() =>
   get(assets).map(row => ({ ...row, price: get(getPrice(row.asset)) })),
 );
 
-const sortItems = getSortItems(asset => get(assetInfo(asset)));
+const sortItems = getSortItems<AssetWithPrice>(asset => get(assetInfo(asset)));
 
-const sorted = computed(() => {
+const sorted = computed<AssetWithPrice[]>(() => {
   const sortBy = get(sort);
   const data = [...get(assetsWithPrice)];
-  if (!Array.isArray(sortBy) && sortBy?.column) {
-    return sortItems(
-      data,
-      [sortBy.column as keyof AssetBalance],
-      [sortBy.direction === 'desc'],
-    );
-  }
+  if (!Array.isArray(sortBy) && sortBy?.column)
+    return sortItems(data, [sortBy.column as keyof AssetBalance], [sortBy.direction === 'desc']);
+
   return data;
 });
 
-const headers = computed<DataTableColumn[]>(() => [
+const totalValue = computed<BigNumber>(() => sum(get(assetsWithPrice)));
+
+const headers = computed<DataTableColumn<AssetWithPrice>[]>(() => [
   {
-    label: t('common.asset'),
-    class: 'text-no-wrap w-full',
     cellClass: 'py-1',
+    class: 'text-no-wrap w-full',
     key: 'asset',
+    label: t('common.asset'),
     sortable: true,
   },
   {
+    align: 'end',
+    cellClass: 'py-1',
+    class: 'text-no-wrap',
+    key: 'price',
     label: t('common.price_in_symbol', {
       symbol: get(currencySymbol),
     }),
-    class: 'text-no-wrap',
-    cellClass: 'py-1',
-    align: 'end',
-    key: 'price',
     sortable: true,
   },
   {
-    label: t('common.amount'),
+    align: 'end',
+    cellClass: 'py-1',
+    class: 'text-no-wrap',
     key: 'amount',
-    class: 'text-no-wrap',
-    cellClass: 'py-1',
-    align: 'end',
+    label: t('common.amount'),
     sortable: true,
   },
   {
+    align: 'end',
+    cellClass: 'py-1',
+    class: 'text-no-wrap',
+    key: 'usdValue',
     label: t('common.value_in_symbol', {
       symbol: get(currencySymbol),
     }),
-    key: 'usdValue',
-    align: 'end',
-    class: 'text-no-wrap',
-    cellClass: 'py-1',
     sortable: true,
   },
 ]);
@@ -91,6 +98,7 @@ const headers = computed<DataTableColumn[]>(() => [
   <RuiCard
     :no-padding="flat"
     :variant="flat ? 'flat' : 'outlined'"
+    class="!rounded-xl my-2"
   >
     <template
       v-if="!flat && title"
@@ -99,10 +107,9 @@ const headers = computed<DataTableColumn[]>(() => [
       {{ title }}
     </template>
     <RuiDataTable
+      v-model:sort.external="sort"
       :rows="sorted"
       :cols="headers"
-      :sort.sync="sort"
-      :sort-modifiers="{ external: true }"
       :empty="{ description: t('data_table.no_data') }"
       row-attr="asset"
       outlined
@@ -136,6 +143,19 @@ const headers = computed<DataTableColumn[]>(() => [
           :value="row.usdValue"
           show-currency="symbol"
         />
+      </template>
+      <template #body.append>
+        <RowAppend
+          label-colspan="3"
+          :label="t('common.total')"
+          class="[&>td]:p-4"
+        >
+          <AmountDisplay
+            :fiat-currency="CURRENCY_USD"
+            :value="totalValue"
+            show-currency="symbol"
+          />
+        </RowAppend>
       </template>
     </RuiDataTable>
   </RuiCard>

@@ -1,21 +1,48 @@
 import logging
 import operator
-from collections.abc import Iterable, Sequence
+import sqlite3
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NamedTuple,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+    overload,
+)
 
 from rotkehlchen.assets.asset import Asset, AssetWithOracles, EvmToken, FiatAsset, UnderlyingToken
 from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token
+from rotkehlchen.chain.arbitrum_one.modules.umami.constants import CPT_UMAMI
+from rotkehlchen.chain.arbitrum_one.modules.umami.utils import get_umami_vault_token_price
 from rotkehlchen.chain.ethereum.defi.price import handle_defi_price_query
 from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.chain.evm.constants import ETH_SPECIAL_ADDRESS
 from rotkehlchen.chain.evm.contracts import EvmContract
+from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINANCE
+from rotkehlchen.chain.evm.decoding.aura_finance.utils import get_aura_pool_price
+from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V1, CPT_BALANCER_V2
+from rotkehlchen.chain.evm.decoding.balancer.utils import get_balancer_pool_price
+from rotkehlchen.chain.evm.decoding.curve.constants import CURVE_CHAIN_ID_TYPE, CURVE_CHAIN_IDS
+from rotkehlchen.chain.evm.decoding.curve_lend.utils import get_curve_lending_vault_token_price
+from rotkehlchen.chain.evm.decoding.gearbox.gearbox_cache import (
+    ensure_gearbox_lp_underlying_tokens,
+    read_gearbox_data_from_cache,
+)
+from rotkehlchen.chain.evm.decoding.morpho.utils import get_morpho_vault_token_price
+from rotkehlchen.chain.evm.decoding.uniswap.v3.utils import get_uniswap_v3_position_price
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.evm.utils import lp_price_from_uniswaplike_pool_contract
+from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_POL_HARDFORK
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import (
     A_3CRV,
-    A_ALINK_V1,
     A_BSQ,
     A_BTC,
     A_CRV_3CRV,
@@ -28,6 +55,7 @@ from rotkehlchen.constants.assets import (
     A_CRVP_RENWSBTC,
     A_DAI,
     A_ETH,
+    A_ETH2,
     A_FARM_CRVRENWBTC,
     A_FARM_DAI,
     A_FARM_RENBTC,
@@ -36,14 +64,13 @@ from rotkehlchen.constants.assets import (
     A_FARM_USDT,
     A_FARM_WBTC,
     A_FARM_WETH,
-    A_GUSD,
     A_KFEE,
+    A_POLYGON_POS_MATIC,
     A_TUSD,
     A_USD,
     A_USDC,
     A_USDT,
     A_WETH,
-    A_YFI,
     A_YV1_3CRV,
     A_YV1_ALINK,
     A_YV1_DAI,
@@ -59,19 +86,19 @@ from rotkehlchen.constants.assets import (
 )
 from rotkehlchen.constants.misc import CURRENCYCONVERTER_API_KEY
 from rotkehlchen.constants.prices import ZERO_PRICE
-from rotkehlchen.constants.resolver import ethaddress_to_identifier
+from rotkehlchen.constants.resolver import ethaddress_to_identifier, evm_address_to_identifier
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, MONTH_IN_SECONDS
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.defi import DefiPoolError
 from rotkehlchen.errors.misc import (
     BlockchainQueryError,
+    InputError,
     NotERC20Conformant,
     RemoteError,
     UnableToDecryptRemoteData,
 )
 from rotkehlchen.errors.price import PriceQueryUnsupportedAsset
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.externalapis.bisq_market import get_bisq_market_price
 from rotkehlchen.externalapis.xratescom import (
     get_current_xratescom_exchange_rates,
     get_historical_xratescom_exchange_rates,
@@ -85,9 +112,16 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.oracles.structures import CurrentPriceOracle
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import (
+    CURVE_LENDING_VAULTS_PROTOCOL,
     CURVE_POOL_PROTOCOL,
+    GEARBOX_PROTOCOL,
+    HOP_PROTOCOL_LP,
     LP_TOKEN_AS_POOL_PROTOCOLS,
+    MORPHO_VAULT_PROTOCOL,
+    UNISWAPV3_PROTOCOL,
+    YEARN_STAKING_PROTOCOL,
     YEARN_VAULTS_V2_PROTOCOL,
+    YEARN_VAULTS_V3_PROTOCOL,
     CacheType,
     ChainID,
     EvmTokenKind,
@@ -101,8 +135,15 @@ from rotkehlchen.utils.mixins.penalizable_oracle import PenalizablePriceOracleMi
 from rotkehlchen.utils.network import request_get_dict
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.arbitrum_one.manager import ArbitrumOneManager
+    from rotkehlchen.chain.base.manager import BaseManager
+    from rotkehlchen.chain.ethereum.manager import EthereumManager
     from rotkehlchen.chain.ethereum.oracles.uniswap import UniswapV2Oracle, UniswapV3Oracle
     from rotkehlchen.chain.evm.manager import EvmManager
+    from rotkehlchen.chain.gnosis.manager import GnosisManager
+    from rotkehlchen.chain.optimism.manager import OptimismManager
+    from rotkehlchen.chain.polygon_pos.manager import PolygonPOSManager
+    from rotkehlchen.externalapis.alchemy import Alchemy
     from rotkehlchen.externalapis.coingecko import Coingecko
     from rotkehlchen.externalapis.cryptocompare import Cryptocompare
     from rotkehlchen.externalapis.defillama import Defillama
@@ -115,7 +156,7 @@ log = RotkehlchenLogsAdapter(logger)
 
 CURRENT_PRICE_CACHE_SECS = 300  # 5 mins
 DEFAULT_RATE_LIMIT_WAITING_TIME = 60  # seconds
-BTC_PER_BSQ = FVal('0.00000100')
+BTC_PER_BSQ = FVal('0.00000100')  # 1 BST == 100 satoshi https://docs.bisq.network/dao/specification#bsq-token
 
 ASSETS_UNDERLYING_BTC = (
     A_YV1_RENWSBTC,
@@ -130,6 +171,7 @@ ASSETS_UNDERLYING_BTC = (
 CurrentPriceOracleInstance = Union[
     'Coingecko',
     'Cryptocompare',
+    'Defillama',
     'UniswapV3Oracle',
     'UniswapV2Oracle',
     'ManualCurrentOracle',
@@ -166,26 +208,64 @@ def get_underlying_asset_price(token: EvmToken) -> tuple[Price | None, CurrentPr
     elif token.protocol == CURVE_POOL_PROTOCOL:
         price = Inquirer().find_curve_pool_price(token)
     elif token.protocol == YEARN_VAULTS_V2_PROTOCOL:
-        price = Inquirer().find_yearn_price(token)
+        price = Inquirer().find_yearn_price(token, 'YEARN_VAULT_V2')
+    elif token.protocol == YEARN_VAULTS_V3_PROTOCOL:
+        price = Inquirer().find_yearn_price(token, 'YEARN_VAULT_V3')
+    elif token.protocol == GEARBOX_PROTOCOL:
+        price = Inquirer().find_gearbox_price(token)
+    elif token.protocol == HOP_PROTOCOL_LP:
+        price = Inquirer().find_hop_lp_price(token)
+    elif token.protocol == YEARN_STAKING_PROTOCOL:
+        price = Inquirer().find_yearn_staking_price(token)
+    elif token.protocol == CPT_UMAMI:
+        price = get_umami_vault_token_price(
+            vault_token=token,
+            inquirer=Inquirer(),  # Initialize here to avoid a circular import
+            evm_inquirer=Inquirer.get_evm_manager(chain_id=ChainID.ARBITRUM_ONE).node_inquirer,
+        )
+    elif token.protocol == MORPHO_VAULT_PROTOCOL:
+        price = get_morpho_vault_token_price(
+            vault_token=token,
+            inquirer=Inquirer(),  # Initialize here to avoid a circular import
+            evm_inquirer=Inquirer.get_evm_manager(chain_id=token.chain_id).node_inquirer,
+        )
+    elif token.protocol == CURVE_LENDING_VAULTS_PROTOCOL:
+        price = get_curve_lending_vault_token_price(
+            vault_token=token,
+            inquirer=Inquirer(),  # Initialize here to avoid a circular import
+            evm_inquirer=Inquirer.get_evm_manager(chain_id=token.chain_id).node_inquirer,
+        )
+    elif token.protocol in (CPT_BALANCER_V1, CPT_BALANCER_V2):
+        price = get_balancer_pool_price(
+            pool_token=token,
+            evm_inquirer=Inquirer.get_evm_manager(chain_id=token.chain_id).node_inquirer,
+        )
+    elif token.protocol == CPT_AURA_FINANCE:
+        price = get_aura_pool_price(
+            inquirer=Inquirer(),
+            token=token,
+        )
+    elif token.protocol == UNISWAPV3_PROTOCOL:
+        price = get_uniswap_v3_position_price(
+            token=token,
+            inquirer=Inquirer(),
+            evm_inquirer=Inquirer.get_evm_manager(chain_id=token.chain_id).node_inquirer,
+        )
 
-    if token == A_YV1_ALINK:
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_ALINK_V1)
-    elif token == A_YV1_GUSD:
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_GUSD)
-    elif token in (A_YV1_DAI, A_FARM_DAI):
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_DAI)
-    elif token in (A_FARM_WETH, A_YV1_WETH):
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_ETH)
-    elif token == A_YV1_YFI:
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_YFI)
-    elif token in (A_FARM_USDT, A_YV1_USDT):
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_USDT)
-    elif token in (A_FARM_USDC, A_YV1_USDC):
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_USDC)
-    elif token in (A_FARM_TUSD, A_YV1_TUSD):
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_TUSD)
+    if token == A_FARM_DAI:
+        price, oracle = Inquirer.find_usd_price_and_oracle(A_DAI)
+    elif token == A_FARM_WETH:
+        price, oracle = Inquirer.find_usd_price_and_oracle(A_ETH)
+    elif token == A_FARM_USDT:
+        price, oracle = Inquirer.find_usd_price_and_oracle(A_USDT)
+    elif token == A_FARM_USDC:
+        price, oracle = Inquirer.find_usd_price_and_oracle(A_USDC)
+    elif token == A_FARM_TUSD:
+        price, oracle = Inquirer.find_usd_price_and_oracle(A_TUSD)
     elif token in ASSETS_UNDERLYING_BTC:
-        price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_BTC)
+        price, oracle = Inquirer.find_usd_price_and_oracle(A_BTC)
+    elif token == 'eip155:1/erc20:0x815C23eCA83261b6Ec689b60Cc4a58b54BC24D8D':  # vTHOR
+        price, oracle = Inquirer.find_usd_price_and_oracle(Asset('eip155:1/erc20:0xa5f2211B9b8170F694421f2046281775E8468044'))  # THOR token  # noqa: E501
 
     # At this point we have to return the price if it's not None. If we don't do this and got
     # a price for a token that has underlying assets, the code will enter the if statement after
@@ -197,7 +277,7 @@ def get_underlying_asset_price(token: EvmToken) -> tuple[Price | None, CurrentPr
         usd_price = ZERO
         for underlying_token in token.underlying_tokens:
             token = EvmToken(underlying_token.get_identifier(parent_chain=token.chain_id))
-            underlying_asset_price, oracle, _ = Inquirer.find_usd_price_and_oracle(token)
+            underlying_asset_price, oracle = Inquirer.find_usd_price_and_oracle(token)
             usd_price += underlying_asset_price * underlying_token.weight
 
         if usd_price != ZERO_PRICE:
@@ -229,11 +309,47 @@ def _query_currency_converterapi(base: FiatAsset, quote: FiatAsset) -> Price | N
         return None
 
 
+T = TypeVar('T', bound=Callable[..., Any])
+
+
+def handle_recursion_error(return_price_only: bool = False) -> Callable:
+    """
+    In the app we saw that having a wrongly configured token which had itself
+    as underlying token created a RecursionError. That recursion error was
+    tracked in the logs as an error with no traceback and sometimes an OperationalError
+    type from sqlite. The recursion error was not only seen here but also in the past
+    so we've decided to catch both of them here.
+
+    This decorator is used with methods that return a tuple with the price or only the price.
+    To keep the decorator compatible with the expected returned type if `return_price_only` is
+    set to True we return only `Price(ZERO)` and if it's False we return a tuple in case of
+    error.
+    """
+    def decorator(func: T) -> T:
+        @wraps(func)
+        def wrapper(*args, **kwargs):  # type: ignore
+            try:
+                result = func(*args, **kwargs)
+            except (RecursionError, sqlite3.OperationalError) as e:
+                from_asset = kwargs.get('from_asset') or kwargs.get('asset')
+                to_asset = kwargs.get('to_asset')
+                log.error(
+                    f'Failed to query price {from_asset=} {to_asset=} due to a recursion error: '
+                    f'{e}. Using zero as price.',
+                )
+                if return_price_only:
+                    return Price(ZERO)
+
+                return Price(ZERO), CurrentPriceOracle.BLOCKCHAIN
+            return result
+        return wrapper  # type: ignore
+    return decorator
+
+
 class CachedPriceEntry(NamedTuple):
     price: Price
     time: Timestamp
     oracle: CurrentPriceOracle
-    used_main_currency: bool
 
 
 class Inquirer:
@@ -243,6 +359,7 @@ class Inquirer:
     _data_directory: Path
     _cryptocompare: 'Cryptocompare'
     _coingecko: 'Coingecko'
+    _alchemy: 'Alchemy'
     _defillama: 'Defillama'
     _manualcurrent: 'ManualCurrentOracle'
     _uniswapv2: Optional['UniswapV2Oracle'] = None
@@ -264,6 +381,7 @@ class Inquirer:
             cryptocompare: Optional['Cryptocompare'] = None,
             coingecko: Optional['Coingecko'] = None,
             defillama: Optional['Defillama'] = None,
+            alchemy: Optional['Alchemy'] = None,
             manualcurrent: Optional['ManualCurrentOracle'] = None,
             msg_aggregator: Optional['MessagesAggregator'] = None,
     ) -> 'Inquirer':
@@ -275,6 +393,7 @@ class Inquirer:
         assert cryptocompare, error_msg
         assert coingecko, error_msg
         assert defillama, error_msg
+        assert alchemy, error_msg
         assert manualcurrent, error_msg
         assert msg_aggregator, error_msg
 
@@ -284,6 +403,7 @@ class Inquirer:
         Inquirer._cryptocompare = cryptocompare
         Inquirer._coingecko = coingecko
         Inquirer._defillama = defillama
+        Inquirer._alchemy = alchemy
         Inquirer._manualcurrent = manualcurrent
         Inquirer._cached_current_price = LRUCacheWithRemove(maxsize=1024)
         Inquirer._evm_managers = {}
@@ -319,6 +439,7 @@ class Inquirer:
             A_FARM_RENBTC.identifier,
             A_FARM_CRVRENWBTC.identifier,
             A_3CRV.identifier,
+            'eip155:1/erc20:0x815C23eCA83261b6Ec689b60Cc4a58b54BC24D8D',  # vTHOR
         }
         try:
             Inquirer.usd = A_USD.resolve_to_fiat_asset()
@@ -336,8 +457,18 @@ class Inquirer:
         for chain_id, evm_manager in evm_managers:
             instance._evm_managers[chain_id] = evm_manager
 
+    @overload
+    @staticmethod
+    def get_evm_manager(chain_id: CURVE_CHAIN_ID_TYPE) -> 'ArbitrumOneManager | BaseManager | EthereumManager | GnosisManager | OptimismManager | PolygonPOSManager':  # noqa: E501
+        ...
+
+    @overload
     @staticmethod
     def get_evm_manager(chain_id: ChainID) -> 'EvmManager':
+        ...
+
+    @staticmethod
+    def get_evm_manager(chain_id: ChainID | CURVE_CHAIN_ID_TYPE) -> 'EvmManager':
         evm_manager = Inquirer._evm_managers.get(chain_id)
         assert evm_manager is not None, f'evm manager for chain id {chain_id} should have been injected'  # noqa: E501
         return evm_manager
@@ -353,10 +484,9 @@ class Inquirer:
     @staticmethod
     def get_cached_current_price_entry(
             cache_key: tuple[Asset, Asset],
-            match_main_currency: bool,
     ) -> CachedPriceEntry | None:
         cache = Inquirer._cached_current_price.get(cache_key)
-        if cache is None or ts_now() - cache.time > CURRENT_PRICE_CACHE_SECS or cache.used_main_currency != match_main_currency:  # noqa: E501
+        if cache is None or ts_now() - cache.time > CURRENT_PRICE_CACHE_SECS:
             return None
 
         return cache
@@ -367,10 +497,6 @@ class Inquirer:
         for asset_pair in list(Inquirer._cached_current_price.cache):  # create a list to avoid mutating the map while iterating it  # noqa: E501
             if asset_pair[0] in assets_to_invalidate or asset_pair[1] in assets_to_invalidate:
                 Inquirer._cached_current_price.remove(asset_pair)
-
-    @staticmethod
-    def remove_cached_current_price_entry(cache_key: tuple[Asset, Asset]) -> None:
-        Inquirer._cached_current_price.remove(cache_key)
 
     @staticmethod
     def set_oracles_order(oracles: Sequence[CurrentPriceOracle]) -> None:
@@ -401,17 +527,22 @@ class Inquirer:
             from_asset: AssetWithOracles,
             to_asset: AssetWithOracles,
             coming_from_latest_price: bool,
-            match_main_currency: bool,
-    ) -> tuple[Price, bool, bool]:
+    ) -> tuple[Price, bool]:
         """Tries to query the current price of the asset pair using the provided oracle instance.
-        Returns a tuple of (price, used_main_currency, is_error). The third element is used to
-        indicate whether the error should be ignored or not."""
-        price, used_main_currency, is_error = ZERO_PRICE, False, True
+        Returns a tuple of (price, is_error). The third element is used to
+        indicate whether the error should be ignored or not.
+
+        May raise:
+        - RecursionError if `coming_from_latest_price` is True. Used in the ManualCurrentOracle
+        """
+        price, is_error = ZERO_PRICE, True
+
+        if from_asset == A_POLYGON_POS_MATIC and ts_now() > POLYGON_POS_POL_HARDFORK:  # after hardfork, we use different oracles  # noqa: E501
+            from_asset = Asset('eip155:1/erc20:0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6').resolve_to_asset_with_oracles()  # POL token  # noqa: E501
         try:
-            price, used_main_currency, is_error = *oracle_instance.query_current_price(
+            price, is_error = oracle_instance.query_current_price(
                 from_asset=from_asset,
                 to_asset=to_asset,
-                match_main_currency=match_main_currency,
             ), False
         except (DefiPoolError, PriceQueryUnsupportedAsset, RemoteError) as e:
             log.warning(
@@ -433,17 +564,16 @@ class Inquirer:
             )
             is_error = False
 
-        if (price, used_main_currency) != (ZERO_PRICE, False):
+        if price != ZERO_PRICE:
             Inquirer.set_cached_price(
                 cache_key=(from_asset, to_asset),
                 cached_price=CachedPriceEntry(
                     price=price,
                     time=ts_now(),
                     oracle=oracle,
-                    used_main_currency=used_main_currency,
                 ),
             )
-        return price, used_main_currency, is_error
+        return price, is_error
 
     @staticmethod
     def _query_oracle_instances(
@@ -451,8 +581,7 @@ class Inquirer:
             to_asset: Asset,
             coming_from_latest_price: bool,
             skip_onchain: bool = False,
-            match_main_currency: bool = False,
-    ) -> tuple[Price, CurrentPriceOracle, bool]:
+    ) -> tuple[Price, CurrentPriceOracle]:
         """
         Query oracle instances.
         `coming_from_latest_price` is used by manual latest price oracle to handle price loops.
@@ -476,11 +605,10 @@ class Inquirer:
                 oracles = instance._oracles
                 oracle_instances = instance._oracle_instances
         else:
-            return ZERO_PRICE, CurrentPriceOracle.BLOCKCHAIN, False
+            return ZERO_PRICE, CurrentPriceOracle.BLOCKCHAIN
 
         price = ZERO_PRICE
         oracle_queried = CurrentPriceOracle.BLOCKCHAIN
-        used_main_currency = False
         for oracle, oracle_instance in zip(oracles, oracle_instances, strict=True):
             if (
                 isinstance(oracle_instance, CurrentPriceOracleInterface) and
@@ -491,13 +619,12 @@ class Inquirer:
             ):
                 continue
 
-            price, used_main_currency, should_continue = Inquirer._try_oracle_price_query(
+            price, should_continue = Inquirer._try_oracle_price_query(
                 oracle=oracle,
                 oracle_instance=oracle_instance,
                 from_asset=from_asset,
                 to_asset=to_asset,
                 coming_from_latest_price=coming_from_latest_price,
-                match_main_currency=match_main_currency,
             )
             if should_continue:
                 continue
@@ -512,7 +639,7 @@ class Inquirer:
                 )
                 break
 
-        return price, oracle_queried, used_main_currency
+        return price, oracle_queried
 
     @staticmethod
     def _find_price(
@@ -521,33 +648,33 @@ class Inquirer:
             ignore_cache: bool = False,
             skip_onchain: bool = False,
             coming_from_latest_price: bool = False,
-            match_main_currency: bool = False,
-    ) -> tuple[Price, CurrentPriceOracle, bool]:
+    ) -> tuple[Price, CurrentPriceOracle]:
         """Returns:
         1. The current price of 'from_asset' in 'to_asset' valuation.
         2. Oracle that was used to get the price.
-        3. Flag that shows whether returned price is in main currency.
         NB: prices for special symbols in any currency but USD are not supported.
 
         Returns ZERO_PRICE if all options have been exhausted and errors are logged in the logs.
         `coming_from_latest_price` is used by manual latest price oracle to handle price loops.
         """
         if from_asset == to_asset:
-            return Price(ONE), CurrentPriceOracle.MANUALCURRENT, False
+            return Price(ONE), CurrentPriceOracle.MANUALCURRENT
+
+        if (collection_main_asset := GlobalDBHandler.get_collection_main_asset(from_asset.identifier)) is not None:  # noqa: E501
+            from_asset = Asset(collection_main_asset).resolve_to_asset_with_oracles()
 
         if to_asset == A_USD:
-            price, oracle, used_main_currency = Inquirer.find_usd_price_and_oracle(
+            price, oracle = Inquirer.find_usd_price_and_oracle(
                 asset=from_asset,
                 ignore_cache=ignore_cache,
                 coming_from_latest_price=coming_from_latest_price,
-                match_main_currency=match_main_currency,
             )
-            return price, oracle, used_main_currency
+            return price, oracle
 
         if ignore_cache is False:
-            cache = Inquirer.get_cached_current_price_entry(cache_key=(from_asset, to_asset), match_main_currency=match_main_currency)  # noqa: E501
+            cache = Inquirer.get_cached_current_price_entry(cache_key=(from_asset, to_asset))
             if cache is not None:
-                return cache.price, cache.oracle, cache.used_main_currency
+                return cache.price, cache.oracle
 
         # check manual prices
         if (price_result := Inquirer._try_oracle_price_query(
@@ -556,21 +683,28 @@ class Inquirer:
             from_asset=from_asset,  # type: ignore[arg-type]  # Manual current oracle can works with Asset type
             to_asset=to_asset,  # type: ignore[arg-type]  # Manual current oracle can works with Asset type
             coming_from_latest_price=coming_from_latest_price,
-            match_main_currency=match_main_currency,
-        )) != (ZERO_PRICE, False, False):
-            price, used_main_currency, _ = price_result
-            return price, CurrentPriceOracle.MANUALCURRENT, used_main_currency
+        )) != (ZERO_PRICE, False):
+            price, _ = price_result
+            return price, CurrentPriceOracle.MANUALCURRENT
 
-        oracle_price, oracle_queried, used_main_currency = Inquirer._query_oracle_instances(
+        if from_asset.is_fiat() and to_asset.is_fiat():
+            with suppress(RemoteError):
+                price, oracle = Inquirer._query_fiat_pair(
+                    base=from_asset.resolve_to_fiat_asset(),
+                    quote=to_asset.resolve_to_fiat_asset(),
+                )
+                return price, oracle
+
+        oracle_price, oracle_queried = Inquirer._query_oracle_instances(
             from_asset=from_asset,
             to_asset=to_asset,
             skip_onchain=skip_onchain,
             coming_from_latest_price=coming_from_latest_price,
-            match_main_currency=match_main_currency,
         )
-        return oracle_price, oracle_queried, used_main_currency
+        return oracle_price, oracle_queried
 
     @staticmethod
+    @handle_recursion_error(return_price_only=True)
     def find_price(
             from_asset: Asset,
             to_asset: Asset,
@@ -579,7 +713,7 @@ class Inquirer:
             coming_from_latest_price: bool = False,
     ) -> Price:
         """Wrapper around _find_price to ignore oracle queried when getting price"""
-        price, _, _ = Inquirer._find_price(
+        price, _ = Inquirer._find_price(
             from_asset=from_asset,
             to_asset=to_asset,
             ignore_cache=ignore_cache,
@@ -589,14 +723,14 @@ class Inquirer:
         return price
 
     @staticmethod
+    @handle_recursion_error()
     def find_price_and_oracle(
             from_asset: Asset,
             to_asset: Asset,
             ignore_cache: bool = False,
             skip_onchain: bool = False,
             coming_from_latest_price: bool = False,
-            match_main_currency: bool = False,
-    ) -> tuple[Price, CurrentPriceOracle, bool]:
+    ) -> tuple[Price, CurrentPriceOracle]:
         """
         Wrapper around _find_price to include oracle queried when getting price and
         flag that shows whether returned price is in main currency.
@@ -607,10 +741,10 @@ class Inquirer:
             ignore_cache=ignore_cache,
             skip_onchain=skip_onchain,
             coming_from_latest_price=coming_from_latest_price,
-            match_main_currency=match_main_currency,
         )
 
     @staticmethod
+    @handle_recursion_error(return_price_only=True)
     def find_usd_price(
             asset: Asset,
             ignore_cache: bool = False,
@@ -618,7 +752,7 @@ class Inquirer:
             coming_from_latest_price: bool = False,
     ) -> Price:
         """Wrapper around _find_usd_price to ignore oracle queried when getting usd price"""
-        price, _, _ = Inquirer._find_usd_price(
+        price, _ = Inquirer._find_usd_price(
             asset=asset,
             ignore_cache=ignore_cache,
             skip_onchain=skip_onchain,
@@ -627,13 +761,13 @@ class Inquirer:
         return price
 
     @staticmethod
+    @handle_recursion_error()
     def find_usd_price_and_oracle(
             asset: Asset,
             ignore_cache: bool = False,
             skip_onchain: bool = False,
             coming_from_latest_price: bool = False,
-            match_main_currency: bool = False,
-    ) -> tuple[Price, CurrentPriceOracle, bool]:
+    ) -> tuple[Price, CurrentPriceOracle]:
         """
         Wrapper around _find_usd_price to include oracle queried when getting usd price and
         flag that shows whether returned price is in main currency
@@ -643,7 +777,6 @@ class Inquirer:
             ignore_cache=ignore_cache,
             skip_onchain=skip_onchain,
             coming_from_latest_price=coming_from_latest_price,
-            match_main_currency=match_main_currency,
         )
 
     @staticmethod
@@ -652,8 +785,7 @@ class Inquirer:
             ignore_cache: bool = False,
             skip_onchain: bool = False,
             coming_from_latest_price: bool = False,
-            match_main_currency: bool = False,
-    ) -> tuple[Price, CurrentPriceOracle, bool]:
+    ) -> tuple[Price, CurrentPriceOracle]:
         """Returns the current price of the asset, oracle that was used and whether returned price
         is in main currency.
 
@@ -661,24 +793,26 @@ class Inquirer:
         `coming_from_latest_price` is used by manual latest price oracle to handle price loops.
         """
         if asset == A_USD:
-            return Price(ONE), CurrentPriceOracle.FIAT, False
+            return Price(ONE), CurrentPriceOracle.FIAT
+        elif asset == A_ETH2:
+            asset = A_ETH
 
         cache_key = (asset, A_USD)
         if ignore_cache is False:
-            cache = Inquirer.get_cached_current_price_entry(cache_key=cache_key, match_main_currency=match_main_currency)  # noqa: E501
+            cache = Inquirer.get_cached_current_price_entry(cache_key=cache_key)
             if cache is not None:
-                return cache.price, cache.oracle, cache.used_main_currency
+                return cache.price, cache.oracle
 
         try:
             asset = asset.resolve()
         except UnknownAsset:
             log.error(f'Tried to ask for {asset.identifier} price but asset is missing from the DB')  # noqa: E501
-            return ZERO_PRICE, CurrentPriceOracle.FIAT, False
+            return ZERO_PRICE, CurrentPriceOracle.FIAT
 
         if isinstance(asset, FiatAsset):
             with suppress(RemoteError):
                 price, oracle = Inquirer._query_fiat_pair(base=asset, quote=Inquirer.usd)
-                return price, oracle, False
+                return price, oracle
 
         # continue, asset isn't fiat, check manual prices
         if (price_result := Inquirer._try_oracle_price_query(
@@ -687,10 +821,9 @@ class Inquirer:
             from_asset=asset,  # type: ignore[arg-type]  # Manual current oracle can works with Asset type
             to_asset=A_USD.resolve_to_asset_with_oracles(),
             coming_from_latest_price=coming_from_latest_price,
-            match_main_currency=match_main_currency,
-        )) != (ZERO_PRICE, False, False):
-            price, used_main_currency, _ = price_result
-            return price, CurrentPriceOracle.MANUALCURRENT, used_main_currency
+        )) != (ZERO_PRICE, False):
+            price, _ = price_result
+            return price, CurrentPriceOracle.MANUALCURRENT
 
         # Try and check if it is an ethereum token with specified protocol or underlying tokens
         is_known_protocol = False
@@ -717,68 +850,52 @@ class Inquirer:
                         price=price,
                         time=ts_now(),
                         oracle=CurrentPriceOracle.BLOCKCHAIN,
-                        used_main_currency=False,
                     ),
                 )
-                return price, oracle, False
+                return price, oracle
 
             if is_known_protocol is True or underlying_tokens is not None:
-                result, oracle = get_underlying_asset_price(asset)
-                if result is not None:
-                    usd_price = Price(result)
-                    Inquirer.set_cached_price(
-                        cache_key=cache_key,
-                        cached_price=CachedPriceEntry(
-                            price=usd_price,
-                            time=ts_now(),
-                            oracle=oracle,
-                            used_main_currency=False,  # function is for usd only, so it doesn't matter  # noqa: E501
-                        ),
+                if (
+                    underlying_tokens is not None and
+                    asset.evm_address in (x.address for x in underlying_tokens)
+                ):
+                    Inquirer._msg_aggregator.add_error(
+                        f'Token {asset} has itself as underlying token. Please edit the '
+                        'asset to fix it. Price queries will not work until this is done.',
                     )
-                    return usd_price, oracle, False
+                else:
+                    result, oracle = get_underlying_asset_price(asset)
+                    if result is not None:
+                        Inquirer.set_cached_price(
+                            cache_key=cache_key,
+                            cached_price=CachedPriceEntry(
+                                price=(usd_price := Price(result)),
+                                time=ts_now(),
+                                oracle=oracle,
+                            ),
+                        )
+                        return usd_price, oracle
                 # else known protocol on-chain query failed. Continue to external oracles
 
-        # BSQ is a special asset that doesn't have oracle information but its custom API
         if asset == A_BSQ:
-            try:
-                bsq = A_BSQ.resolve_to_crypto_asset()
-            except (UnknownAsset, WrongAssetType):
-                log.error('Asked for BSQ price but BSQ is missing or misclassified in the global DB')  # noqa: E501
-                return ZERO_PRICE, oracle, False
-
-            try:
-                price_in_btc = get_bisq_market_price(bsq)
-                btc_price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_BTC)
-                usd_price = Price(price_in_btc * btc_price)
-                Inquirer.set_cached_price(
-                    cache_key=cache_key,
-                    cached_price=CachedPriceEntry(
-                        price=usd_price,
-                        time=ts_now(),
-                        oracle=oracle,
-                        used_main_currency=False,  # this is for usd only, so it doesn't matter
-                    ),
-                )
-            except (RemoteError, DeserializationError) as e:
-                msg = f'Could not find price for BSQ. {e!s}'
-                Inquirer._msg_aggregator.add_warning(msg)
-                return Price(BTC_PER_BSQ * price_in_btc), CurrentPriceOracle.BLOCKCHAIN, False
-            else:
-                return usd_price, oracle, False
+            # BSQ is defined as 100 satohis but can be traded. Before we were using an api
+            # to query the BSQ market but it isn't available anymore so we assume BTC_PER_BSQ
+            # to obtain a price based on BTC price.
+            btc_price = Inquirer.find_usd_price(A_BTC)
+            return Price(BTC_PER_BSQ * btc_price), CurrentPriceOracle.BLOCKCHAIN
 
         if asset == A_KFEE:
             # KFEE is a kraken special asset where 1000 KFEE = 10 USD
-            return Price(FVal(0.01)), CurrentPriceOracle.FIAT, False
+            return Price(FVal(0.01)), CurrentPriceOracle.FIAT
 
         # continue, price can be found by one of the oracles (CC for example)
-        price, oracle, used_main_currency = Inquirer._query_oracle_instances(
+        price, oracle = Inquirer._query_oracle_instances(
             from_asset=asset,
             to_asset=A_USD,
             coming_from_latest_price=coming_from_latest_price,
             skip_onchain=skip_onchain,
-            match_main_currency=match_main_currency,
         )
-        return price, oracle, used_main_currency
+        return price, oracle
 
     def find_lp_price_from_uniswaplike_pool(
             self,
@@ -794,10 +911,7 @@ class Inquirer:
             block_identifier='latest',
         )
 
-    def find_curve_pool_price(
-            self,
-            lp_token: EvmToken,
-    ) -> Price | None:
+    def find_curve_pool_price(self, lp_token: EvmToken) -> Price | None:
         """
         1. Obtain the pool for this token
         2. Obtain total supply of lp tokens
@@ -811,29 +925,41 @@ class Inquirer:
         May raise:
         - RemoteError
         """
-        ethereum = self.get_evm_manager(chain_id=ChainID.ETHEREUM)
-        ethereum.assure_curve_cache_is_queried_and_decoder_updated()  # type:ignore  # ethereum is an EthereumManager here
+        assert lp_token.chain_id in CURVE_CHAIN_IDS, f'{lp_token} is not on a curve supported chain'  # noqa: E501
+        chain_id = cast('CURVE_CHAIN_ID_TYPE', lp_token.chain_id)
+        evm_manager = self.get_evm_manager(chain_id=chain_id)
+        evm_manager.assure_curve_cache_is_queried_and_decoder_updated(
+            node_inquirer=evm_manager.node_inquirer,
+            transactions_decoder=evm_manager.transactions_decoder,
+        )
 
         with GlobalDBHandler().conn.read_ctx() as cursor:
             pool_address_in_cache = globaldb_get_unique_cache_value(
                 cursor=cursor,
-                key_parts=(CacheType.CURVE_POOL_ADDRESS, lp_token.evm_address),
+                key_parts=(CacheType.CURVE_POOL_ADDRESS, str(chain_id.serialize_for_db()), lp_token.evm_address),  # noqa: E501
             )
             if pool_address_in_cache is None:
                 return None
-            # pool address is guaranteed to be checksumed due to how we save it
+            # pool address is guaranteed to be checksummed due to how we save it
             pool_address = string_to_evm_address(pool_address_in_cache)
-            pool_tokens_addresses = read_curve_pool_tokens(cursor=cursor, pool_address=pool_address)  # noqa: E501
+            pool_tokens_addresses = read_curve_pool_tokens(
+                cursor=cursor,
+                pool_address=pool_address,
+                chain_id=chain_id,
+            )
 
         tokens: list[EvmToken] = []
         try:  # Translate addresses to tokens
             for token_address_str in pool_tokens_addresses:
                 token_address = string_to_evm_address(token_address_str)
-                if token_address == '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE':
+                if token_address == ETH_SPECIAL_ADDRESS:
                     tokens.append(self.weth)
                 else:
-                    token_identifier = ethaddress_to_identifier(token_address)
-                    tokens.append(EvmToken(token_identifier))
+                    tokens.append(EvmToken(evm_address_to_identifier(
+                        address=token_address,
+                        chain_id=chain_id,
+                        token_type=EvmTokenKind.ERC20,
+                    )))
         except UnknownAsset:
             return None
 
@@ -852,25 +978,25 @@ class Inquirer:
         # Query total supply of the LP token
         contract = EvmContract(
             address=lp_token.evm_address,
-            abi=ethereum.node_inquirer.contracts.abi('ERC20_TOKEN'),
+            abi=evm_manager.node_inquirer.contracts.abi('ERC20_TOKEN'),
             deployed_block=0,
         )
         total_supply = contract.call(
-            node_inquirer=ethereum.node_inquirer,
+            node_inquirer=evm_manager.node_inquirer,
             method_name='totalSupply',
         )
 
         # Query balances for each token in the pool
         contract = EvmContract(
             address=pool_address,
-            abi=ethereum.node_inquirer.contracts.abi('CURVE_POOL'),
+            abi=evm_manager.node_inquirer.contracts.abi('CURVE_POOL'),
             deployed_block=0,
         )
         calls = [
             (pool_address, contract.encode(method_name='balances', arguments=[i]))
             for i in range(len(tokens))
         ]
-        output = ethereum.node_inquirer.multicall_2(
+        output = evm_manager.node_inquirer.multicall_2(
             require_success=False,
             calls=calls,
         )
@@ -915,12 +1041,80 @@ class Inquirer:
 
         return (total_assets_value / total_supply) * (10 ** lp_token.get_decimals())
 
+    def find_gearbox_price(self, token: EvmToken) -> Price | None:
+        node_inquirer = self.get_evm_manager(chain_id=token.chain_id).node_inquirer
+        underlying_token = None
+        farming_tokens = {token.farming_pool_token for token in read_gearbox_data_from_cache(token.chain_id)[0].values()}  # noqa: E501
+        if token in farming_tokens:
+            farming_contract = EvmContract(
+                address=token.evm_address,
+                abi=node_inquirer.contracts.abi('GEARBOX_FARMING_POOL'),
+                deployed_block=0,  # not used here
+            )
+            try:
+                lp_token = farming_contract.call(node_inquirer=node_inquirer, method_name='stakingToken')  # noqa: E501
+                lp_token = deserialize_evm_address(lp_token)
+            except (RemoteError, BlockchainQueryError, DeserializationError) as e:
+                log.error(f'Failed to query stakingToken method in {node_inquirer.chain_name} Gearbox Pool {token.evm_address}. {e!s}')  # noqa: E501
+                return None
+        else:
+            lp_token = token.evm_address
+
+        with GlobalDBHandler().conn.read_ctx() as cursor:
+            maybe_underlying_tokens = GlobalDBHandler.fetch_underlying_tokens(
+                cursor=cursor,
+                parent_token_identifier=token.identifier,
+            )
+        lp_contract = EvmContract(
+            address=lp_token,
+            abi=node_inquirer.contracts.abi('GEARBOX_LP'),
+            deployed_block=0,  # not used here
+        )
+        # check if the underlying token is in the DB, otherwise query the chain
+        # and store it in the DB and use it
+        if maybe_underlying_tokens is None or len(maybe_underlying_tokens) != 1:
+            if (
+                underlying_token := ensure_gearbox_lp_underlying_tokens(
+                    token_identifier=token.identifier,
+                    node_inquirer=node_inquirer,
+                    lp_contract=lp_contract,
+                )
+            ) is None:
+                log.error(f'Failed to query underlying tokens of {node_inquirer.chain_name} {token.evm_address} Gearbox pool.')  # noqa: E501
+                return None
+        else:  # Use the existing underlying token by converting its address to a Token
+            underlying_token = EvmToken(
+                evm_address_to_identifier(
+                    address=maybe_underlying_tokens[0].address,
+                    chain_id=token.chain_id,
+                    token_type=EvmTokenKind.ERC20,
+                ),
+            )
+
+        try:
+            price_per_share = lp_contract.call(
+                node_inquirer=node_inquirer,
+                method_name='convertToAssets',
+                arguments=[10 ** (decimals := token.get_decimals())],
+            )
+        except (RemoteError, BlockchainQueryError) as e:
+            log.error(f'Failed to query convertToAssets method in {node_inquirer.chain_name} Gearbox pool {lp_token}. {e!s}')  # noqa: E501
+        else:
+            underlying_token_price = self.find_usd_price(underlying_token)
+            if underlying_token_price == ZERO_PRICE:
+                log.error(f'Could not calculate price for {node_inquirer.chain_name} {lp_token} due to inability to fetch price for {underlying_token.identifier}.')  # noqa: E501
+                return None
+            return Price(price_per_share * underlying_token_price / 10 ** decimals)
+
+        return None
+
     def find_yearn_price(
             self,
             token: EvmToken,
+            vault_abi: Literal['YEARN_VAULT_V3', 'YEARN_VAULT_V2'],
     ) -> Price | None:
         """
-        Query price for a yearn vault v2 token using the pricePerShare method
+        Query price for a yearn vault v2 or v3 token using the pricePerShare method
         and the price of the underlying token.
         """
         ethereum = self.get_evm_manager(chain_id=ChainID.ETHEREUM)
@@ -930,7 +1124,7 @@ class Inquirer:
 
         contract = EvmContract(
             address=token.evm_address,
-            abi=ethereum.node_inquirer.contracts.abi('YEARN_VAULT_V2'),
+            abi=ethereum.node_inquirer.contracts.abi(vault_abi),
             deployed_block=0,
         )
         if maybe_underlying_tokens is None or len(maybe_underlying_tokens) != 1:
@@ -961,19 +1155,25 @@ class Inquirer:
                     f'Error fetching ethereum token {underlying_token_address} while '
                     f'detecting underlying tokens of {token.evm_address!s}: {e!s}',
                 )
+                return None
+
             # store it in the DB, so next time no need to query chain
             with globaldb.conn.write_ctx() as write_cursor:
-                globaldb._add_underlying_tokens(
-                    write_cursor=write_cursor,
-                    parent_token_identifier=token.identifier,
-                    underlying_tokens=[
-                        UnderlyingToken(
-                            address=underlying_token_address,
-                            token_kind=EvmTokenKind.ERC20,  # this may be a guess here
-                            weight=ONE,  # all yearn vaults have single underlying
-                        )],
-                    chain_id=ChainID.ETHEREUM,
-                )
+                try:
+                    globaldb._add_underlying_tokens(
+                        write_cursor=write_cursor,
+                        parent_token_identifier=token.identifier,
+                        underlying_tokens=[
+                            UnderlyingToken(
+                                address=underlying_token_address,
+                                token_kind=EvmTokenKind.ERC20,  # this may be a guess here
+                                weight=ONE,  # all yearn vaults have single underlying
+                            )],
+                        chain_id=ChainID.ETHEREUM,
+                    )
+                except InputError as e:
+                    log.error(f'Failed to add yearn underlying token {underlying_token_address} for {token.identifier} due to: {e}')  # noqa: E501
+                    return None
         else:
             underlying_token = EvmToken(ethaddress_to_identifier(maybe_underlying_tokens[0].address))  # noqa: E501
 
@@ -981,17 +1181,92 @@ class Inquirer:
         # Get the price per share from the yearn contract
         contract = EvmContract(
             address=token.evm_address,
-            abi=ethereum.node_inquirer.contracts.abi('YEARN_VAULT_V2'),
+            abi=ethereum.node_inquirer.contracts.abi(vault_abi),
             deployed_block=0,
         )
         try:
             price_per_share = contract.call(ethereum.node_inquirer, 'pricePerShare')
         except (RemoteError, BlockchainQueryError) as e:
-            log.error(f'Failed to query pricePerShare method in Yearn v2 Vault. {e!s}')
+            log.error(f'Failed to query pricePerShare method for Yearn vault {token}. {e!s}')
         else:
             return Price(price_per_share * underlying_token_price / 10 ** token.get_decimals())
 
         return None
+
+    def find_yearn_staking_price(self, token: EvmToken) -> Price | None:
+        """Find prices for staked yearn tokens
+        Those tokens are confirmed to be 1:1 with the underlying token.
+        There are 3 types of vaults reported by the API but all of them respect
+        the proportion 1:1.
+
+        The tokens representing staked yearn vaults have the protocol `YEARN_STAKING_PROTOCOL`
+        and as underlying token they have a Yearn Vault token. The information is populated
+        by calling the yearn API. Until the yearn vault api cache creation runs the price is
+        not reliable.
+        """
+        if (
+            token.underlying_tokens is None or
+            len(token.underlying_tokens) == 0 or
+            token.protocol != YEARN_STAKING_PROTOCOL
+        ):
+            log.error(f'Logic to query staked yearn vault price with a malformed token {token}')
+            return None
+
+        try:
+            vault = EvmToken(evm_address_to_identifier(
+                address=token.underlying_tokens[0].address,
+                chain_id=token.chain_id,
+            ))
+        except UnknownAsset:
+            log.error(f'Unknown vault for yearn staked token {token}. {token.underlying_tokens[0].address=}')  # noqa: E501
+            return None
+
+        return get_underlying_asset_price(vault)[0]
+
+    def find_hop_lp_price(self, lp_token: EvmToken) -> Price | None:
+        """Returns the price of a hop lp token fetched from the pool contract"""
+        with GlobalDBHandler().conn.read_ctx() as cursor:
+            if (amm_address := globaldb_get_unique_cache_value(
+                cursor=cursor,
+                key_parts=(
+                    CacheType.HOP_POOL_ADDRESS,
+                    str(lp_token.chain_id.value),
+                    lp_token.evm_address,
+                ),
+            )) is None:
+                log.error(
+                    f'Could not find the pool address of Hop LP token {lp_token.evm_address!s} on '
+                    f'{lp_token.chain_id!s}. Skipping its price query',
+                )
+                return ZERO_PRICE
+
+        # Query virtual price from the pool contract
+        evm_manager = self.get_evm_manager(chain_id=lp_token.chain_id)
+        contract = EvmContract(
+            address=string_to_evm_address(amm_address),
+            abi=evm_manager.node_inquirer.contracts.abi('HOP_POOL'),
+            deployed_block=0,
+        )
+        try:
+            # return price of pool_token * virtual price of lp_token
+            return self.find_usd_price(Asset(evm_address_to_identifier(
+                address=deserialize_evm_address(contract.call(
+                    node_inquirer=evm_manager.node_inquirer,
+                    method_name='getToken',
+                    arguments=[0],
+                )),
+                chain_id=lp_token.chain_id,
+                token_type=EvmTokenKind.ERC20,
+            ))) * FVal(contract.call(
+                node_inquirer=evm_manager.node_inquirer,
+                method_name='getVirtualPrice',
+            )) / 10 ** lp_token.get_decimals()
+        except DeserializationError as e:
+            log.error(f'Failed to deserialize Hop pool token address of {amm_address!s} in {evm_manager.node_inquirer.chain_name!s}. {e!s}')  # noqa: E501
+            return ZERO_PRICE
+        except RemoteError as e:
+            log.error(f'Failed to query virtual price of Hop lp token {lp_token.evm_address!s} in {evm_manager.node_inquirer.chain_name!s}. {e!s}')  # noqa: E501
+            return ZERO_PRICE
 
     @staticmethod
     def get_fiat_usd_exchange_rates(currencies: Iterable[FiatAsset]) -> dict[FiatAsset, Price]:
@@ -1061,7 +1336,7 @@ class Inquirer:
             )
             return None
 
-        log.debug('Historical fiat exchange rate query succesful', rate=rate)
+        log.debug('Historical fiat exchange rate query successful', rate=rate)
         return rate
 
     @staticmethod
@@ -1137,3 +1412,18 @@ class Inquirer:
         raise RemoteError(
             f'Could not find a current {base.identifier} price for {quote.identifier}',
         )
+
+    @staticmethod
+    def clear() -> None:
+        """
+        ensure that we don't have oracles that depend on the logged
+        in user. Calling `set_oracles_order` if we want to use the Inquirer
+        again is required.
+        """
+        inquirer = Inquirer()
+        inquirer._uniswapv2 = None
+        inquirer._uniswapv3 = None
+        del inquirer._oracle_instances
+        del inquirer._oracles
+        del inquirer._oracle_instances_not_onchain
+        del inquirer._oracles_not_onchain

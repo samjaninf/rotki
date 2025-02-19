@@ -1,5 +1,9 @@
+from typing import TYPE_CHECKING
+
 import pytest
 
+from rotkehlchen.chain.ethereum.oracles.uniswap import UniswapV2Oracle, UniswapV3Oracle
+from rotkehlchen.externalapis.alchemy import Alchemy
 from rotkehlchen.externalapis.coingecko import Coingecko
 from rotkehlchen.externalapis.cryptocompare import Cryptocompare
 from rotkehlchen.externalapis.defillama import Defillama
@@ -7,6 +11,10 @@ from rotkehlchen.history.manager import HistoryQueryingManager
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.history.types import DEFAULT_HISTORICAL_PRICE_ORACLES_ORDER
 from rotkehlchen.tests.utils.history import maybe_mock_historical_price_queries
+from rotkehlchen.types import ApiKey, ExternalService, ExternalServiceApiCredentials
+
+if TYPE_CHECKING:
+    from rotkehlchen.db.dbhandler import DBHandler
 
 
 @pytest.fixture(name='cryptocompare')
@@ -16,12 +24,35 @@ def fixture_cryptocompare(database):
 
 @pytest.fixture(scope='session', name='session_coingecko')
 def fixture_session_coingecko():
-    return Coingecko()
+    return Coingecko(database=None)
+
+
+@pytest.fixture(name='alchemy')
+def fixture_alchemy(database: 'DBHandler'):
+    with database.user_write() as write_cursor:
+        database.add_external_service_credentials(
+            write_cursor=write_cursor,
+            credentials=[ExternalServiceApiCredentials(
+                service=ExternalService.ALCHEMY,
+                api_key=ApiKey('dummy-api-key'),
+            )],
+        )
+    return Alchemy(database=database)
 
 
 @pytest.fixture(scope='session', name='session_defillama')
 def fixture_defillama():
-    return Defillama()
+    return Defillama(database=None)
+
+
+@pytest.fixture(name='uniswapv2_inquirer')
+def fixture_uniswapv2():
+    return UniswapV2Oracle()
+
+
+@pytest.fixture(name='uniswapv3_inquirer')
+def fixture_uniswapv3():
+    return UniswapV3Oracle()
 
 
 @pytest.fixture(name='historical_price_oracles_order')
@@ -39,15 +70,18 @@ def fixture_force_no_price_found_for():
     return []
 
 
-@pytest.fixture()
+@pytest.fixture
 def price_historian(
         data_dir,
-        inquirer,  # pylint: disable=unused-argument
+        inquirer_defi,  # pylint: disable=unused-argument
         should_mock_price_queries,
         mocked_price_queries,
         cryptocompare,
         session_coingecko,
+        alchemy,
         session_defillama,
+        uniswapv2_inquirer,
+        uniswapv3_inquirer,
         default_mock_price_value,
         historical_price_oracles_order,
         dont_mock_price_for,
@@ -60,7 +94,10 @@ def price_historian(
         data_directory=data_dir,
         cryptocompare=cryptocompare,
         coingecko=session_coingecko,
+        alchemy=alchemy,
         defillama=session_defillama,
+        uniswapv2=uniswapv2_inquirer,
+        uniswapv3=uniswapv3_inquirer,
     )
     historian.set_oracles_order(historical_price_oracles_order)
     maybe_mock_historical_price_queries(
@@ -83,11 +120,10 @@ def fixture_history_querying_manager(
         blockchain,
         exchange_manager,
 ):
-    historian = HistoryQueryingManager(
+    return HistoryQueryingManager(
         user_directory=data_dir,
         db=database,
         msg_aggregator=function_scope_messages_aggregator,
         exchange_manager=exchange_manager,
         chains_aggregator=blockchain,
     )
-    return historian

@@ -11,7 +11,6 @@ from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
 
-
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
@@ -56,15 +55,6 @@ class AaveBalances(NamedTuple):
     borrowing: dict[CryptoAsset, AaveBorrowingBalance]
 
 
-def asset_to_aave_reserve_address(asset: CryptoAsset) -> ChecksumEvmAddress | None:
-    if asset == A_ETH:  # for v2 this should be WETH
-        return ETH_SPECIAL_ADDRESS
-
-    token = EvmToken(asset.identifier)
-    assert token, 'should not be a non token asset at this point'
-    return token.evm_address
-
-
 def asset_to_atoken(asset: CryptoAsset, version: int) -> EvmToken | None:
     if asset == A_ETH:
         return A_AETH_V1.resolve_to_evm_token()
@@ -74,7 +64,7 @@ def asset_to_atoken(asset: CryptoAsset, version: int) -> EvmToken | None:
         result = cursor.execute(
             'SELECT A.identifier from evm_tokens as A LEFT OUTER JOIN common_asset_details as B '
             'WHERE A.protocol==? AND A.identifier=B.identifier AND B.symbol=?',
-            (protocol, 'a' + asset.symbol),
+            (protocol, 'a' + asset.symbol.upper()),  # upper is needed since sUSD has aSUSD
         ).fetchall()
     if len(result) != 1:
         log.error(f'Could not derive atoken from {asset} since multiple or no results were returned')  # noqa: E501

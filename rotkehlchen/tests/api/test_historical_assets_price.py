@@ -5,9 +5,13 @@ from typing import Any
 import pytest
 import requests
 
+from rotkehlchen.api.server import APIServer
 from rotkehlchen.constants import ZERO
-from rotkehlchen.constants.assets import A_CRV, A_USD
+from rotkehlchen.constants.assets import A_BTC, A_CRV, A_ETH, A_USD
+from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.fval import FVal
+from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -15,6 +19,8 @@ from rotkehlchen.tests.utils.api import (
     assert_proper_sync_response_with_result,
     assert_simple_ok_response,
 )
+from rotkehlchen.tests.utils.constants import A_GBP
+from rotkehlchen.types import Price, Timestamp
 
 
 @pytest.mark.parametrize('mocked_price_queries', [{
@@ -33,7 +39,7 @@ from rotkehlchen.tests.utils.api import (
     },
     'XRP': {'USD': {1611166335: FVal('0')}},
 }])
-def test_get_historical_assets_price(rotkehlchen_api_server):
+def test_get_historical_assets_price(rotkehlchen_api_server: APIServer) -> None:
     """Test given a list of asset-timestamp tuples it returns the asset price
     at the given timestamp.
     """
@@ -106,7 +112,10 @@ def _assert_expected_prices(
     assert data == expected_data
 
 
-def test_manual_historical_price(rotkehlchen_api_server, globaldb):
+def test_manual_historical_price(
+        rotkehlchen_api_server: APIServer,
+        globaldb: GlobalDBHandler,
+    ) -> None:
     # Test normal price
     response = requests.put(
         api_url_for(
@@ -124,9 +133,10 @@ def test_manual_historical_price(rotkehlchen_api_server, globaldb):
     historical_price = globaldb.get_historical_price(
         from_asset=A_CRV,
         to_asset=A_USD,
-        timestamp=1611166335,
+        timestamp=Timestamp(1611166335),
         max_seconds_distance=10,
     )
+    assert historical_price is not None
     assert historical_price.price == FVal(1.2)
     assert historical_price.from_asset == A_CRV.identifier
     assert historical_price.to_asset == A_USD
@@ -147,9 +157,10 @@ def test_manual_historical_price(rotkehlchen_api_server, globaldb):
     historical_price = globaldb.get_historical_price(
         from_asset=A_CRV,
         to_asset=A_USD,
-        timestamp=1631166335,
+        timestamp=Timestamp(1631166335),
         max_seconds_distance=10,
     )
+    assert historical_price is not None
     assert historical_price.price == ZERO
     assert historical_price.from_asset == A_CRV.identifier
     assert historical_price.to_asset == A_USD
@@ -333,3 +344,103 @@ def test_manual_historical_price(rotkehlchen_api_server, globaldb):
         status_code=HTTPStatus.CONFLICT,
         result_exists=True,
     )
+
+
+def test_historical_price_cache_only(
+        rotkehlchen_api_server: APIServer,
+        globaldb: GlobalDBHandler,
+) -> None:
+    """Test querying only cached historical prices with different cache periods
+
+    Test that:
+    1. With only_cache_period we get only cached prices that fall within +/- cache_period
+       of the queried timestamp
+    2. Missing prices are not shown in the response
+    3. Invalid cache period fails properly
+    """
+    globaldb.add_historical_prices(entries=[
+        HistoricalPrice(
+            from_asset=A_BTC,
+            to_asset=A_USD,
+            timestamp=Timestamp(1579543935),
+            price=Price(FVal('30000')),
+            source=HistoricalPriceOracle.CRYPTOCOMPARE,
+        ),
+        HistoricalPrice(
+            from_asset=A_BTC,
+            to_asset=A_USD,
+            timestamp=Timestamp(1579543935 + 2000),
+            price=Price(FVal('31000')),
+            source=HistoricalPriceOracle.CRYPTOCOMPARE,
+        ),
+        HistoricalPrice(
+            from_asset=A_ETH,
+            to_asset=A_USD,
+            timestamp=Timestamp(1579543935),
+            price=Price(FVal('1400')),
+            source=HistoricalPriceOracle.CRYPTOCOMPARE,
+        ),
+        HistoricalPrice(
+            from_asset=A_GBP,
+            to_asset=A_USD,
+            timestamp=Timestamp(1579543935),
+            price=ZERO_PRICE,
+            source=HistoricalPriceOracle.CRYPTOCOMPARE,
+        ),
+    ])
+
+    # Test 1: Query with 1000-second cache period
+    response = requests.post(
+        api_url_for(
+            rotkehlchen_api_server,
+            'historicalassetspriceresource',
+        ),
+        json={
+            'assets_timestamp': [
+                ['BTC', 1579543935],  # exact match with first entry
+                ['BTC', 1579544435],  # 500s after first entry
+                ['BTC', 1579545935],  # 2000s after first entry
+                ['BTC', 1579544935],  # 1000s after first entry
+                ['BTC', 1579543435],  # 500s before first entry
+                ['BTC', 1579542935],  # 1000s before first entry
+                ['BTC', 1579542435],  # 1500s before first entry
+                ['ETH', 1579543935],  # exact match
+                ['XRP', 1579543935],  # no data in DB, no data is returned
+                ['GBP', 1579543935],  # exact match
+            ],
+            'target_asset': 'USD',
+            'only_cache_period': 1000,  # +/- 1000 seconds range
+        },
+    )
+
+    result = assert_proper_sync_response_with_result(response)
+    assert result['assets']['BTC'] == {
+        '1579543935': '30000',  # exact match first entry
+        '1579544435': '30000',  # within range of first entry
+        '1579545935': '31000',  # exact match second entry
+        '1579544935': '30000',  # at edge of first entry's range
+        '1579543435': '30000',  # within range of first entry
+        '1579542935': '30000',  # at edge of first entry's range
+    }
+    assert result['assets']['ETH'] == {'1579543935': '1400'}  # exact match
+    assert result['assets']['GBP'] == {'1579543935': '0'}  # exact match
+    assert result['target_asset'] == 'USD'
+
+    # Test 3: Test invalid cache period & zero cache
+    for i in [-1, 0]:
+        response = requests.post(
+            api_url_for(
+                rotkehlchen_api_server,
+                'historicalassetspriceresource',
+            ),
+            json={
+                'assets_timestamp': [['BTC', 1579543935]],
+                'target_asset': 'USD',
+                'only_cache_period': i,  # negative period or zero value
+            },
+        )
+        assert_error_response(
+            response=response,
+            contained_in_msg='Cache period must be a positive integer',
+            status_code=HTTPStatus.BAD_REQUEST,
+        )

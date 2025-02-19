@@ -1,22 +1,30 @@
 <script setup lang="ts">
-import {
-  type DefiProtocol,
-  type Module,
-  isDefiProtocol,
-} from '@/types/modules';
+import { type DefiProtocol, type Module, isDefiProtocol } from '@/types/modules';
 import { Section } from '@/types/status';
+import { useStatusStore } from '@/store/status';
+import { useDefiLending } from '@/composables/defi/lending';
+import FullSizeContent from '@/components/common/FullSizeContent.vue';
+import LoanInfo from '@/components/defi/loan/LoanInfo.vue';
+import DefiProtocolSelector from '@/components/defi/DefiProtocolSelector.vue';
+import DefiSelectorItem from '@/components/defi/DefiSelectorItem.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import StatCardColumn from '@/components/display/StatCardColumn.vue';
+import StatCardWide from '@/components/display/StatCardWide.vue';
+import ProgressScreen from '@/components/helper/ProgressScreen.vue';
+import ActiveModules from '@/components/defi/ActiveModules.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 
 defineProps<{
   modules: Module[];
 }>();
 
 const selection = ref<string>();
-const protocol = ref<DefiProtocol | null>(null);
+const protocol = ref<DefiProtocol>();
 const defiLending = useDefiLending();
 const route = useRoute();
 const { t } = useI18n();
 
-const { shouldShowLoadingScreen, isLoading } = useStatusStore();
+const { isLoading, shouldShowLoadingScreen } = useStatusStore();
 
 const loading = shouldShowLoadingScreen(Section.DEFI_BORROWING);
 
@@ -37,10 +45,7 @@ const summary = computed(() => {
   return get(defiLending.loanSummary(protocols));
 });
 
-const refreshing = logicOr(
-  isLoading(Section.DEFI_BORROWING),
-  isLoading(Section.DEFI_BORROWING_HISTORY),
-);
+const refreshing = logicOr(isLoading(Section.DEFI_BORROWING), isLoading(Section.DEFI_BORROWING_HISTORY));
 
 async function refresh() {
   await defiLending.fetchBorrowing(true);
@@ -55,7 +60,7 @@ onMounted(async () => {
   await defiLending.fetchBorrowing(false);
 });
 
-const refreshTooltip: ComputedRef<string> = computed(() =>
+const refreshTooltip = computed<string>(() =>
   t('helpers.refresh_header.tooltip', {
     title: t('borrowing.header').toLocaleLowerCase(),
   }),
@@ -77,7 +82,7 @@ const refreshTooltip: ComputedRef<string> = computed(() =>
               @click="refresh()"
             >
               <template #prepend>
-                <RuiIcon name="refresh-line" />
+                <RuiIcon name="lu-refresh-ccw" />
               </template>
               {{ t('common.refresh') }}
             </RuiButton>
@@ -97,6 +102,13 @@ const refreshTooltip: ComputedRef<string> = computed(() =>
       v-else
       class="flex flex-col gap-4"
     >
+      <RuiAlert
+        type="warning"
+        :title="t('common.important_notice')"
+        class="mb-2"
+      >
+        {{ t('decentralized_overview.deprecated_warning') }}
+      </RuiAlert>
       <StatCardWide>
         <StatCardColumn>
           <template #title>

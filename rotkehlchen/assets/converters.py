@@ -54,8 +54,7 @@ def asset_from_kraken(kraken_name: str) -> AssetWithOracles:
             while kraken_name[-1].isdigit():  # get rid of bonded number days assets
                 kraken_name = kraken_name[:-1]  # see https://github.com/rotki/rotki/issues/6587
 
-    if kraken_name.endswith('.HOLD'):
-        kraken_name = kraken_name[:-5]
+    kraken_name = kraken_name.removesuffix('.HOLD')
 
     # Some names are not in the map since kraken can have multiple representations
     # depending on the pair for the same asset. For example XXBT and XBT, XETH and ETH,
@@ -208,7 +207,7 @@ def asset_from_coinbase(cb_name: str, time: Timestamp | None = None) -> AssetWit
 
     return symbol_to_asset_or_token(GlobalDBHandler.get_assetid_from_exchange_name(
         exchange=Location.COINBASE,
-        symbol=cb_name,
+        symbol=cb_name.upper(),  # the upper is needed since Coinbase Prime uses lower case symbols in some places  # noqa: E501
         default=cb_name,
     ))
 
@@ -436,6 +435,37 @@ def asset_from_common_identifier(common_identifier: str) -> AssetWithOracles:
     ))
 
 
+def asset_from_htx(htx_name: str) -> AssetWithOracles:
+    """May raise:
+    - DeserializationError
+    - UnsupportedAsset
+    - UnknownAsset
+    """
+    if not isinstance(htx_name, str):
+        raise DeserializationError(f'Got non-string type {type(htx_name)} for HTX asset')
+
+    htx_name = htx_name.upper()
+    return symbol_to_asset_or_token(GlobalDBHandler.get_assetid_from_exchange_name(
+        exchange=Location.HTX,
+        symbol=htx_name,
+        default=htx_name,
+    ))
+
+
+def asset_from_bitcoinde(bitcoinde: str) -> AssetWithOracles:
+    """May raise:
+    - DeserializationError
+    - UnsupportedAsset
+    - UnknownAsset
+    """
+    bitcoinde = bitcoinde.upper()
+    return symbol_to_asset_or_token(GlobalDBHandler.get_assetid_from_exchange_name(
+        exchange=Location.BITCOINDE,
+        symbol=bitcoinde,
+        default=bitcoinde,
+    ))
+
+
 LOCATION_TO_ASSET_MAPPING: dict[Location, Callable[[str], AssetWithOracles]] = {
     Location.BINANCE: asset_from_binance,
     Location.CRYPTOCOM: asset_from_cryptocom,
@@ -451,5 +481,7 @@ LOCATION_TO_ASSET_MAPPING: dict[Location, Callable[[str], AssetWithOracles]] = {
     Location.KUCOIN: asset_from_kucoin,
     Location.OKX: asset_from_okx,
     Location.WOO: asset_from_woo,
+    Location.HTX: asset_from_htx,
+    Location.BITCOINDE: asset_from_bitcoinde,
     Location.EXTERNAL: asset_from_common_identifier,
 }

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useEventsQueryStatus } from '@/composables/history/events/query-status/events-query-status';
+import HistoryQueryStatusCurrent from '@/components/history/events/HistoryQueryStatusCurrent.vue';
+
 const props = withDefaults(
   defineProps<{
     locations?: string[];
@@ -12,8 +15,7 @@ const { locations } = toRefs(props);
 
 const { t } = useI18n();
 
-const { queryingLength, length, isAllFinished }
-  = useEventsQueryStatus(locations);
+const { isAllFinished, length, queryingLength } = useEventsQueryStatus(locations);
 </script>
 
 <template>
@@ -23,9 +25,7 @@ const { queryingLength, length, isAllFinished }
     </template>
 
     <template #running>
-      {{
-        t('transactions.query_status_events.group', queryingLength)
-      }}
+      {{ t('transactions.query_status_events.group', queryingLength) }}
     </template>
   </HistoryQueryStatusCurrent>
 </template>

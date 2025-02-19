@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import type { SubBlockchainTotal } from '@/types/blockchain';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
+import ListItem from '@/components/common/ListItem.vue';
 import type { ActionDataEntry } from '@/types/action';
+import type { SubBlockchainTotal } from '@/types/blockchain';
 
 withDefaults(
   defineProps<{
@@ -11,8 +15,6 @@ withDefaults(
     details: null,
   },
 );
-
-const css = useCssModule();
 </script>
 
 <template>
@@ -24,7 +26,7 @@ const css = useCssModule();
       :id="`${child.protocol}_box`"
       :key="child.protocol"
       class="blockchain-balance-box__item group py-1 pr-6"
-      :class="css['sub-item']"
+      :class="$style['sub-item']"
     >
       <template #avatar>
         <div class="grayscale group-hover:grayscale-0">

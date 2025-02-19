@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { BalanceType } from '@/types/balances';
-import { useSimpleVModel } from '@/utils/model';
 
-const props = defineProps<{ value: BalanceType }>();
+defineOptions({
+  inheritAttrs: false,
+});
 
-const emit = defineEmits<{ (e: 'input', value: BalanceType): void }>();
+const model = defineModel<BalanceType>({ required: true });
 
 const { t } = useI18n();
-
-const model = useSimpleVModel(props, emit);
 
 const balanceTypes = computed(() => [
   {

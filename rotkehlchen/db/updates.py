@@ -5,8 +5,8 @@ from sqlite3 import OperationalError
 from typing import TYPE_CHECKING, Any
 
 import requests
-
 from packaging import version as pversion
+
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.spam_assets import update_spam_assets
@@ -181,10 +181,23 @@ class RotkiDataUpdater:
             new_default_nodes=new_default_nodes,
         )
 
-    def update_accounting_rules(self, data: list[dict[str, Any]], version: int) -> None:
+    def update_accounting_rules(
+            self,
+            data: list[dict[str, Any]],
+            version: int,
+            force_updates: bool = True,
+    ) -> None:
         """
         Add remote rules to the user database. In case of conflict we notify the user sending
-        a ws message
+        a ws message unless this is a forced update.
+
+        The issue with not using forced updates is that we can't replace/edit older rules other
+        than just updating them until this accounting rule updating methodology is rethought.
+        https://github.com/orgs/rotki/projects/11?pane=issue&itemId=96831912
+
+        So at the moment the only way to update a rule is to just rewrite it with different
+        attributes and have it update.
+        TODO: This is hacky. At the moment it's always force updating.
         """
         log.info(f'Applying update for accounting rules to v{version}')
         rules_db = DBAccountingRules(self.user_db)
@@ -212,6 +225,7 @@ class RotkiDataUpdater:
                     counterparty=counterparty,
                     rule=rule,
                     links=rule_data.get('links', {}),
+                    force_update=force_updates,
                 )
             except InputError as e:
                 # there is a conflict in the rule. Notify the frontend about it
@@ -329,7 +343,7 @@ class RotkiDataUpdater:
                 continue
 
         with GlobalDBHandler().conn.write_ctx() as write_cursor:
-            db_addressbook.add_addressbook_entries(
+            db_addressbook.add_or_update_addressbook_entries(
                 write_cursor=write_cursor,
                 entries=entries_to_add,
             )
@@ -351,11 +365,11 @@ class RotkiDataUpdater:
                         raw_entry['asset'] = Asset(asset_id)
                     if (raw_location := raw_entry.get('location')) is not None:
                         raw_entry['location'] = Location.deserialize(raw_location)
-                    entries.append(entry_type.deserialize(raw_entry))  # type: ignore[attr-defined]  # deserialize is defined in both
+                    entries.append(entry_type.deserialize(raw_entry))
                 except DeserializationError as e:
                     log.error(f'Could not deserialize {entry_type.__name__} {raw_entry!s}: {e!s}')
 
-            update_function(entries=entries, skip_errors=True)  # type: ignore[operator]  # update_function is known
+            update_function(entries=entries, skip_errors=True)  # type: ignore  # entries/update function type varies
 
     def update_location_unsupported_assets(self, data: dict[str, dict[str, list[str]]], version: int) -> None:  # noqa: E501
         """Applies location unsupported assets updates in the global DB"""

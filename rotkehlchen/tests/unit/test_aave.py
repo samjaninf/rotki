@@ -3,19 +3,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from rotkehlchen.accounting.structures.balance import Balance
-from rotkehlchen.assets.asset import Asset, EvmToken
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.modules.aave.aave import Aave
-from rotkehlchen.chain.ethereum.modules.aave.common import AaveStats, asset_to_aave_reserve_address
-from rotkehlchen.chain.evm.constants import ETH_SPECIAL_ADDRESS
+from rotkehlchen.chain.ethereum.modules.aave.common import AaveStats
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE
-from rotkehlchen.constants.assets import A_ETH
-from rotkehlchen.constants.resolver import ethaddress_to_identifier
 from rotkehlchen.fval import FVal
-from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.premium.premium import Premium, PremiumCredentials
-from rotkehlchen.tests.utils.aave import ATOKENV1_TO_ASSET
-from rotkehlchen.types import ChainID, Timestamp, deserialize_evm_tx_hash
+from rotkehlchen.types import Timestamp, deserialize_evm_tx_hash
 from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
@@ -24,18 +18,7 @@ if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.history.price import PriceHistorian
     from rotkehlchen.inquirer import Inquirer
-
-
-def test_aave_reserve_mapping():
-    atokensv1 = GlobalDBHandler().get_evm_tokens(chain_id=ChainID.ETHEREUM, protocol='aave')
-    for token in atokensv1:
-        underlying_asset = ATOKENV1_TO_ASSET[token].resolve_to_crypto_asset()
-        if underlying_asset == A_ETH:
-            assert asset_to_aave_reserve_address(underlying_asset) == ETH_SPECIAL_ADDRESS
-            continue
-
-        assert EvmToken(ethaddress_to_identifier(underlying_asset.evm_address)) == underlying_asset
-        assert asset_to_aave_reserve_address(underlying_asset) == underlying_asset.evm_address
+    from rotkehlchen.premium.premium import Premium
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -47,7 +30,7 @@ def test_aave_v1_events_stats(
         database: 'DBHandler',
         ethereum_inquirer: 'EthereumInquirer',
         ethereum_transaction_decoder: 'EthereumTransactionDecoder',
-        rotki_premium_credentials: 'PremiumCredentials',
+        rotki_premium_object: 'Premium',
         username: str,
         inquirer: 'Inquirer',  # pylint: disable=unused-argument
         price_historian: 'PriceHistorian',  # pylint: disable=unused-argument
@@ -75,9 +58,10 @@ def test_aave_v1_events_stats(
     aave = Aave(
         ethereum_inquirer=ethereum_inquirer,
         database=database,
-        premium=Premium(credentials=rotki_premium_credentials, username=username),
+        premium=rotki_premium_object,
         msg_aggregator=database.msg_aggregator,
     )
+
     stats = aave.get_stats_for_addresses(
         addresses=[string_to_evm_address('0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12')],
         from_timestamp=Timestamp(0),

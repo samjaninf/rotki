@@ -19,18 +19,18 @@ const defaultFunc: Func = () => {};
 
 function defaultMessage(): ConfirmationMessage {
   return {
-    title: '',
     message: '',
-    type: 'warning',
     singleAction: false,
+    title: '',
+    type: 'warning',
   };
 }
 
 export const useConfirmStore = defineStore('confirm', () => {
   const visible = ref(false);
-  const confirmation: Ref<ConfirmationMessage> = ref(defaultMessage());
-  const onConfirm: Ref<Func> = ref(defaultFunc);
-  const onDismiss: Ref<Func> = ref(defaultFunc);
+  const confirmation = ref<ConfirmationMessage>(defaultMessage());
+  const onConfirm = ref<Func>(defaultFunc);
+  const onDismiss = ref<Func>(defaultFunc);
 
   const { start, stop } = useTimeoutFn(
     () => {
@@ -40,11 +40,7 @@ export const useConfirmStore = defineStore('confirm', () => {
     { immediate: false },
   );
 
-  const show = (
-    message: ConfirmationMessage,
-    onConfirmFunc: Func,
-    onDismissFunc?: Func,
-  ) => {
+  const show = (message: ConfirmationMessage, onConfirmFunc: Func, onDismissFunc?: Func): void => {
     set(confirmation, message);
     set(onConfirm, onConfirmFunc);
     if (onDismissFunc)
@@ -54,31 +50,31 @@ export const useConfirmStore = defineStore('confirm', () => {
     stop();
   };
 
-  const reset = () => {
+  const reset = (): void => {
     set(visible, false);
     set(onConfirm, defaultFunc);
     set(onDismiss, defaultFunc);
     start();
   };
 
-  const dismiss = async () => {
+  const dismiss = async (): Promise<void> => {
     const method = get(onDismiss);
     reset();
     await method();
   };
 
-  const confirm = async () => {
+  const confirm = async (): Promise<void> => {
     const method = get(onConfirm);
     reset();
     await method();
   };
 
   return {
-    visible,
-    confirmation,
     confirm,
-    show,
+    confirmation,
     dismiss,
+    show,
+    visible,
   };
 });
 

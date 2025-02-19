@@ -1,102 +1,92 @@
 <script setup lang="ts">
 import { helpers, required } from '@vuelidate/validators';
+import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
+import { bigNumberifyFromRef } from '@/utils/bignumbers';
+import { useRefPropVModel } from '@/utils/model';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
+import { useFormStateWatcher } from '@/composables/form';
 import type { ManualPriceFormPayload } from '@/types/prices';
+import type { ValidationErrors } from '@/types/api/errors';
 
-const props = withDefaults(
+const modelValue = defineModel<ManualPriceFormPayload>({ required: true });
+const errors = defineModel<ValidationErrors>('errorMessages', { required: true });
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+
+withDefaults(
   defineProps<{
-    value: ManualPriceFormPayload;
-    edit: boolean;
     disableFromAsset?: boolean;
+    editMode?: boolean;
   }>(),
   {
     disableFromAsset: false,
+    editMode: false,
   },
 );
 
-const emit = defineEmits<{
-  (e: 'input', price: Partial<ManualPriceFormPayload>): void;
-}>();
-
-const { value } = toRefs(props);
 const { assetSymbol } = useAssetInfoRetrieval();
 
-const fromAsset = computed(({ value }) => get(assetSymbol(value.fromAsset)));
-const toAsset = computed(({ value }) => get(assetSymbol(value.toAsset)));
+const fromAsset = useRefPropVModel(modelValue, 'fromAsset');
+const toAsset = useRefPropVModel(modelValue, 'toAsset');
+const price = useRefPropVModel(modelValue, 'price');
 
-const price = ref<string>('');
+const fromAssetSymbol = assetSymbol(fromAsset);
+const toAssetSymbol = assetSymbol(toAsset);
+
 const numericPrice = bigNumberifyFromRef(price);
-
-function input(price: Partial<ManualPriceFormPayload>) {
-  emit('input', { ...get(value), ...price });
-}
-
-watch(value, (val) => {
-  set(price, val.price);
-});
-
-watch(price, (val) => {
-  input({ price: val });
-});
-
-onMounted(() => {
-  set(price, get(value).price);
-});
 
 const { t } = useI18n();
 
 const rules = {
   fromAsset: {
-    required: helpers.withMessage(
-      t('price_form.from_non_empty').toString(),
-      required,
-    ),
-  },
-  toAsset: {
-    required: helpers.withMessage(
-      t('price_form.to_non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('price_form.from_non_empty'), required),
   },
   price: {
-    required: helpers.withMessage(
-      t('price_form.price_non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('price_form.price_non_empty'), required),
+  },
+  toAsset: {
+    required: helpers.withMessage(t('price_form.to_non_empty'), required),
   },
 };
 
-const { setValidation } = useLatestPriceForm();
+const states = {
+  fromAsset,
+  price,
+  toAsset,
+};
 
-const v$ = setValidation(
+const v$ = useVuelidate(
   rules,
-  {
-    fromAsset: computed(() => get(value).fromAsset),
-    toAsset: computed(() => get(value).toAsset),
-    price: computed(() => get(value).price),
-  },
-  { $autoDirty: true },
+  states,
+  { $autoDirty: true, $externalResults: errors },
 );
+
+useFormStateWatcher(states, stateUpdated);
+
+defineExpose({
+  validate: () => get(v$).$validate(),
+});
 </script>
 
 <template>
   <form class="flex flex-col gap-2">
     <div class="grid md:grid-cols-2 gap-x-4">
       <AssetSelect
-        :value="value.fromAsset"
+        v-model="fromAsset"
         :label="t('price_form.from_asset')"
         outlined
         include-nfts
-        :disabled="edit || disableFromAsset"
+        :disabled="editMode || disableFromAsset"
         :error-messages="toMessages(v$.fromAsset)"
-        @input="input({ fromAsset: $event })"
       />
       <AssetSelect
-        :value="value.toAsset"
+        v-model="toAsset"
         :label="t('price_form.to_asset')"
         outlined
         :error-messages="toMessages(v$.toAsset)"
-        @input="input({ toAsset: $event })"
       />
     </div>
     <AmountInput
@@ -105,20 +95,20 @@ const v$ = setValidation(
       :error-messages="toMessages(v$.price)"
       :label="t('common.price')"
     />
-    <i18n
-      v-if="price && fromAsset && toAsset"
+    <i18n-t
+      v-if="price && fromAssetSymbol && toAssetSymbol"
       tag="div"
-      path="price_form.latest.hint"
+      keypath="price_form.latest.hint"
       class="text-caption text-rui-success -mt-7 pb-1 pl-3"
     >
       <template #fromAsset>
         <strong>
-          {{ fromAsset }}
+          {{ fromAssetSymbol }}
         </strong>
       </template>
       <template #toAsset>
         <strong>
-          {{ toAsset }}
+          {{ toAssetSymbol }}
         </strong>
       </template>
       <template #price>
@@ -129,6 +119,6 @@ const v$ = setValidation(
           />
         </strong>
       </template>
-    </i18n>
+    </i18n-t>
   </form>
 </template>

@@ -1,80 +1,68 @@
 <script setup lang="ts">
-const props = withDefaults(
-  defineProps<{
-    title: string;
-    message: string;
-    success?: boolean;
-  }>(),
-  {
-    success: false,
-  },
-);
+import type { RuiIcons } from '@rotki/ui-library';
+import type { Message } from '@rotki/common';
+
+const props = defineProps<{
+  message: Message;
+}>();
 
 const emit = defineEmits<{
-  (e: 'dismiss'): void;
+  dismiss: [];
 }>();
+
+const { message } = toRefs(props);
 
 const { t } = useI18n();
 
-const { message, success } = toRefs(props);
-const visible = ref<boolean>(false);
-
-watch(message, (message) => {
-  set(visible, message.length > 0);
-});
-
-const icon = computed<string>(() =>
-  get(success) ? 'checkbox-circle-line' : 'error-warning-line',
-);
+const icon = computed<RuiIcons>(() => (get(props.message.success) ? 'lu-circle-check' : 'lu-circle-alert'));
 </script>
 
 <template>
   <RuiDialog
-    :value="visible"
+    :model-value="true"
     max-width="500"
     persistent
+    z-index="10000"
     @close="emit('dismiss')"
     @keydown.esc="emit('dismiss')"
     @keydown.enter="emit('dismiss')"
   >
-    <AppBridge>
-      <RuiCard>
-        <template #header>
-          <h5
-            :class="success ? 'text-rui-success' : 'text-rui-error'"
-            class="text-h5"
-          >
-            {{ title }}
-          </h5>
-        </template>
+    <RuiCard>
+      <template #header>
+        <h5
+          :class="message.success ? 'text-rui-success' : 'text-rui-error'"
+          class="text-h5"
+        >
+          {{ message.title }}
+        </h5>
+      </template>
 
-        <div class="flex flex-row items-center gap-2">
-          <div>
-            <RuiIcon
-              size="40"
-              :name="icon"
-              :class="success ? 'text-rui-success' : 'text-rui-error'"
-            />
-          </div>
-          <div
-            class="hyphens-auto break-words"
-            data-cy="message-dialog__title"
-          >
-            {{ message }}
-          </div>
+      <div class="flex flex-row items-center gap-2">
+        <div>
+          <RuiIcon
+            size="40"
+            :name="icon"
+            :class="message.success ? 'text-rui-success' : 'text-rui-error'"
+          />
         </div>
+        <div
+          class="hyphens-auto break-words"
+          data-cy="message-dialog__title"
+        >
+          {{ message.description }}
+        </div>
+      </div>
 
-        <template #footer>
-          <div class="grow" />
-          <RuiButton
-            data-cy="message-dialog__ok"
-            :color="success ? 'success' : 'error'"
-            @click="emit('dismiss')"
-          >
-            {{ t('common.actions.ok') }}
-          </RuiButton>
-        </template>
-      </RuiCard>
-    </AppBridge>
+      <template #footer>
+        <div class="grow" />
+        <RuiButton
+          data-cy="message-dialog__ok"
+          :color="message.success ? 'success' : 'error'"
+          @click="emit('dismiss')"
+        >
+          {{ t('common.actions.ok') }}
+        </RuiButton>
+      </template>
+    </RuiCard>
   </RuiDialog>
 </template>

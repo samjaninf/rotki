@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { EvmTokenKind, type UnderlyingToken } from '@rotki/common/lib/data';
+import { EvmTokenKind, type UnderlyingToken } from '@rotki/common';
 import useVuelidate from '@vuelidate/core';
 import { between, helpers, numeric, required } from '@vuelidate/validators';
 import { evmTokenKindsData } from '@/types/blockchain/chains';
 import { toMessages } from '@/utils/validation';
+import RowActions from '@/components/helper/RowActions.vue';
+import SimpleTable from '@/components/common/SimpleTable.vue';
 
-const props = defineProps<{ value: UnderlyingToken[] }>();
+const modelValue = defineModel<UnderlyingToken[]>({ required: true });
 
-const emit = defineEmits<{ (e: 'input', value: UnderlyingToken[]): void }>();
 const { t } = useI18n();
-
-const { value } = toRefs(props);
-
-const input = (value: UnderlyingToken[]) => emit('input', value);
 
 const underlyingAddress = ref<string>('');
 const tokenKind = ref<EvmTokenKind>(EvmTokenKind.ERC20);
@@ -20,28 +17,13 @@ const underlyingWeight = ref<string>('');
 
 const rules = {
   address: {
-    required: helpers.withMessage(
-      t('underlying_token_manager.validation.address_non_empty'),
-      required,
-    ),
-    isValidEthAddress: helpers.withMessage(
-      t('underlying_token_manager.validation.valid'),
-      isValidEthAddress,
-    ),
+    isValidEthAddress: helpers.withMessage(t('underlying_token_manager.validation.valid'), isValidEthAddress),
+    required: helpers.withMessage(t('underlying_token_manager.validation.address_non_empty'), required),
   },
   weight: {
-    required: helpers.withMessage(
-      t('underlying_token_manager.validation.non_empty'),
-      required,
-    ),
-    notNaN: helpers.withMessage(
-      t('underlying_token_manager.validation.not_valid'),
-      numeric,
-    ),
-    minMax: helpers.withMessage(
-      t('underlying_token_manager.validation.out_of_range'),
-      between(1, 100),
-    ),
+    minMax: helpers.withMessage(t('underlying_token_manager.validation.out_of_range'), between(1, 100)),
+    notNaN: helpers.withMessage(t('underlying_token_manager.validation.not_valid'), numeric),
+    required: helpers.withMessage(t('underlying_token_manager.validation.non_empty'), required),
   },
 };
 
@@ -55,10 +37,8 @@ const v$ = useVuelidate(
 );
 
 function addToken() {
-  const underlyingTokens = [...get(value)];
-  const index = underlyingTokens.findIndex(
-    ({ address }) => address === get(underlyingAddress),
-  );
+  const underlyingTokens = [...get(modelValue)];
+  const index = underlyingTokens.findIndex(({ address }) => address === get(underlyingAddress));
 
   const token = {
     address: get(underlyingAddress),
@@ -68,12 +48,11 @@ function addToken() {
 
   if (index >= 0)
     underlyingTokens[index] = token;
-  else
-    underlyingTokens.push(token);
+  else underlyingTokens.push(token);
 
   resetForm();
   get(v$).$reset();
-  input(underlyingTokens);
+  set(modelValue, underlyingTokens);
 }
 
 function editToken(token: UnderlyingToken) {
@@ -84,11 +63,10 @@ function editToken(token: UnderlyingToken) {
 }
 
 function deleteToken(address: string) {
-  const underlyingTokens = [...get(value)];
-  input(
-    underlyingTokens.filter(
-      ({ address: tokenAddress }) => tokenAddress !== address,
-    ),
+  const underlyingTokens = [...get(modelValue)];
+  set(
+    modelValue,
+    underlyingTokens.filter(({ address: tokenAddress }) => tokenAddress !== address),
   );
 }
 
@@ -152,7 +130,7 @@ function resetForm() {
                 >
                   <RuiIcon
                     :size="20"
-                    name="question-line"
+                    name="lu-circle-help"
                   />
                 </RuiButton>
               </template>
@@ -164,11 +142,12 @@ function resetForm() {
 
       <RuiButton
         color="primary"
+        class="col-span-2 lg:col-span-4"
         :disabled="v$.$invalid"
         @click="addToken()"
       >
         <template #prepend>
-          <RuiIcon name="add-line" />
+          <RuiIcon name="lu-plus" />
         </template>
         {{ t('common.actions.add') }}
       </RuiButton>
@@ -191,7 +170,7 @@ function resetForm() {
       </thead>
       <tbody>
         <tr
-          v-for="token in value"
+          v-for="token in modelValue"
           :key="token.address"
         >
           <td class="grow">

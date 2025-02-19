@@ -1,5 +1,6 @@
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
+import { HistoryEventEntryType } from '@rotki/common';
 import {
+  type AssetMovementEvent,
   type EthBlockEvent,
   type EthDepositEvent,
   type EthWithdrawalEvent,
@@ -10,6 +11,7 @@ import {
   type OnlineHistoryEvent,
 } from '@/types/history/events';
 import type { MaybeRef } from '@vueuse/core';
+import type { ComputedRef } from 'vue';
 
 export function isOfEventType<T extends HistoryEvent>(e: HistoryEvent, type: HistoryEventEntryType): e is T {
   return type === e?.entryType;
@@ -60,7 +62,7 @@ export function isEthBlockEventRef(event: MaybeRef<HistoryEvent>): ComputedRef<E
   });
 }
 
-export function isOnlineHistoryEventType(type: HistoryEventEntryType) {
+export function isOnlineHistoryEventType(type: HistoryEventEntryType): boolean {
   return type === HistoryEventEntryType.HISTORY_EVENT;
 }
 
@@ -87,6 +89,21 @@ export function isEthDepositEventRef(event: MaybeRef<HistoryEvent>): ComputedRef
   return computed(() => {
     const eventVal = get(event);
     return isEthDepositEvent(eventVal) ? eventVal : undefined;
+  });
+}
+
+export function isAssetMovementEventType(type: HistoryEventEntryType): boolean {
+  return type === HistoryEventEntryType.ASSET_MOVEMENT_EVENT;
+}
+
+export function isAssetMovementEvent(event: HistoryEvent): event is AssetMovementEvent {
+  return isAssetMovementEventType(event.entryType);
+}
+
+export function isAssetMovementEventRef(event: MaybeRef<HistoryEvent>): ComputedRef<AssetMovementEvent | undefined> {
+  return computed(() => {
+    const eventVal = get(event);
+    return isAssetMovementEvent(eventVal) ? eventVal : undefined;
   });
 }
 

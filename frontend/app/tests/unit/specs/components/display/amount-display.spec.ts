@@ -1,24 +1,33 @@
 import { BigNumber } from '@rotki/common';
-import { type Wrapper, mount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
+import { type VueWrapper, mount } from '@vue/test-utils';
 import flushPromises from 'flush-promises';
-import { useCurrencies } from '@/types/currencies';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type ShownCurrency, useCurrencies } from '@/types/currencies';
 import { CurrencyLocation } from '@/types/currency-location';
-import { FrontendSettings } from '@/types/settings/frontend-settings';
+import { getDefaultFrontendSettings } from '@/types/settings/frontend-settings';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useHistoricCachePriceStore } from '@/store/prices/historic';
+import { useSessionSettingsStore } from '@/store/settings/session';
+import { useSessionStore } from '@/store/session';
+import { useBalancePricesStore } from '@/store/balances/prices';
 import { createCustomPinia } from '../../../utils/create-pinia';
 import { updateGeneralSettings } from '../../../utils/general-settings';
 import type { Pinia } from 'pinia';
 
-vi.mocked(useCssModule).mockReturnValue({
-  blur: 'blur',
-  profit: 'profit',
-  loss: 'loss',
-  display: 'display',
-});
+vi.mock('vue-router', () => ({
+  useRoute: vi.fn(),
+  useRouter: vi.fn().mockReturnValue({
+    push: vi.fn(),
+  }),
+  createRouter: vi.fn().mockImplementation(() => ({
+    beforeEach: vi.fn(),
+  })),
+  createWebHashHistory: vi.fn(),
+}));
 
 describe('amountDisplay.vue', () => {
-  let wrapper: Wrapper<any>;
+  let wrapper: VueWrapper<InstanceType<typeof AmountDisplay>>;
   let pinia: Pinia;
 
   const createWrapper = (
@@ -29,28 +38,26 @@ describe('amountDisplay.vue', () => {
       integer?: boolean;
       forceCurrency?: boolean;
       pnl?: boolean;
-      showCurrency?: string;
+      showCurrency?: ShownCurrency;
       asset?: string;
       priceAsset?: string;
       priceOfAsset?: BigNumber;
       timestamp?: number;
     } = {},
-  ) => {
-    const vuetify = new Vuetify();
-    return mount(AmountDisplay, {
-      pinia,
-      vuetify,
-      propsData: {
+  ) =>
+    mount(AmountDisplay, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
         value,
         ...props,
       },
     });
-  };
 
   beforeEach(() => {
     pinia = createCustomPinia();
     setActivePinia(pinia);
-    document.body.dataset.app = 'true';
     const { findCurrency } = useCurrencies();
 
     updateGeneralSettings({
@@ -64,6 +71,7 @@ describe('amountDisplay.vue', () => {
 
   afterEach(() => {
     useSessionStore().$reset();
+    wrapper.unmount();
   });
 
   describe('common case', () => {
@@ -71,14 +79,10 @@ describe('amountDisplay.vue', () => {
       wrapper = createWrapper(bigNumberify(1.20440001), {
         fiatCurrency: 'USD',
       });
-      expect(
-        wrapper.find('[data-cy=amount-display]:nth-child(1)').text(),
-      ).toMatch('1.44');
+      expect(wrapper.find('[data-cy=amount-display]:nth-child(1)').text()).toMatch('1.44');
       await wrapper.find('[data-cy=display-amount]').trigger('mouseover');
       await nextTick();
-      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch(
-        '1.445280012',
-      );
+      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch('1.445280012');
     });
 
     it('displays amount converted to selected fiat currency (does not double-convert)', async () => {
@@ -86,14 +90,10 @@ describe('amountDisplay.vue', () => {
         amount: bigNumberify(1.20440001),
         fiatCurrency: 'EUR',
       });
-      expect(
-        wrapper.find('[data-cy=amount-display]:nth-child(1)').text(),
-      ).toMatch('1.20');
+      expect(wrapper.find('[data-cy=amount-display]:nth-child(1)').text()).toMatch('1.20');
       await wrapper.find('[data-cy=display-amount]').trigger('mouseover');
       await nextTick();
-      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch(
-        '1.20440001',
-      );
+      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch('1.20440001');
     });
 
     it('displays amount as it is without fiat conversion', async () => {
@@ -103,12 +103,10 @@ describe('amountDisplay.vue', () => {
           .find('[data-cy=amount-display]:nth-child(1)')
           .text()
           .replace(/ +(?= )/g, ''),
-      ).toBe('< 1.21');
+      ).toBe('<1.21');
       await wrapper.find('[data-cy=display-amount]').trigger('mouseover');
       await nextTick();
-      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch(
-        '1.20540001',
-      );
+      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch('1.20540001');
     });
 
     it('display amount do not show decimal when `integer=true`', () => {
@@ -121,30 +119,22 @@ describe('amountDisplay.vue', () => {
         fiatCurrency: 'USD',
         forceCurrency: true,
       });
-      expect(
-        wrapper.find('[data-cy=amount-display]:nth-child(1)').text(),
-      ).toMatch('1.20');
+      expect(wrapper.find('[data-cy=amount-display]:nth-child(1)').text()).toMatch('1.20');
       await wrapper.find('[data-cy=display-amount]').trigger('mouseover');
       await nextTick();
-      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch(
-        '1.20440001',
-      );
+      expect(wrapper.find('[data-cy=display-full-value]').text()).toMatch('1.20440001');
     });
   });
 
   describe('check PnL', () => {
     it('check if profit', () => {
       const wrapper = createWrapper(bigNumberify(50), { pnl: true });
-      expect(
-        wrapper.find('[data-cy=amount-display].text-rui-success').exists(),
-      ).toBe(true);
+      expect(wrapper.find('[data-cy=amount-display].text-rui-success').exists()).toBe(true);
     });
 
     it('check if loss', () => {
       const wrapper = createWrapper(bigNumberify(-50), { pnl: true });
-      expect(
-        wrapper.find('[data-cy=amount-display].text-rui-error').exists(),
-      ).toBe(true);
+      expect(wrapper.find('[data-cy=amount-display].text-rui-error').exists()).toBe(true);
     });
   });
 
@@ -157,14 +147,10 @@ describe('amountDisplay.vue', () => {
       wrapper = createWrapper(bigNumberify(1.20440001), {
         fiatCurrency: 'USD',
       });
-      expect(wrapper.find('[data-cy="display-amount"]').text()).not.toBe(
-        '1.44',
-      );
+      expect(wrapper.find('[data-cy="display-amount"]').text()).not.toBe('1.44');
       await wrapper.find('[data-cy="display-amount"]').trigger('mouseover');
       await nextTick();
-      expect(wrapper.find('[data-cy="display-full-value"]').text()).not.toBe(
-        '1.445280012',
-      );
+      expect(wrapper.find('[data-cy="display-full-value"]').text()).not.toBe('1.445280012');
     });
 
     it('displays amount converted to selected fiat currency (does not double-convert) as scrambled', async () => {
@@ -172,26 +158,18 @@ describe('amountDisplay.vue', () => {
         amount: bigNumberify(1.20440001),
         fiatCurrency: 'EUR',
       });
-      expect(wrapper.find('[data-cy="display-amount"]').text()).not.toBe(
-        '1.20',
-      );
+      expect(wrapper.find('[data-cy="display-amount"]').text()).not.toBe('1.20');
       await wrapper.find('[data-cy="display-amount"]').trigger('mouseover');
       await nextTick();
-      expect(wrapper.find('[data-cy="display-full-value"]').text()).not.toBe(
-        '1.20440001',
-      );
+      expect(wrapper.find('[data-cy="display-full-value"]').text()).not.toBe('1.20440001');
     });
 
     it('displays amount as it is without fiat conversion as scrambled', async () => {
       wrapper = createWrapper(bigNumberify(1.20540001));
-      expect(wrapper.find('[data-cy="display-amount"]').text()).not.toBe(
-        '1.21',
-      );
+      expect(wrapper.find('[data-cy="display-amount"]').text()).not.toBe('1.21');
       await wrapper.find('[data-cy="display-amount"]').trigger('mouseover');
       await nextTick();
-      expect(wrapper.find('[data-cy="display-full-value"]').text()).not.toBe(
-        '1.20540001',
-      );
+      expect(wrapper.find('[data-cy="display-full-value"]').text()).not.toBe('1.20540001');
     });
   });
 
@@ -199,7 +177,7 @@ describe('amountDisplay.vue', () => {
     describe('before', () => {
       beforeEach(() => {
         useFrontendSettingsStore().update({
-          ...FrontendSettings.parse({}),
+          ...getDefaultFrontendSettings(),
           currencyLocation: CurrencyLocation.BEFORE,
         });
       });
@@ -231,7 +209,7 @@ describe('amountDisplay.vue', () => {
     describe('after', () => {
       beforeEach(() => {
         useFrontendSettingsStore().update({
-          ...FrontendSettings.parse({}),
+          ...getDefaultFrontendSettings(),
           currencyLocation: CurrencyLocation.AFTER,
         });
       });
@@ -264,35 +242,31 @@ describe('amountDisplay.vue', () => {
   describe('check separator', () => {
     it('`Thousand separator=,` & `Decimal separator=.`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         thousandSeparator: ',',
         decimalSeparator: '.',
       });
 
       const wrapper = createWrapper(bigNumberify(123456.78));
-      expect(wrapper.find('[data-cy="display-amount"]').text()).toBe(
-        '123,456.78',
-      );
+      expect(wrapper.find('[data-cy="display-amount"]').text()).toBe('123,456.78');
     });
 
     it('`Thousand separator=.` & `Decimal separator=,`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         thousandSeparator: '.',
         decimalSeparator: ',',
       });
 
       const wrapper = createWrapper(bigNumberify(123456.78));
-      expect(wrapper.find('[data-cy="display-amount"]').text()).toBe(
-        '123.456,78',
-      );
+      expect(wrapper.find('[data-cy="display-amount"]').text()).toBe('123.456,78');
     });
   });
 
   describe('check rounding', () => {
     it('`amountRoundingMode=up`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         amountRoundingMode: BigNumber.ROUND_UP,
       });
 
@@ -302,7 +276,7 @@ describe('amountDisplay.vue', () => {
 
     it('`amountRoundingMode=down`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         amountRoundingMode: BigNumber.ROUND_DOWN,
       });
 
@@ -312,7 +286,7 @@ describe('amountDisplay.vue', () => {
 
     it('`valueRoundingMode=up`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         valueRoundingMode: BigNumber.ROUND_UP,
       });
 
@@ -324,7 +298,7 @@ describe('amountDisplay.vue', () => {
 
     it('`valueRoundingMode=down`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         valueRoundingMode: BigNumber.ROUND_DOWN,
       });
 
@@ -338,7 +312,7 @@ describe('amountDisplay.vue', () => {
   describe('check large number abbreviations', () => {
     it('`abbreviateNumber=true`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         abbreviateNumber: true,
       });
 
@@ -348,7 +322,7 @@ describe('amountDisplay.vue', () => {
 
     it('`abbreviateNumber=true`, `minimumDigitToBeAbbreviated=7`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         abbreviateNumber: true,
         minimumDigitToBeAbbreviated: 7,
       });
@@ -359,7 +333,7 @@ describe('amountDisplay.vue', () => {
 
     it('`abbreviateNumber=true`, `minimumDigitToBeAbbreviated=8`', () => {
       useFrontendSettingsStore().update({
-        ...FrontendSettings.parse({}),
+        ...getDefaultFrontendSettings(),
         abbreviateNumber: true,
         minimumDigitToBeAbbreviated: 8,
       });
@@ -376,7 +350,6 @@ describe('amountDisplay.vue', () => {
         ETH: {
           value: bigNumberify(500),
           isManualPrice: false,
-          isCurrentCurrency: false,
         },
       });
 
@@ -393,7 +366,6 @@ describe('amountDisplay.vue', () => {
         ETH: {
           value: bigNumberify(500),
           isManualPrice: true,
-          isCurrentCurrency: false,
         },
       });
 
@@ -405,81 +377,38 @@ describe('amountDisplay.vue', () => {
     });
   });
 
-  describe('check current currency manual latest prices', () => {
-    it('`isCurrentCurrency=false`', () => {
-      const { prices } = storeToRefs(useBalancePricesStore());
-      set(prices, {
-        ETH: {
-          value: bigNumberify(500),
-          isManualPrice: true,
-          isCurrentCurrency: false,
-        },
-      });
-
-      const priceWrapper = createWrapper(bigNumberify(400), {
-        priceAsset: 'ETH',
-        priceOfAsset: bigNumberify(500),
-        fiatCurrency: 'USD',
-      });
-
-      const valueWrapper = createWrapper(bigNumberify(800), {
-        amount: bigNumberify(2),
-        priceAsset: 'ETH',
-        priceOfAsset: bigNumberify(500),
-        fiatCurrency: 'USD',
-      });
-
-      expect(priceWrapper.find('[data-cy="display-amount"]').text()).toBe(
-        '480.00',
-      );
-      expect(valueWrapper.find('[data-cy="display-amount"]').text()).toBe(
-        '960.00',
-      );
+  it('check current currency manual latest prices', () => {
+    const { prices } = storeToRefs(useBalancePricesStore());
+    set(prices, {
+      ETH: {
+        value: bigNumberify(500),
+        isManualPrice: true,
+      },
     });
 
-    it('`isCurrentCurrency=true`', () => {
-      const { prices } = storeToRefs(useBalancePricesStore());
-      set(prices, {
-        ETH: {
-          value: bigNumberify(500),
-          isManualPrice: true,
-          isCurrentCurrency: true,
-        },
-      });
-
-      const priceWrapper = createWrapper(bigNumberify(400), {
-        priceAsset: 'ETH',
-        priceOfAsset: bigNumberify(500),
-        fiatCurrency: 'USD',
-      });
-
-      const valueWrapper = createWrapper(bigNumberify(800), {
-        amount: bigNumberify(2),
-        priceAsset: 'ETH',
-        priceOfAsset: bigNumberify(500),
-        fiatCurrency: 'USD',
-      });
-
-      expect(priceWrapper.find('[data-cy="display-amount"]').text()).toBe(
-        '500.00',
-      );
-      expect(valueWrapper.find('[data-cy="display-amount"]').text()).toBe(
-        '1,000.00',
-      );
+    const priceWrapper = createWrapper(bigNumberify(400), {
+      priceAsset: 'ETH',
+      priceOfAsset: bigNumberify(500),
+      fiatCurrency: 'USD',
     });
+
+    const valueWrapper = createWrapper(bigNumberify(800), {
+      amount: bigNumberify(2),
+      priceAsset: 'ETH',
+      priceOfAsset: bigNumberify(500),
+      fiatCurrency: 'USD',
+    });
+
+    expect(priceWrapper.find('[data-cy="display-amount"]').text()).toBe('480.00');
+    expect(valueWrapper.find('[data-cy="display-amount"]').text()).toBe('960.00');
   });
 
   describe('uses historic price', () => {
     it('when timestamp is set and prices exists', async () => {
-      const getPrice = vi.spyOn(
-        useHistoricCachePriceStore(),
-        'historicPriceInCurrentCurrency',
-      );
+      const getPrice = vi.spyOn(useHistoricCachePriceStore(), 'historicPriceInCurrentCurrency');
       getPrice.mockReturnValue(computed(() => bigNumberify(1.2)));
 
-      vi.spyOn(useHistoricCachePriceStore(), 'isPending').mockReturnValue(
-        computed(() => false),
-      );
+      vi.spyOn(useHistoricCachePriceStore(), 'isPending').mockReturnValue(computed(() => false));
 
       wrapper = createWrapper(bigNumberify(1), {
         fiatCurrency: 'USD',
@@ -494,15 +423,10 @@ describe('amountDisplay.vue', () => {
     });
 
     it('when timestamp is set and prices does not exist', async () => {
-      const getPrice = vi.spyOn(
-        useHistoricCachePriceStore(),
-        'historicPriceInCurrentCurrency',
-      );
+      const getPrice = vi.spyOn(useHistoricCachePriceStore(), 'historicPriceInCurrentCurrency');
       getPrice.mockReturnValue(computed(() => Zero));
 
-      vi.spyOn(useHistoricCachePriceStore(), 'isPending').mockReturnValue(
-        computed(() => false),
-      );
+      vi.spyOn(useHistoricCachePriceStore(), 'isPending').mockReturnValue(computed(() => false));
 
       wrapper = createWrapper(bigNumberify(1), {
         fiatCurrency: 'USD',
@@ -514,6 +438,88 @@ describe('amountDisplay.vue', () => {
 
       expect(wrapper.find('[data-cy="display-amount"]').text()).toBe('0.00');
       expect(getPrice).toHaveBeenCalledWith('USD', 1000);
+    });
+  });
+  describe('subscript display', () => {
+    beforeEach(async () => {
+      const frontendStore = useFrontendSettingsStore();
+      frontendStore.update({
+        ...getDefaultFrontendSettings(),
+        subscriptDecimals: true,
+      });
+
+      updateGeneralSettings({
+        uiFloatingPrecision: 10,
+      });
+
+      await nextTick();
+      await flushPromises();
+    });
+
+    describe('small decimal numbers', () => {
+      it('shows correct subscript count for numbers with multiple leading zeros', async () => {
+        wrapper = createWrapper(bigNumberify('0.0000000815'));
+        await nextTick();
+        await flushPromises();
+
+        const subscriptElement = wrapper.find('[data-cy="amount-display-subscript"]');
+        expect(subscriptElement.exists()).toBe(true);
+        expect(subscriptElement.text()).toBe('7');
+      });
+
+      it('shows correct subscript count for very small numbers', async () => {
+        wrapper = createWrapper(bigNumberify('0.000000000123'));
+        await nextTick();
+        await flushPromises();
+
+        const subscriptElement = wrapper.find('[data-cy="amount-display-subscript"]');
+        expect(subscriptElement.exists()).toBe(true);
+        expect(subscriptElement.text()).toBe('9');
+      });
+
+      it('shows no subscript for number with only one leading zero', async () => {
+        wrapper = createWrapper(bigNumberify('0.0123'));
+        await nextTick();
+        await flushPromises();
+
+        const subscriptElement = wrapper.find('[data-cy="amount-display-subscript"]');
+        expect(subscriptElement.exists()).toBe(false);
+      });
+    });
+
+    describe('non-subscript cases', () => {
+      it('shows no subscript for numbers greater than or equal to 1', async () => {
+        wrapper = createWrapper(bigNumberify('1.000000000123'));
+        await nextTick();
+        await flushPromises();
+
+        const subscriptElement = wrapper.find('[data-cy="amount-display-subscript"]');
+        expect(subscriptElement.exists()).toBe(false);
+      });
+
+      it('handles regular numbers without subscript', async () => {
+        wrapper = createWrapper(bigNumberify('1.23'));
+        await nextTick();
+        await flushPromises();
+
+        const subscriptElement = wrapper.find('[data-cy="amount-display-subscript"]');
+        expect(subscriptElement.exists()).toBe(false);
+      });
+    });
+
+    it('respects disabled subscript setting', async () => {
+      const frontendStore = useFrontendSettingsStore();
+      frontendStore.update({
+        ...getDefaultFrontendSettings(),
+        subscriptDecimals: false,
+      });
+
+      wrapper = createWrapper(bigNumberify('0.0000000815'));
+      await nextTick();
+      await flushPromises();
+
+      const subscriptElement = wrapper.find('[data-cy="amount-display-subscript"]');
+      expect(subscriptElement.exists()).toBe(false);
     });
   });
 });

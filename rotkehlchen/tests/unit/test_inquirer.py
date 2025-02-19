@@ -1,4 +1,5 @@
 import datetime
+import math
 import os
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -8,19 +9,29 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 from freezegun import freeze_time
+from web3 import HTTPProvider, Web3
 
 from rotkehlchen.assets.asset import Asset, CustomAsset, EvmToken, FiatAsset, UnderlyingToken
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.assets.utils import get_or_create_evm_token
-from rotkehlchen.chain.ethereum.modules.curve.curve_cache import (
+from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
+from rotkehlchen.chain.evm.contracts import find_matching_event_abi
+from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V2
+from rotkehlchen.chain.evm.decoding.curve.constants import CURVE_CHAIN_ID
+from rotkehlchen.chain.evm.decoding.curve.curve_cache import (
+    CurvePoolData,
+    _query_curve_data_from_api,
     query_curve_data,
-    save_curve_data_to_cache,
 )
-from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.constants import ZERO
+from rotkehlchen.chain.evm.node_inquirer import _query_web3_get_logs, construct_event_filter_params
+from rotkehlchen.chain.evm.types import NodeName, string_to_evm_address
+from rotkehlchen.chain.gnosis.transactions import ADDED_RECEIVER_ABI, BLOCKREWARDS_ADDRESS
+from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_POL_HARDFORK
+from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import (
     A_1INCH,
     A_AAVE,
+    A_BSQ,
     A_BTC,
     A_CRV,
     A_DAI,
@@ -28,8 +39,15 @@ from rotkehlchen.constants.assets import (
     A_EUR,
     A_KFEE,
     A_LINK,
+    A_POLYGON_POS_MATIC,
     A_USD,
     A_USDC,
+    A_USDT,
+    A_WETH_ARB,
+    A_XDAI,
+    A_YV1_DAI,
+    A_YV1_USDC,
+    A_YV1_WETH,
 )
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.constants.resolver import ethaddress_to_identifier, evm_address_to_identifier
@@ -40,6 +58,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.inquirer import (
+    BTC_PER_BSQ,
     CURRENT_PRICE_CACHE_SECS,
     DEFAULT_RATE_LIMIT_WAITING_TIME,
     CurrentPriceOracle,
@@ -48,20 +67,34 @@ from rotkehlchen.inquirer import (
 )
 from rotkehlchen.interfaces import CurrentPriceOracleInterface
 from rotkehlchen.tests.conftest import TestEnvironment, requires_env
+from rotkehlchen.tests.unit.decoders.test_curve_lend import (
+    fixture_ethereum_vault_token,  # noqa: F401
+    fixture_ethereum_vault_underlying_token,  # noqa: F401
+)
+from rotkehlchen.tests.unit.test_cost_basis import ONE_PRICE
 from rotkehlchen.tests.utils.constants import A_CNY, A_JPY
 from rotkehlchen.tests.utils.mock import MockResponse
+from rotkehlchen.tests.utils.morpho import create_ethereum_morpho_vault_token
 from rotkehlchen.types import (
+    AERODROME_POOL_PROTOCOL,
+    EVM_CHAINS_WITH_TRANSACTIONS,
+    UNISWAPV3_PROTOCOL,
     VELODROME_POOL_PROTOCOL,
+    YEARN_VAULTS_V3_PROTOCOL,
     CacheType,
     ChainID,
+    ChecksumEvmAddress,
     EvmTokenKind,
     Price,
+    SupportedBlockchain,
     Timestamp,
 )
 from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.ethereum.manager import EthereumManager
+    from rotkehlchen.chain.aggregator import ChainsAggregator
+    from rotkehlchen.chain.arbitrum_one.manager import ArbitrumOneManager
+    from rotkehlchen.db.dbhandler import DBHandler
 
 
 UNDERLYING_ASSET_PRICES = {
@@ -203,7 +236,7 @@ def test_parsing_forex_cache_works(
     assert inquirer._query_fiat_pair(A_EUR, A_JPY)[0] == price
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_fallback_to_coingecko(inquirer: Inquirer):
@@ -219,7 +252,7 @@ def test_fallback_to_coingecko(inquirer: Inquirer):
 def test_find_usd_price_cache(inquirer, freezer):  # pylint: disable=unused-argument
     call_count = 0
 
-    def mock_query_price(from_asset, to_asset, match_main_currency):  # pylint: disable=unused-argument
+    def mock_query_price(from_asset, to_asset):  # pylint: disable=unused-argument
         assert from_asset.identifier == 'ETH'
         assert to_asset.identifier == 'USD'
         nonlocal call_count
@@ -231,7 +264,7 @@ def test_find_usd_price_cache(inquirer, freezer):  # pylint: disable=unused-argu
             raise AssertionError('Called too many times for this test')
 
         call_count += 1
-        return price, False
+        return price
 
     cc_patch = patch.object(
         inquirer._cryptocompare,
@@ -291,7 +324,7 @@ def test_find_usd_price_all_rate_limited_in_last(inquirer):
             self.rate_limited_in_last_call_count += 1
             return True
 
-        def query_current_price(self, from_asset, to_asset, match_main_currency):
+        def query_current_price(self, from_asset, to_asset):
             self.query_current_price_call_count += 1
 
     inquirer._oracle_instances = [OracleMock('x') for _ in inquirer._oracles]
@@ -312,7 +345,7 @@ def test_find_usd_price_no_price_found(inquirer):
     inquirer._oracle_instances = [MagicMock() for _ in inquirer._oracles]
 
     for oracle_instance in inquirer._oracle_instances:
-        oracle_instance.query_current_price.return_value = (ZERO_PRICE, False)
+        oracle_instance.query_current_price.return_value = ZERO_PRICE
 
     price = inquirer.find_usd_price(A_BTC)
 
@@ -331,7 +364,7 @@ def test_find_usd_price_via_second_oracle(inquirer):
 
     expected_price = Price(FVal('30000'))
     inquirer._oracle_instances[0].query_current_price.side_effect = RemoteError
-    inquirer._oracle_instances[1].query_current_price.return_value = (expected_price, False)
+    inquirer._oracle_instances[1].query_current_price.return_value = expected_price
 
     price = inquirer.find_usd_price(A_BTC)
 
@@ -382,7 +415,7 @@ def test_price_underlying_tokens(inquirer, globaldb):
     assert price == FVal(67)
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_uniswap_v2_lp_token_price(inquirer, ethereum_manager, globaldb):
@@ -400,7 +433,7 @@ def test_find_uniswap_v2_lp_token_price(inquirer, ethereum_manager, globaldb):
     assert price is not None
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_velodrome_v2_lp_token_price(inquirer, optimism_manager):
@@ -420,33 +453,83 @@ def test_find_velodrome_v2_lp_token_price(inquirer, optimism_manager):
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_find_curve_lp_token_price(inquirer: 'Inquirer', ethereum_manager: 'EthereumManager'):
-    with GlobalDBHandler().conn.write_ctx() as write_cursor:  # querying curve lp token price normally triggers curve cache query. Set all query ts to now, so it does not happen.  # noqa: E501
-        write_cursor.execute('UPDATE general_cache SET last_queried_ts=? WHERE key=?', (ts_now(), 'CURVE_LP_TOKENS'))  # noqa: E501
-
-    inquirer.set_oracles_order([CurrentPriceOracle.DEFILLAMA])
-    ethereum_manager.node_inquirer.ensure_cache_data_is_updated(
-        cache_type=CacheType.CURVE_LP_TOKENS,
-        query_method=query_curve_data,
-        save_method=save_curve_data_to_cache,
+def test_find_aerodrome_lp_token_price(inquirer, base_manager):
+    get_or_create_evm_token(  # wBLT token
+        userdb=base_manager.node_inquirer.database,
+        evm_address=string_to_evm_address('0x4E74D4Db6c0726ccded4656d0BCE448876BB4C7A'),
+        chain_id=ChainID.BASE,
     )
+    token = get_or_create_evm_token(  # wBLT/USDC pool token
+        userdb=base_manager.node_inquirer.database,
+        evm_address=string_to_evm_address('0x4299f2004C4Ee942dC7A70356c112aE507597268'),
+        chain_id=ChainID.BASE,
+        protocol=AERODROME_POOL_PROTOCOL,
+    )
+    inquirer.inject_evm_managers([(ChainID.BASE, base_manager)])
+    price = inquirer.find_usd_price(asset=token)
+    assert price.is_close(FVal('64887262.569622'))
 
-    inquirer.inject_evm_managers([(ChainID.ETHEREUM, ethereum_manager)])
-    for lp_token_address, expected_price in (
-        # Curve.fi ETH/sETH (eCRV)
-        ('0xA3D87FffcE63B53E0d54fAa1cc983B7eB0b74A9c', FVal('3295.243125296')),
-        # Curve.fi Factory Crypto Pool: YFI/ETH (YFIETH-f)
-        ('0x29059568bB40344487d62f7450E78b8E6C74e0e5', FVal('10694.82554545636')),
-        # tryLSD
-        ('0x2570f1bd5d2735314fc102eb12fc1afe9e6e7193', FVal('10811.072574998')),
-        # frax/usdc/dai/usdt
-        ('0xd632f22692fac7611d2aa1c0d552930d43caed3b', FVal('1.0105665')),
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_curve_lp_token_price(inquirer: 'Inquirer', blockchain: 'ChainsAggregator'):
+    tested_tokens: dict[ChainID, tuple[str, FVal]] = {
+        ChainID.ETHEREUM: ('0xA3D87FffcE63B53E0d54fAa1cc983B7eB0b74A9c', FVal('4062.365420')),
+        # 3CRV-OP-gauge
+        ChainID.OPTIMISM: ('0x4456d13Fc6736e8e8330394c0C622103E06ea419', FVal('2058.823988')),
+        # Curve.fi amDAI/amUSDC/amUSDT (am3CRV)
+        ChainID.POLYGON_POS: ('0xE7a24EF0C5e95Ffb0f6684b813A78F2a3AD7D171', FVal('1.139456')),
+        # crvUSDT-gauge
+        ChainID.ARBITRUM_ONE: ('0xB08FEf57bFcc5f7bF0EF69C0c090849d497C8F8A', FVal('2.671811')),
+        # tricrypto
+        ChainID.BASE: ('0x63Eb7846642630456707C3efBb50A03c79B89D81', FVal('1.028638')),
+        # crvusdusdt-gauge
+        ChainID.GNOSIS: ('0xC2EfDbC1a21D82A677380380eB282a963A6A6ada', FVal('1.001272')),
+        # crvUSD/USDT gauge
+        ChainID.BINANCE_SC: ('0x6c816d6Ed4b2B77e121aD7951841A7D0711561b3', FVal('1.004242')),
+    }
+
+    inquirer.inject_evm_managers([
+        (chain.to_chain_id(), blockchain.get_chain_manager(chain))
+        for chain in EVM_CHAINS_WITH_TRANSACTIONS
+    ])
+
+    def mock_query_curve_data_from_api(
+            chain_id: ChainID,
+            existing_pools: set[ChecksumEvmAddress],
+    ) -> list[CurvePoolData]:
+        for pool in _query_curve_data_from_api(
+            chain_id=chain_id,
+            existing_pools=existing_pools,
+        ):
+            if tested_tokens[chain_id][0] in {pool.lp_token_address, pool.gauge_address}:
+                return [pool]
+        return []
+
+    with patch(
+        target='rotkehlchen.chain.evm.decoding.curve.curve_cache._query_curve_data_from_api',
+        new=mock_query_curve_data_from_api,
     ):
-        identifier = ethaddress_to_identifier(string_to_evm_address(lp_token_address))
-        price = inquirer.find_curve_pool_price(EvmToken(identifier))
-        assert price is not None and price.is_close(expected_price)
-        # Check that the protocol is correctly caught by the inquirer
-        assert price == inquirer.find_usd_price(EvmToken(identifier))
+        inquirer.set_oracles_order([CurrentPriceOracle.DEFILLAMA])
+        for chain_id in CURVE_CHAIN_ID:
+            manager = inquirer.get_evm_manager(chain_id)
+            manager.node_inquirer.ensure_cache_data_is_updated(
+                cache_type=CacheType.CURVE_LP_TOKENS,
+                query_method=query_curve_data,
+                chain_id=manager.node_inquirer.chain_id,
+                cache_key_parts=(str(manager.node_inquirer.chain_id.serialize_for_db()),),
+            )
+
+    with GlobalDBHandler().conn.write_ctx() as write_cursor:  # querying curve lp token price normally triggers curve cache query. Set all query ts to now, so it does not happen.  # noqa: E501
+        write_cursor.execute('UPDATE general_cache SET last_queried_ts=? WHERE key LIKE ?', (ts_now(), 'CURVE_LP_TOKENS%'))  # noqa: E501
+
+    for chain_id, (address, price) in tested_tokens.items():
+        assert inquirer.find_usd_price(EvmToken(evm_address_to_identifier(
+            address=address,
+            chain_id=chain_id,
+            token_type=EvmTokenKind.ERC20,
+        ))).is_close(price)
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
@@ -491,12 +574,12 @@ def test_price_non_ethereum_evm_token(inquirer_defi, globaldb):
     address = string_to_evm_address('0x2656f02bc30427Ed9d380E20CEc5E04F5a7A50FE')
     evm_address_to_identifier(
         address=address,
-        chain_id=ChainID.BINANCE,
+        chain_id=ChainID.BINANCE_SC,
         token_type=EvmTokenKind.ERC20,
     )
     token = EvmToken.initialize(
         address=address,
-        chain_id=ChainID.BINANCE,
+        chain_id=ChainID.BINANCE_SC,
         token_kind=EvmTokenKind.ERC20,
         decimals=18,
         name='SLOUGI',
@@ -525,7 +608,7 @@ def test_price_for_custom_assets(inquirer, database, globaldb):
         to_asset=A_USD,
         price=Price(FVal(10)),
     )
-    inquirer.remove_cached_current_price_entry((asset, A_USD))
+    Inquirer._cached_current_price.remove((asset, A_USD))
     assert inquirer.find_usd_price(asset) == Price(FVal(10))
 
 
@@ -548,7 +631,7 @@ def test_coingecko_handles_rate_limit(inquirer):
         price = inquirer.find_usd_price(A_ETH)
         assert price == ZERO_PRICE
         assert inquirer._coingecko.last_rate_limit > 0
-        # Now try again, since we are rate limited the price query wil fail
+        # Now try again, since we are rate limited the price query will fail
         assert inquirer.find_usd_price(A_ETH, ignore_cache=True) == ZERO_PRICE
         # Change the last_rate_limit time to allow for further calls
         inquirer._coingecko.last_rate_limit = ts_now() - (DEFAULT_RATE_LIMIT_WAITING_TIME + 10)
@@ -590,6 +673,7 @@ def test_punishing_of_oracles_works(inquirer):
             assert inquirer._coingecko.is_penalized() is False
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_yearn_vaults_v2_price(inquirer_defi, globaldb):
@@ -612,7 +696,7 @@ def test_find_yearn_vaults_v2_price(inquirer_defi, globaldb):
         )
 
     for token, underlying_token in ((yvusdc, A_USDC), (yvdai, A_DAI)):
-        price = inquirer_defi.find_yearn_price(token)
+        price = inquirer_defi.find_yearn_price(token, 'YEARN_VAULT_V2')
         assert price is not None
 
         with globaldb.conn.read_ctx() as cursor:
@@ -620,9 +704,69 @@ def test_find_yearn_vaults_v2_price(inquirer_defi, globaldb):
             assert result and result[0].address == underlying_token.resolve_to_evm_token().evm_address  # noqa: E501
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_find_protocol_price_falllback_to_oracle(inquirer_defi):
+def test_find_yearn_vaults_v3_price(
+        database: 'DBHandler',
+        inquirer_defi: 'Inquirer',
+        globaldb: 'GlobalDBHandler',
+) -> None:
+    """Check that we can find the price of a yearn v3 vault asset.
+    The v3 assets are retrieved via query_yearn_vaults when the app runs,
+    so the vault asset isn't in the global db yet and must be added manually here.
+    """
+    crvusd_address = string_to_evm_address('0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E')
+    yvcrvusd = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0xBF319dDC2Edc1Eb6FDf9910E39b37Be221C8805F'),
+        chain_id=ChainID.ETHEREUM,
+        token_kind=EvmTokenKind.ERC20,
+        symbol='yvcrvUSD-2',
+        name='crvUSD-2 yVault',
+        decimals=18,
+        protocol=YEARN_VAULTS_V3_PROTOCOL,
+        started=Timestamp(1713104219),
+        underlying_tokens=[UnderlyingToken(
+            address=crvusd_address,
+            token_kind=EvmTokenKind.ERC20,
+            weight=ONE,
+        )],
+    )
+
+    price = inquirer_defi.find_yearn_price(yvcrvusd, 'YEARN_VAULT_V3')
+    assert price is not None
+
+    with globaldb.conn.read_ctx() as cursor:
+        result = globaldb.fetch_underlying_tokens(cursor, yvcrvusd.identifier)
+        assert result and result[0].address == crvusd_address
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_gearbox_lp_price(inquirer: 'Inquirer', arbitrum_one_manager: 'ArbitrumOneManager'):
+    dwethv3 = EvmToken('eip155:42161/erc20:0x04419d3509f13054f60d253E0c79491d9E683399')
+    sdwethv3 = EvmToken('eip155:42161/erc20:0x6773fF780Dd38175247795545Ee37adD6ab6139a')
+
+    with GlobalDBHandler().conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'DELETE from underlying_tokens_list WHERE parent_token_entry=?',
+            (sdwethv3.identifier,),
+        )
+    inquirer.inject_evm_managers([(ChainID.ARBITRUM_ONE, arbitrum_one_manager)])
+    for token, underlying_token in ((sdwethv3, A_WETH_ARB), (dwethv3, A_WETH_ARB)):
+        price = inquirer.find_gearbox_price(token)
+        assert price is not None
+
+        with GlobalDBHandler().conn.read_ctx() as cursor:
+            result = GlobalDBHandler.fetch_underlying_tokens(cursor, token.identifier)
+            assert result and result[0].address == underlying_token.resolve_to_evm_token().evm_address  # noqa: E501
+
+
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_protocol_price_fallback_to_oracle(inquirer_defi):
     """Test that if the onchain price query fails for a known protocol token,
     the external oracles are still queried and provide us (potentially) with an answer
     """
@@ -633,7 +777,19 @@ def test_find_protocol_price_falllback_to_oracle(inquirer_defi):
     assert price is not None and price != ZERO
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_yearn_v1_vault_token_price(inquirer_defi):
+    """Regression test for https://github.com/rotki/rotki/pull/8838
+    Similar prices were found by this method with and without the change in PR 8838
+    """
+    assert inquirer_defi.find_usd_price(A_YV1_USDC).is_close(FVal(1.10959), max_diff=1e-5)
+    assert inquirer_defi.find_usd_price(A_YV1_WETH).is_close(FVal(2555.94460), max_diff=1e-5)
+    assert inquirer_defi.find_usd_price(A_YV1_DAI).is_close(FVal(1.15431), max_diff=1e-5)
+
+
+@pytest.mark.vcr
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_cache_is_hit_for_collection(inquirer: Inquirer):
     """Test that the price for a collection is saved to cache and not query for every asset"""
@@ -657,12 +813,12 @@ def test_usd_price(inquirer: Inquirer, globaldb: GlobalDBHandler):
     """Check that price is queried for tokens in different chains using defillama"""
     inquirer.set_oracles_order(oracles=[CurrentPriceOracle.DEFILLAMA])
     globaldb.add_asset(EvmToken.initialize(
-        address=string_to_evm_address('0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000'),
+        address=string_to_evm_address('0x66a2A913e447d6b4BF33EFbec43aAeF87890FBbc'),
         chain_id=ChainID.BOBA,
         token_kind=EvmTokenKind.ERC20,
         decimals=18,
-        name='Wrapped Ether',
-        symbol='WETH',
+        name='USDC',
+        symbol='USDC',
     ))
     globaldb.add_asset(EvmToken.initialize(
         address=string_to_evm_address('0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7'),
@@ -700,8 +856,334 @@ def test_usd_price(inquirer: Inquirer, globaldb: GlobalDBHandler):
         Asset('eip155:8453/erc20:0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA'),  # base
         Asset('eip155:42161/erc20:0x5979D7b546E38E414F7E9822514be443A4800529'),  # arb
         Asset('eip155:43114/erc20:0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7'),  # avax
-        Asset('eip155:288/erc20:0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000'),  # boba
+        Asset('eip155:288/erc20:0x66a2A913e447d6b4BF33EFbec43aAeF87890FBbc'),  # boba
         Asset('eip155:1101/erc20:0xA8CE8aee21bC2A48a5EF670afCc9274C7bbbC035'),  # zkevm
     ):
         price = inquirer.find_usd_price(token)
         assert price != ZERO
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('network_mocking', [False])
+def test_connect_rpc_with_hex_chainid(ethereum_inquirer: EthereumInquirer):
+    """Test that connecting to an RPC that returns the chain id as an hex value
+    instead of an integer works correctly
+    """
+    success, msg = ethereum_inquirer.attempt_connect(
+        node=NodeName(
+            name='reth',
+            endpoint='https://eth.merkle.io',
+            owned=True,
+            blockchain=SupportedBlockchain.ETHEREUM,
+        ),
+    )
+    assert success is True and msg == ''
+
+
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_fake_symbol_doesnt_query_cc(inquirer: 'Inquirer'):
+    """Test that a token that has the symbol of another token (like USDC) doesn't trigger
+    a price query"""
+    inquirer.set_oracles_order(oracles=[CurrentPriceOracle.CRYPTOCOMPARE])
+    token = EvmToken.initialize(
+        address=string_to_evm_address('0x9fca10428566808CC9175412491dF4681cF39cE4'),
+        chain_id=ChainID.GNOSIS,
+        token_kind=EvmTokenKind.ERC20,
+        name='Fake USDC',
+        symbol='USDC',
+        decimals=18,
+    )
+    assert inquirer.find_usd_price(token) == ZERO
+
+
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_recursion_in_inquirer(inquirer: Inquirer, globaldb: GlobalDBHandler):
+    """Test that if a token has itself as underlying token we don't create an
+    infinite recursion querying its price"""
+    a_usdt = A_USDT.resolve_to_evm_token()
+    with globaldb.conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'INSERT INTO underlying_tokens_list(identifier, weight, parent_token_entry) '
+            'VALUES(?, ?, ?)',
+            (a_usdt.identifier, '1', a_usdt.identifier),
+        )
+
+    AssetResolver.clean_memory_cache(A_USDT.identifier)
+    assert inquirer.find_usd_price(A_USDT) != ZERO
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_recursion_handling_in_inquirer(inquirer: Inquirer, globaldb: GlobalDBHandler):
+    """This is a regression test that checks for the handling of the recursion error in the inquirer."""  # noqa: E501
+    a_usdt = A_USDT.resolve_to_evm_token()
+    with globaldb.conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'INSERT INTO price_history(from_asset, to_asset, source_type, price, timestamp) VALUES(?, ?, ?, ?, ?)',  # noqa: E501
+            (a_usdt.identifier, A_BTC.identifier, 'E', '5', ts_now()),
+        )
+        write_cursor.execute(
+            'INSERT INTO price_history(from_asset, to_asset, source_type, price, timestamp) VALUES(?, ?, ?, ?, ?)',  # noqa: E501
+            (A_BTC.identifier, a_usdt.identifier, 'E', '2', ts_now()),
+        )
+
+    price, oracle = inquirer.find_usd_price_and_oracle(A_USDT)
+    assert oracle == CurrentPriceOracle.MANUALCURRENT
+    assert price == Price(FVal('10.010'))
+
+
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_recursion_decorator(inquirer: Inquirer):
+    """Test that the decorator handle_recursion_error works properly"""
+    with patch('rotkehlchen.inquirer.Inquirer._find_usd_price', side_effect=RecursionError):
+        assert inquirer.find_usd_price(A_USDT) == ZERO
+
+
+@pytest.mark.freeze_time
+@pytest.mark.vcr
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_matic_pol_hardforked_price(inquirer: Inquirer, freezer):
+    """Test that we return price of POL for MATIC after hardfork"""
+    before_hardfork = Timestamp(POLYGON_POS_POL_HARDFORK - 1)
+    after_hardfork = Timestamp(POLYGON_POS_POL_HARDFORK + 1)
+
+    with patch(
+        'rotkehlchen.externalapis.coingecko.Coingecko.query_current_price',
+        wraps=inquirer._coingecko.query_current_price,
+    ) as patched_gecko:
+        freezer.move_to(datetime.datetime.fromtimestamp(before_hardfork, tz=datetime.UTC))
+        inquirer.find_usd_price(A_POLYGON_POS_MATIC, ignore_cache=True)
+        assert patched_gecko.call_args.kwargs['from_asset'] == A_POLYGON_POS_MATIC
+        freezer.move_to(datetime.datetime.fromtimestamp(after_hardfork, tz=datetime.UTC))
+        inquirer.find_usd_price(A_POLYGON_POS_MATIC, ignore_cache=True)
+        assert patched_gecko.call_args.kwargs['from_asset'] == Asset('eip155:1/erc20:0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6')  # POL token  # noqa: E501
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_vthor_price(inquirer_defi: 'Inquirer', database: 'DBHandler'):
+    """Test that we can query price for vTHOR using the ratio that it maintains with THOR"""
+    inquirer_defi._oracle_instances = [inquirer_defi._defillama]
+    get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0xa5f2211B9b8170F694421f2046281775E8468044'),
+        chain_id=ChainID.ETHEREUM,
+        symbol='THOR',
+        name='THORSwap Token',
+        decimals=18,
+    )
+    get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x815C23eCA83261b6Ec689b60Cc4a58b54BC24D8D'),
+        chain_id=ChainID.ETHEREUM,
+        symbol='vTHOR',
+        name='vTHOR',
+        decimals=18,
+    )
+
+    price = inquirer_defi.find_usd_price(
+        asset=Asset('eip155:1/erc20:0x815C23eCA83261b6Ec689b60Cc4a58b54BC24D8D'),
+    )
+    assert price.is_close(FVal(0.97656), max_diff=1e-5)
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_morpho_vault_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:
+    """Test that we get the correct price for Morpho vault tokens."""
+    usual_boosted_usdc_vault = create_ethereum_morpho_vault_token(database=database)
+    price = inquirer_defi.find_usd_price(asset=usual_boosted_usdc_vault)
+    assert price.is_close(FVal(1.02611), max_diff=1e-5)
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_balancer_pool_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:
+    """Test that we get the correct price for Balancer pool tokens."""
+    pufeth_wseth_token = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x63E0d47A6964aD1565345Da9bfA66659F4983F02'),
+        chain_id=ChainID.ETHEREUM,
+        token_kind=EvmTokenKind.ERC20,
+        symbol='pufETH/wstETH',
+        name='Balancer pufETH/wstETH',
+        decimals=18,
+        protocol=CPT_BALANCER_V2,
+        underlying_tokens=[UnderlyingToken(
+            address=string_to_evm_address('0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0'),
+            token_kind=EvmTokenKind.ERC20,
+            weight=FVal('0.5'),
+        ), UnderlyingToken(
+            address=string_to_evm_address('0xD9A442856C234a39a81a089C06451EBAa4306a72'),
+            token_kind=EvmTokenKind.ERC20,
+            weight=FVal('0.5'),
+        )],
+    )
+    price = inquirer_defi.find_usd_price(asset=pufeth_wseth_token)
+    assert price.is_close(FVal('3400.8425'), max_diff=1e-5)
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_curve_lending_vault_price(
+        inquirer_defi: 'Inquirer',
+        ethereum_vault_token: 'EvmToken',
+) -> None:
+    """Test that we get the correct price for Curve lending vault tokens."""
+    price = inquirer_defi.find_usd_price(asset=ethereum_vault_token)
+    assert price.is_close(FVal(0.00102), max_diff=1e-5)
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_uniswap_v3_position_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:
+    """Test that we get the correct price for Uniswap V3 position NFTs in all supported chains."""
+
+    def get_position_price(
+            token_address: ChecksumEvmAddress,
+            token_id: str,
+            chain_id: ChainID,
+    ) -> Price:
+        return inquirer_defi.find_usd_price(asset=get_or_create_evm_token(
+            userdb=database,
+            evm_address=token_address,
+            chain_id=chain_id,
+            token_kind=EvmTokenKind.ERC721,
+            symbol=f'UNI-V3-POS-{token_id}',
+            name=f'Uniswap V3 Positions #{token_id}',
+            collectible_id=token_id,
+            protocol=UNISWAPV3_PROTOCOL,
+        ))
+
+    assert get_position_price(
+        token_address=string_to_evm_address('0xC36442b4a4522E871399CD717aBDD847Ab11FE88'),
+        token_id='907907',
+        chain_id=ChainID.ETHEREUM,
+    ).is_close(FVal('3.99903'), max_diff='1e-5')
+
+    assert get_position_price(
+        token_address=string_to_evm_address('0xC36442b4a4522E871399CD717aBDD847Ab11FE88'),
+        token_id='4085191',
+        chain_id=ChainID.ARBITRUM_ONE,
+    ).is_close(FVal('26.70596'), max_diff='1e-5')
+
+    assert get_position_price(
+        token_address=string_to_evm_address('0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1'),
+        token_id='1815027',
+        chain_id=ChainID.BASE,
+    ).is_close(FVal('93.54660'), max_diff='1e-5')
+
+    assert get_position_price(
+        token_address=string_to_evm_address('0xC36442b4a4522E871399CD717aBDD847Ab11FE88'),
+        token_id='2387839',
+        chain_id=ChainID.POLYGON_POS,
+    ).is_close(FVal('641.52847'), max_diff='1e-5')
+
+    assert get_position_price(
+        token_address=string_to_evm_address('0xC36442b4a4522E871399CD717aBDD847Ab11FE88'),
+        token_id='929877',
+        chain_id=ChainID.OPTIMISM,
+    ).is_close(FVal('1010.96583'), max_diff='1e-5')
+
+    assert get_position_price(
+        token_address=string_to_evm_address('0x7b8A01B39D58278b5DE7e48c8449c9f4F5170613'),
+        token_id='188693',
+        chain_id=ChainID.BINANCE_SC,
+    ).is_close(FVal('7219.93640'), max_diff='1e-5')
+
+
+@pytest.mark.vcr
+@pytest.mark.freeze_time('2024-10-21 18:00:00 GMT')
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_fiat_to_fiat(inquirer):
+    """Test that fiat to fiat works for current prices and goes through the fiat oracle path"""
+    inquirer.set_oracles_order([CurrentPriceOracle.COINGECKO, CurrentPriceOracle.DEFILLAMA])
+    with patch.object(Inquirer, '_query_fiat_pair', wraps=Inquirer._query_fiat_pair) as _query_fiat_pair:  # noqa: E501
+        price = inquirer.find_price(A_USD, A_EUR)
+        assert price == FVal('0.924303')
+        _query_fiat_pair.assert_called_once_with(
+            base=A_USD.resolve_to_fiat_asset(),
+            quote=A_EUR.resolve_to_fiat_asset(),
+        )
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_price_of_assets_in_collection(inquirer):
+    """
+    Test that the inquirer can correctly find the USD price of the main asset and
+    secondary assets in a collection.
+
+    Checks that:
+    - The price of the main asset (DAI) is close to the expected price of 1 USD.
+    - The price of the secondary asset (xDAI) is the same as the main asset price.
+    """
+    dai_price = inquirer.find_usd_price(A_DAI)
+    assert dai_price.is_close(ONE_PRICE, max_diff='0.01')
+
+    xdai_price = inquirer.find_usd_price(A_XDAI)
+    assert xdai_price == dai_price
+
+
+@pytest.mark.vcr
+def test_errors_web3_logs():
+    """
+    1rpc.io/gnosis has a limit of 1000 logs per query. This test
+    ensure that the amount of queries made to the node is the minimum
+    possible and that the limits are respected. Also tests that errors
+    from `Web3Exception` are processed correctly in the logs logic.
+
+    We had an issue where the error was not handled properly and block_range
+    was getting reset after every successful query.
+    """
+    provider = HTTPProvider(
+        endpoint_uri='https://1rpc.io/gnosis',
+        request_kwargs={'timeout': 10},
+    )
+    web3 = Web3(provider=provider)
+    address = '0xc37b40ABdB939635068d3c5f13E7faF686F03B65'
+    count = 0
+    make_request = web3.HTTPProvider.make_request
+    start_block, end_block = 50000, 60000
+
+    def wrapper(*args, **kwargs):
+        nonlocal count
+        count += 1
+        return make_request(*args, **kwargs)
+
+    _, filter_args = construct_event_filter_params(
+        event_abi=find_matching_event_abi(abi=ADDED_RECEIVER_ABI, event_name='AddedReceiver'),
+        abi_codec=Web3().codec,
+        contract_address=BLOCKREWARDS_ADDRESS,
+        argument_filters={'receiver': address},
+        from_block=start_block,
+        to_block=end_block,
+    )
+    with patch.object(web3.HTTPProvider, 'make_request', new=wrapper):
+        _query_web3_get_logs(
+            web3=web3,
+            filter_args=filter_args,
+            from_block=start_block,
+            to_block=end_block,
+            contract_address=BLOCKREWARDS_ADDRESS,
+            event_name='AddedReceiver',
+            argument_filters={'receiver': address},
+            initial_block_range=20000,
+        )
+        assert count == math.ceil((end_block - start_block) / 999) + 1  # + 1 is the failed request
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_bsq_price(inquirer: 'Inquirer') -> None:
+    """Test that we can query bisq for market prices"""
+    btc_price = Inquirer.find_usd_price(A_BTC)
+    bsq_price = Inquirer.find_usd_price(A_BSQ.resolve_to_crypto_asset())
+    assert bsq_price.is_close(btc_price * BTC_PER_BSQ)

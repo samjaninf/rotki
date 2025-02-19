@@ -1,8 +1,5 @@
-import {
-  camelCaseTransformer,
-  noRootCamelCaseTransformer,
-  snakeCaseTransformer,
-} from '@/services/axios-tranformers';
+import { describe, expect, it } from 'vitest';
+import { camelCaseTransformer, noRootCamelCaseTransformer, snakeCaseTransformer } from '@/services/axios-tranformers';
 
 describe('axios transformers', () => {
   it('transform json to camelCase', () => {
@@ -32,9 +29,7 @@ describe('axios transformers', () => {
       BTC: 2,
     };
 
-    expect(JSON.stringify(snakeCaseTransformer(object))).toMatch(
-      '{"ETH":1,"BTC":2}',
-    );
+    expect(JSON.stringify(snakeCaseTransformer(object))).toMatch('{"ETH":1,"BTC":2}');
   });
 
   it('transformer no root', () => {

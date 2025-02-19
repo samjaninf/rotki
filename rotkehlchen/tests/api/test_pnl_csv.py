@@ -1,3 +1,4 @@
+import _locale
 import csv
 import json
 import os
@@ -6,37 +7,55 @@ import zipfile
 from contextlib import ExitStack
 from http import HTTPStatus
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import _locale
 import pytest
 import requests
 
 from rotkehlchen.accounting.export.csv import FILENAME_ALL_CSV
 from rotkehlchen.accounting.mixins.event import AccountingEventType
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import CustomAsset
 from rotkehlchen.chain.accounts import BlockchainAccountData
 from rotkehlchen.chain.evm.constants import GENESIS_HASH
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.zksync_lite.constants import ZKL_IDENTIFIER
 from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.custom_assets import DBCustomAssets
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
-from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.structures.types import (
+    HistoryEventSubType,
+    HistoryEventType,
+)
 from rotkehlchen.tests.utils.accounting import accounting_history_process
-from rotkehlchen.tests.utils.api import api_url_for, assert_error_response, assert_proper_response
+from rotkehlchen.tests.utils.api import (
+    api_url_for,
+    assert_error_response,
+    assert_proper_response,
+)
 from rotkehlchen.tests.utils.constants import ETH_ADDRESS1, ETH_ADDRESS2, ETH_ADDRESS3
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
-from rotkehlchen.tests.utils.history import prepare_rotki_for_history_processing_test, prices
+from rotkehlchen.tests.utils.history import (
+    prepare_rotki_for_history_processing_test,
+    prices,
+)
 from rotkehlchen.tests.utils.pnl_report import query_api_create_and_get_report
 from rotkehlchen.types import Location, SupportedBlockchain, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import create_timestamp
 
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
 
-def assert_csv_export_response(response, csv_dir, is_download=False, expected_num_of_events=37):
+
+def assert_csv_export_response(
+        response: requests.Response,
+        csv_dir: Path,
+        is_download: bool = False,
+        expected_num_of_events: int = 37,
+    ) -> list[dict]:
     if is_download:
         assert response.status_code == HTTPStatus.OK
     else:
@@ -45,7 +64,7 @@ def assert_csv_export_response(response, csv_dir, is_download=False, expected_nu
         assert data['message'] == ''
         assert data['result'] is True
 
-    # and check the csv files were generated succesfully. Here we are only checking
+    # and check the csv files were generated successfully. Here we are only checking
     # for valid CSV and not for the values to be valid. Valid values are tested
     # in unit/test_accounting.py
     rows = []
@@ -101,24 +120,24 @@ def assert_csv_export_response(response, csv_dir, is_download=False, expected_nu
 ])
 @pytest.mark.parametrize('initialize_accounting_rules', [True])
 def test_history_export_download_csv(
-        rotkehlchen_api_server_with_exchanges,
-        tmpdir_factory,
-):
+        rotkehlchen_api_server_with_exchanges: 'APIServer',
+        tmpdir_factory: pytest.TempdirFactory,
+) -> None:
     """Test that the csv export/download REST API endpoint works correctly."""
     # Query history api to have report data to export
     query_api_create_and_get_report(
         server=rotkehlchen_api_server_with_exchanges,
-        start_ts=0,
-        end_ts=1601040361,
+        start_ts=Timestamp(0),
+        end_ts=Timestamp(1601040361),
         prepare_mocks=True,
     )
-    csv_dir = str(tmpdir_factory.mktemp('test_csv_dir'))
-    csv_dir2 = str(tmpdir_factory.mktemp('test_csv_dir2'))
+    csv_dir = Path(tmpdir_factory.mktemp('test_csv_dir'))
+    csv_dir2 = Path(tmpdir_factory.mktemp('test_csv_dir2'))
 
     # now query the export endpoint with json body
     response = requests.get(
         api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
-        json={'directory_path': csv_dir},
+        json={'directory_path': str(csv_dir)},
     )
     assert_csv_export_response(response, csv_dir)
     # now query the export endpoint with query params
@@ -132,8 +151,8 @@ def test_history_export_download_csv(
 
     query_api_create_and_get_report(
         server=rotkehlchen_api_server_with_exchanges,
-        start_ts=0,
-        end_ts=1601040361,
+        start_ts=Timestamp(0),
+        end_ts=Timestamp(1601040361),
         prepare_mocks=True,
     )
     response = requests.get(api_url_for(
@@ -155,8 +174,8 @@ def test_history_export_download_csv(
     # query it again and make sure that csv is recreated and events are not duplicated
     query_api_create_and_get_report(
         server=rotkehlchen_api_server_with_exchanges,
-        start_ts=0,
-        end_ts=1601040361,
+        start_ts=Timestamp(0),
+        end_ts=Timestamp(1601040361),
         prepare_mocks=True,
     )
     response = requests.get(
@@ -186,7 +205,7 @@ def test_history_export_download_csv(
             timestamp=TimestampMS(1601040360000),
             location=Location.ETHEREUM,
             asset=custom_asset,
-            balance=Balance(amount=FVal('1.5')),
+            amount=FVal('1.5'),
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             notes=f'Test note to check if label is added with {ETH_ADDRESS1} address',
@@ -204,7 +223,7 @@ def test_history_export_download_csv(
         )
     response = requests.get(
         api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
-        json={'directory_path': csv_dir},
+        json={'directory_path': str(csv_dir)},
     )
     rows = assert_csv_export_response(response, csv_dir, expected_num_of_events=1)
     assert rows[0]['notes'] == f'Test note to check if label is added with {ETH_ADDRESS1} [ETH_ADDRESS1] address'  # noqa: E501
@@ -222,7 +241,7 @@ def test_history_export_download_csv(
             timestamp=TimestampMS(1601040360000),
             location=Location.ZKSYNC_LITE,
             asset=custom_asset,
-            balance=Balance(amount=FVal('1.5')),
+            amount=FVal('1.5'),
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             notes=f'Test note to check if label is added with {ETH_ADDRESS1} address',
@@ -240,7 +259,7 @@ def test_history_export_download_csv(
         )
     response = requests.get(
         api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
-        json={'directory_path': csv_dir},
+        json={'directory_path': str(csv_dir)},
     )
     rows = assert_csv_export_response(response, csv_dir, expected_num_of_events=1)
     assert f'Test note to check if label is added with {ETH_ADDRESS1} [ETH_ADDRESS1 IN ZKSYNC] address' in rows[0]['notes']  # noqa: E501
@@ -250,10 +269,10 @@ def test_history_export_download_csv(
 @pytest.mark.parametrize('encoding_to_use', ['utf-8', 'cp1252'])
 @pytest.mark.parametrize('initialize_accounting_rules', [True])
 def test_encoding(
-        rotkehlchen_api_server,
-        tmpdir_factory,
-        encoding_to_use,
-):
+        rotkehlchen_api_server: 'APIServer',
+        tmpdir_factory: pytest.TempdirFactory,
+        encoding_to_use: str,
+) -> None:
     """Test that exporting csv and debug report works correctly with different encodings"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     unicode_notes = 'Κοκκινολαίμης 飛到頂端'  # Use some unicode characters
@@ -273,15 +292,15 @@ def test_encoding(
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(amount=FVal(1)),
+            amount=ONE,
             notes=unicode_notes,
         )]),
     )
     with locale_patch, history_patch:
         query_api_create_and_get_report(
             server=rotkehlchen_api_server,
-            start_ts=0,
-            end_ts=1601040361,
+            start_ts=Timestamp(0),
+            end_ts=Timestamp(1601040361),
             prepare_mocks=False,
         )
         export_dir = Path(tmpdir_factory.mktemp('test_csv_dir'))
@@ -320,9 +339,9 @@ def test_encoding(
 @pytest.mark.parametrize('ethereum_accounts', [[ETH_ADDRESS1, ETH_ADDRESS2, ETH_ADDRESS3]])
 @pytest.mark.parametrize('mocked_price_queries', [prices])
 def test_history_export_csv_errors(
-        rotkehlchen_api_server_with_exchanges,
-        tmpdir_factory,
-):
+        rotkehlchen_api_server_with_exchanges: 'APIServer',
+        tmpdir_factory: pytest.TempdirFactory,
+) -> None:
     """Test that errors on the csv export REST API endpoint are handled correctly"""
     rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
     setup = prepare_rotki_for_history_processing_test(
@@ -334,7 +353,7 @@ def test_history_export_csv_errors(
     # Query the export endpoint without first having queried the history
     response = requests.get(
         api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
-        json={'directory_path': csv_dir},
+        json={'directory_path': str(csv_dir)},
     )
     assert_error_response(
         response=response,
@@ -345,8 +364,6 @@ def test_history_export_csv_errors(
     # Now, query history processing to have data for exporting
     with ExitStack() as stack:
         for manager in setup:
-            if manager is None:
-                continue
             stack.enter_context(manager)
         response = requests.get(
             api_url_for(rotkehlchen_api_server_with_exchanges, 'historyprocessingresource'),

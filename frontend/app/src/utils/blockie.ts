@@ -23,17 +23,14 @@ interface BlockieOptions {
 
 const randSeed = new Array(4); // Xorshift: [x, y, z, w] 32 bit values
 
-function seedRand(seed: string) {
-  for (let i = 0; i < randSeed.length; i++)
-    randSeed[i] = 0;
+function seedRand(seed: string): void {
+  for (let i = 0; i < randSeed.length; i++) randSeed[i] = 0;
 
-  for (let i = 0; i < seed.length; i++) {
-    randSeed[i % 4]
-      = (randSeed[i % 4] << 5) - randSeed[i % 4] + seed.charCodeAt(i);
-  }
+  for (let i = 0; i < seed.length; i++)
+    randSeed[i % 4] = (randSeed[i % 4] << 5) - randSeed[i % 4] + seed.charCodeAt(i);
 }
 
-function rand() {
+function rand(): number {
   // based on Java's String.hashCode(), expanded to 4 32bit values
   const t = randSeed[0] ^ (randSeed[0] << 11);
 
@@ -45,7 +42,7 @@ function rand() {
   return (randSeed[3] >>> 0) / ((1 << 31) >>> 0);
 }
 
-function createColor() {
+function createColor(): string {
   // saturation is the whole color spectrum
   const h = Math.floor(rand() * 360);
   // saturation goes from 40 to 100, it avoids greyish colors
@@ -56,7 +53,7 @@ function createColor() {
   return `hsl(${h},${s},${l})`;
 }
 
-function createImageData(size: number) {
+function createImageData(size: number): number[] {
   const width = size; // Only support square icons for now
   const height = size;
 
@@ -75,8 +72,7 @@ function createImageData(size: number) {
     r.reverse();
     row = row.concat(r);
 
-    for (const element of row)
-      data.push(element);
+    for (const element of row) data.push(element);
   }
 
   return data;
@@ -98,7 +94,7 @@ function buildOpts(opts: Partial<BlockieOptions>): BlockieOptions {
   return newOpts as BlockieOptions;
 }
 
-function renderIcon(opts: Partial<BlockieOptions>, canvas: HTMLCanvasElement) {
+function renderIcon(opts: Partial<BlockieOptions>, canvas: HTMLCanvasElement): HTMLCanvasElement {
   const newOpts: BlockieOptions = buildOpts(opts || {});
   const imageData = createImageData(newOpts.size);
   const width = Math.sqrt(imageData.length);
@@ -120,12 +116,7 @@ function renderIcon(opts: Partial<BlockieOptions>, canvas: HTMLCanvasElement) {
         // if data is 2, choose spot color, if 1 choose foreground
         cc.fillStyle = imageDatum === 1 ? newOpts.color : newOpts.spotColor;
 
-        cc.fillRect(
-          col * newOpts.scale,
-          row * newOpts.scale,
-          newOpts.scale,
-          newOpts.scale,
-        );
+        cc.fillRect(col * newOpts.scale, row * newOpts.scale, newOpts.scale, newOpts.scale);
       }
     }
   }

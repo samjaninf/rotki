@@ -1,4 +1,8 @@
 <script setup lang="ts">
+defineOptions({
+  inheritAttrs: false,
+});
+
 const props = withDefaults(
   defineProps<{
     tag?: string;
@@ -8,28 +12,27 @@ const props = withDefaults(
     padding?: string;
   }>(),
   {
-    tag: 'div',
-    height: 'auto',
-    width: 'auto',
     circle: false,
+    height: 'auto',
     padding: '2px',
+    tag: 'div',
+    width: 'auto',
   },
 );
 
-const { dark } = useTheme();
+const { isDark } = useRotkiTheme();
 
 const { circle, padding } = toRefs(props);
 
-const radius = computed(() => (get(circle) ? '50%' : '4px'));
-const attrs = useAttrs();
+const radius = computed(() => (get(circle) ? '50%' : '6px'));
 </script>
 
 <template>
   <Component
     :is="tag"
     class="wrapper flex"
-    :class="{ 'wrapper--inverted': dark }"
-    v-bind="attrs"
+    :class="{ 'wrapper--inverted': isDark }"
+    v-bind="$attrs"
     :style="{ width, height }"
   >
     <slot />

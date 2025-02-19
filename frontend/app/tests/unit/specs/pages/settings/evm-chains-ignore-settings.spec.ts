@@ -1,19 +1,12 @@
-import { type Wrapper, mount } from '@vue/test-utils';
+import { type VueWrapper, mount } from '@vue/test-utils';
 import { promiseTimeout } from '@vueuse/core';
 import flushPromises from 'flush-promises';
-import Vuetify from 'vuetify';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiValidationError } from '@/types/api/errors';
 import EvmChainsToIgnoreSettings from '@/components/settings/general/EvmChainsToIgnoreSettings.vue';
+import { useMainStore } from '@/store/main';
 import { libraryDefaults } from '../../../utils/provide-defaults';
 import type { SettingsUpdate } from '@/types/user';
-
-vi.mock('@/store/main', () => ({
-  useMainStore: vi.fn().mockReturnValue({
-    connected: true,
-    setConnected: vi.fn(),
-    connect: vi.fn(),
-  }),
-}));
 
 vi.mock('@/composables/api/settings/settings-api', async () => {
   const mod = await vi.importActual<typeof import('@/composables/api/settings/settings-api')>(
@@ -23,9 +16,12 @@ vi.mock('@/composables/api/settings/settings-api', async () => {
     ...mod,
     useSettingsApi: vi.fn().mockImplementation(() => {
       const mocked = mod.useSettingsApi();
-      const setSettings = vi.fn().mockImplementation((params: SettingsUpdate) => {
-        if (params.evmchainsToSkipDetection?.includes('ethereum'))
-          throw new ApiValidationError('{"settings": {"evmchains_to_skip_detection": {"1": ["Failed to deserialize SupportedBlockchain value ethereum"]}}}');
+      const setSettings = vi.fn().mockImplementation(async (params: SettingsUpdate) => {
+        if (params.evmchainsToSkipDetection?.includes('ethereum')) {
+          throw new ApiValidationError(
+            '{"settings": {"evmchains_to_skip_detection": {"1": ["Failed to deserialize SupportedBlockchain value ethereum"]}}}',
+          );
+        }
 
         return mocked.setSettings(params);
       });
@@ -39,15 +35,19 @@ vi.mock('@/composables/api/settings/settings-api', async () => {
 });
 
 describe('evmChainsToIgnoreSettings.vue', () => {
-  let wrapper: Wrapper<any>;
+  let wrapper: VueWrapper<InstanceType<typeof EvmChainsToIgnoreSettings>>;
 
   function createWrapper() {
-    const vuetify = new Vuetify();
     const pinia = createPinia();
     setActivePinia(pinia);
+
+    const mainStore = useMainStore();
+    vi.spyOn(mainStore, 'setConnected').mockReturnValue(undefined);
+    vi.spyOn(mainStore, 'connect').mockReturnValue(undefined);
+    mainStore.connected = true;
+
     return mount(EvmChainsToIgnoreSettings, {
       pinia,
-      vuetify,
       provide: libraryDefaults,
     });
   }
@@ -72,13 +72,13 @@ describe('evmChainsToIgnoreSettings.vue', () => {
     await input.trigger('input', { value: chains });
 
     await nextTick();
-    await promiseTimeout(2000);
+    await promiseTimeout(2000); // TODO: figure a way that does not require hardcoding delay in the tests
     await flushPromises();
 
     expect(wrapper.find('.details').exists()).toBeTruthy();
     expect(wrapper.find('.details').text()).toContain('settings.saved');
 
-    expect(inputEl.value).toMatchObject(chains.toString());
+    expect(inputEl.value).toMatch(chains.toString());
   });
 
   it('displays warning if wrong chain values are passed', async () => {
@@ -86,7 +86,7 @@ describe('evmChainsToIgnoreSettings.vue', () => {
 
     await input.trigger('input', { value: ['ethereum'] });
     await nextTick();
-    await promiseTimeout(2000);
+    await promiseTimeout(2000); // TODO: figure a way that does not require hardcoding delay in the tests
     await flushPromises();
 
     expect(wrapper.find('.details').text()).toContain('settings.not_saved');

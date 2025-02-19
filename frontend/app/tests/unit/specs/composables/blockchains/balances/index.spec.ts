@@ -1,6 +1,13 @@
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { Blockchain } from '@rotki/common';
 import { computed } from 'vue';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { startPromise } from '@shared/utils';
 import { Section } from '@/types/status';
+import { useBlockchainStore } from '@/store/blockchain';
+import { createAccount } from '@/utils/blockchain/accounts/create';
+import { useStatusStore } from '@/store/status';
+import { useBlockchainBalancesApi } from '@/composables/api/balances/blockchain';
+import { useBlockchainBalances } from '@/composables/blockchain/balances';
 import type { EvmChainInfo, SupportedChains } from '@/types/api/chains';
 
 vi.mock('@/store/blockchain/balances/eth', () => ({
@@ -62,6 +69,7 @@ vi.mock('@/composables/info/chains', () => ({
     getChainName: () => 'Ethereum',
     getNativeAsset: (chain: Blockchain) => chain,
     getChainImageUrl: (chain: Blockchain) => `${chain}.png`,
+    getChainAccountType: () => 'evm',
   }),
 }));
 
@@ -69,6 +77,7 @@ describe('composables::blockchain/balances/index', () => {
   setActivePinia(createPinia());
   let api: ReturnType<typeof useBlockchainBalancesApi> = useBlockchainBalancesApi();
   let blockchainBalances: ReturnType<typeof useBlockchainBalances> = useBlockchainBalances();
+  const blockchainStore: ReturnType<typeof useBlockchainStore> = useBlockchainStore();
 
   beforeEach(() => {
     api = useBlockchainBalancesApi();
@@ -78,10 +87,24 @@ describe('composables::blockchain/balances/index', () => {
 
   describe('fetchBlockchainBalances', () => {
     it('all supported blockchains', async () => {
+      // won't call if no account
+      await blockchainBalances.fetchBlockchainBalances();
+
+      expect(api.queryBlockchainBalances).toHaveBeenCalledTimes(0);
+      expect(api.queryBlockchainBalances).not.toHaveBeenCalledWith(false, 'eth');
+
+      // call if there's account
+      blockchainStore.updateAccounts(Blockchain.ETH, [
+        createAccount(
+          { address: '0x49ff149D649769033d43783E7456F626862CD160', label: null, tags: null },
+          { nativeAsset: 'ETH', chain: Blockchain.ETH },
+        ),
+      ]);
+
       await blockchainBalances.fetchBlockchainBalances();
 
       expect(api.queryBlockchainBalances).toHaveBeenCalledTimes(1);
-      expect(api.queryBlockchainBalances).toHaveBeenCalledWith(false, 'eth');
+      expect(api.queryBlockchainBalances).toHaveBeenCalledWith(false, 'eth', undefined);
     });
 
     describe('particular blockchain', () => {
@@ -97,10 +120,7 @@ describe('composables::blockchain/balances/index', () => {
 
       const assert = (times = 1) => {
         expect(api.queryBlockchainBalances).toHaveBeenCalledTimes(times);
-        expect(api.queryBlockchainBalances).toHaveBeenCalledWith(
-          true,
-          Blockchain.ETH,
-        );
+        expect(api.queryBlockchainBalances).toHaveBeenCalledWith(true, Blockchain.ETH, undefined);
       };
 
       const { isLoading } = useStatusStore();

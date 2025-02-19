@@ -1,42 +1,65 @@
 <script setup lang="ts">
-import { externalLinks } from '@/data/external-links';
+import { externalLinks } from '@shared/external-links';
+import { useExternalApiKeys, useServiceKeyHandler } from '@/composables/settings/api-keys/external';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import ServiceKeyCard from '@/components/settings/api-keys/ServiceKeyCard.vue';
+import ServiceKey from '@/components/settings/api-keys/ServiceKey.vue';
 
 const { t } = useI18n();
 
 const name = 'opensea';
 
-const { loading, apiKey, actionStatus, save, confirmDelete }
-  = useExternalApiKeys(t);
+const { actionStatus, apiKey, confirmDelete, loading, save } = useExternalApiKeys(t);
+const { saveHandler, serviceKeyRef } = useServiceKeyHandler<InstanceType<typeof ServiceKey>>();
 
 const key = apiKey(name);
 const status = actionStatus(name);
 </script>
 
 <template>
-  <RuiCard>
-    <template #header>
-      {{ t('external_services.opensea.title') }}
+  <ServiceKeyCard
+    :key-set="!!key"
+    :title="t('external_services.opensea.title')"
+    :subtitle="t('external_services.opensea.description')"
+    image-src="./assets/images/services/opensea.svg"
+    :primary-action="key
+      ? t('external_services.replace_key')
+      : t('external_services.save_key')"
+    :action-disabled="!serviceKeyRef?.currentValue"
+    @confirm="saveHandler()"
+  >
+    <template #left-buttons>
+      <RuiButton
+        :disabled="loading || !key"
+        color="error"
+        variant="text"
+        @click="confirmDelete(name)"
+      >
+        <template #prepend>
+          <RuiIcon
+            name="lu-trash-2"
+            size="16"
+          />
+        </template>
+        {{ t('external_services.delete_key') }}
+      </RuiButton>
     </template>
-    <template #subheader>
-      {{ t('external_services.opensea.description') }}
-    </template>
-
     <ServiceKey
+      ref="serviceKeyRef"
+      hide-actions
       :api-key="key"
       :name="name"
       :data-cy="name"
       :label="t('external_services.api_key')"
       :hint="t('external_services.opensea.hint')"
       :loading="loading"
-      :tooltip="t('external_services.opensea.delete_tooltip')"
       :status="status"
       @save="save($event)"
-      @delete-key="confirmDelete($event)"
     >
-      <i18n
+      <i18n-t
         tag="div"
         class="text-rui-text-secondary text-body-2"
-        path="external_services.get_api_key"
+        keypath="external_services.get_api_key"
       >
         <template #link>
           <ExternalLink
@@ -46,7 +69,7 @@ const status = actionStatus(name);
             {{ t('common.here') }}
           </ExternalLink>
         </template>
-      </i18n>
+      </i18n-t>
     </ServiceKey>
-  </RuiCard>
+  </ServiceKeyCard>
 </template>

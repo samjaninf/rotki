@@ -1,14 +1,20 @@
-<script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
+<script setup lang="ts" generic="T extends string | string[]">
+import { Blockchain } from '@rotki/common';
 import { Module } from '@/types/modules';
+import { useSupportedChains } from '@/composables/info/chains';
+import { useModules } from '@/composables/session/modules';
+import ChainDisplay from '@/components/accounts/blockchain/ChainDisplay.vue';
+import type { AutoCompleteProps } from '@rotki/ui-library';
+import type { ChainInfo } from '@/types/api/chains';
 
 defineOptions({
   inheritAttrs: false,
 });
 
+const model = defineModel<T extends Array<infer U> ? U[] : T | undefined>({ required: true });
+
 const props = withDefaults(
   defineProps<{
-    modelValue?: string | null;
     disabled?: boolean;
     dense?: boolean;
     evmOnly?: boolean;
@@ -16,22 +22,15 @@ const props = withDefaults(
     items?: string[];
   }>(),
   {
-    modelValue: null,
-    disabled: false,
     dense: false,
+    disabled: false,
     evmOnly: false,
     excludeEthStaking: false,
     items: () => [],
   },
 );
 
-const emit = defineEmits<{
-  (e: 'update:model-value', blockchain: string | null): void;
-}>();
-
-const rootAttrs = useAttrs();
-
-const { evmOnly, modelValue, excludeEthStaking, items } = toRefs(props);
+const { evmOnly, excludeEthStaking, items } = toRefs(props);
 
 const { isModuleEnabled } = useModules();
 
@@ -57,31 +56,39 @@ const filteredItems = computed(() => {
   return data;
 });
 
-function updateBlockchain(blockchain: Blockchain) {
-  emit('update:model-value', blockchain);
-}
-
 const mappedOptions = computed(() => {
   const filtered = get(filteredItems);
-  return get(supportedChains).filter(item => filtered.includes(item.id));
+  const chains = get(supportedChains).filter(item => filtered.includes(item.id));
+  if (get(items).includes('evm')) {
+    chains.unshift({
+      id: 'evm',
+      image: '',
+      name: '',
+      type: 'evm',
+    });
+  }
+
+  return chains;
 });
+
+const autoCompleteProps: AutoCompleteProps<string, ChainInfo> = {
+  keyAttr: 'id',
+};
 </script>
 
 <template>
   <RuiAutoComplete
+    v-model="model"
     :dense="dense"
     :disabled="disabled"
     :options="mappedOptions"
     :label="t('account_form.labels.blockchain')"
-    :value="modelValue"
     data-cy="account-blockchain-field"
     variant="outlined"
     auto-select-first
-    key-attr="id"
     text-attr="name"
     :item-height="dense ? 48 : 56"
-    v-bind="rootAttrs"
-    @input="updateBlockchain($event)"
+    v-bind="{ ...$attrs, ...autoCompleteProps }"
   >
     <template #selection="{ item }">
       <ChainDisplay

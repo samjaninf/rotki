@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import type { StyleValue } from 'vue/types/jsx';
+import { uniqueStrings } from '@/utils/data';
+import { getDomain } from '@/utils/url';
+import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { useConfirmStore } from '@/store/confirm';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useNftImage } from '@/composables/nft-image';
+import HashLink from '@/components/helper/HashLink.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import type { StyleValue } from 'vue';
 
 const props = withDefaults(
   defineProps<{
@@ -8,12 +17,10 @@ const props = withDefaults(
     size?: string;
   }>(),
   {
-    styled: undefined,
     size: '50px',
+    styled: undefined,
   },
 );
-
-const css = useCssModule();
 
 const { identifier } = toRefs(props);
 const { assetInfo } = useAssetInfoRetrieval();
@@ -27,28 +34,17 @@ const balanceData = assetInfo(identifier);
 
 const { t } = useI18n();
 
-const imageUrlSource: ComputedRef<string | null> = computed(
-  () => get(balanceData)?.imageUrl || null,
-);
+const imageUrlSource = computed<string | null>(() => get(balanceData)?.imageUrl || null);
 
-const {
-  shouldRender,
-  isVideo,
-  renderedMedia,
-} = useNftImage(imageUrlSource);
+const { isVideo, renderedMedia, shouldRender } = useNftImage(imageUrlSource);
 
-const domain: ComputedRef<string | null> = computed(() =>
-  getDomain(get(imageUrlSource) || ''),
-);
+const domain = computed<string | null>(() => getDomain(get(imageUrlSource) || ''));
 
 const { show } = useConfirmStore();
 
 function showAllowDomainConfirmation() {
   show(
     {
-      title: t(
-        'general_settings.nft_setting.update_whitelist_confirmation.title',
-      ),
       message: t(
         'general_settings.nft_setting.update_whitelist_confirmation.message',
         {
@@ -56,6 +52,7 @@ function showAllowDomainConfirmation() {
         },
         2,
       ),
+      title: t('general_settings.nft_setting.update_whitelist_confirmation.title'),
     },
     allowDomain,
   );
@@ -67,15 +64,12 @@ function allowDomain() {
   if (!domainVal)
     return;
 
-  const newWhitelisted = [
-    ...get(whitelistedDomainsForNftImages),
-    domainVal,
-  ].filter(uniqueStrings);
+  const newWhitelisted = [...get(whitelistedDomainsForNftImages), domainVal].filter(uniqueStrings);
 
   updateSetting({ whitelistedDomainsForNftImages: newWhitelisted });
 }
 
-const collectionName: ComputedRef<string | null> = computed(() => {
+const collectionName = computed<string | null>(() => {
   const data = get(balanceData);
   if (!data || !data.collectionName)
     return null;
@@ -84,7 +78,7 @@ const collectionName: ComputedRef<string | null> = computed(() => {
   return `${data.collectionName} #${tokenId}`;
 });
 
-const name: ComputedRef<string | null> = computed(() => {
+const name = computed<string | null>(() => {
   const data = get(balanceData);
   return data?.name || get(collectionName);
 });
@@ -117,7 +111,7 @@ const fallbackData = computed(() => {
           <template #activator>
             <div
               class="my-2 bg-rui-grey-200 rounded flex items-center justify-center"
-              :class="css.preview"
+              :class="$style.preview"
               :style="styled"
               @click="!shouldRender ? showAllowDomainConfirmation() : null"
             >
@@ -152,7 +146,7 @@ const fallbackData = computed(() => {
         </template>
         <div
           v-else-if="name"
-          :class="css['nft-details']"
+          :class="$style['nft-details']"
         >
           <div class="font-medium text-truncate">
             {{ name }}

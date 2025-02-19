@@ -74,7 +74,8 @@ DB Upgrade status
 =========================
 
 The messages sent by rotki when a user is logging in and a db upgrade is happening. The format is the following.
-
+A message having ``total_steps`` and ``current_step`` being ``0`` is sent at the start for the frontend to
+switch to the progress screen from the login screen.
 
 ::
 
@@ -101,6 +102,8 @@ Data migration status
 =========================
 
 The messages sent by rotki when a user is logging in and a db upgrade is happening. The format is the following.
+A message having ``total_steps`` and ``current_step`` being ``0`` is sent at the start for the frontend to
+switch to the progress screen from the login screen.
 
 
 ::
@@ -316,11 +319,12 @@ When the endpoint to start the task for decoding undecoded transactions is queri
 ::
 
     {
-        "type": "evm_undecoded_transactions",
-        "data": {chain":"ethereum", "total":2, "processed":0}
+        "type": "progress_updates",
+        "data": {chain":"ethereum", "total":2, "processed":0, "subtype":"evm_undecoded_transactions"}
     }
 
 
+- ``subtype``: Set to "evm_undecoded_transactions" to identify transaction decoding progress
 - ``chain``: Chain where the task is decoding transactions.
 - ``total``: Total number of transactions that will be decoded.
 - ``processed``: The total number of transactions that have already been decoded.
@@ -347,3 +351,115 @@ When a reminder for a calendar event is processed we emit a message with the fol
 
 
 - ``data``: Contains the information of the calendar event, that is: identifier, name, description, timestamp, address, blockchain, counterparty and color.
+
+
+Protocol cache updates
+============================
+
+Whenever a protocol cache is being updated for protocols like Curve, Convex, Gearbox, [Velo/Aero]drome, etc., Messages are emitted every 5 seconds to notify the progress of it.
+
+::
+
+    {
+        "data": {
+            "subtype":"protocol_cache_updates",
+            "protocol":"curve",
+            "chain":"ethereum",
+            "processed": 324,
+            "total":3042,
+        },
+        "type":"progress_updates"
+    }
+
+
+- ``subtype``: Set to "protocol_cache_updates" to identify protocol cache update progress
+- ``protocol``: The protocol being updated (e.g., "curve", "convex", "gearbox")
+- ``chain``: The blockchain on which the protocol cache is being updated
+- ``processed``: Number of items processed so far
+- ``total``: Total number of items to process
+
+
+Unknown asset on exchange
+============================
+
+If an unknown asset is encountered on an exchange we emit a message with the following format.
+
+::
+
+    {
+        "type": "exchange_unknown_asset",
+        "data": {
+            "location": "bybit",
+            "name": "Bybit 1",
+            "identifier": "ENA",
+            "details": "balance query",
+        }
+    }
+
+
+- ``location``: Exchange where the asset was found.
+- ``name``: Differentiates between multiple instances of the same exchange.
+- ``identifier``: Asset identifier of the unknown asset.
+- ``details``: Details about what type of event was being processed when the unknown asset was encountered.
+
+
+CSV Import Results
+=======================
+
+When importing CSV data from various sources, progress updates are sent to inform about the import status and any issues encountered. The format is as follows:
+
+::
+
+    {
+        "type": "progress_updates",
+        "data": {
+            "source_name": "Cointracking",
+            "subtype": "csv_import_result",
+            "total": 12,
+            "processed": 7,
+            "messages": [
+                {
+                    "msg": "Not importing ETH Transactions from Cointracking.",
+                    "rows": [1, 2],
+                    "is_error": true
+                },
+                {
+                    "msg": "Unknown asset ADS.",
+                    "rows": [9],
+                    "is_error": true
+                }
+            ]
+        }
+    }
+
+
+- ``subtype``: Set to "csv_import_result" to identify CSV import progress
+- ``source_name``: Name of the source from which the CSV is being imported
+- ``total``: Total number of rows to be processed in the CSV
+- ``processed``: Number of rows that have been processed so far
+- ``messages``: Array of message objects containing:
+  - ``msg``: Description of the import status or error
+  - ``rows``: Array of row numbers affected by this message
+  - ``is_error``: Boolean indicating if this message represents an error condition
+
+
+Historical Price Query Status
+=================================
+
+During historical price queries, progress updates are sent to track the status of the price data retrieval. The format is:
+
+::
+
+    {
+        "type": "progress_updates",
+        "data": {
+            "total": 100,
+            "processed": 45,
+            "subtype": "historical_price_query_status"
+        }
+    }
+
+
+- ``total``: Total number of time intervals to query
+- ``processed``: Number of intervals that have been processed so far
+- ``subtype``: Set to "historical_price_query_status" to identify historical price query progress

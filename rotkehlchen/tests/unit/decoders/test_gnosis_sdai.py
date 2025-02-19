@@ -1,6 +1,5 @@
 import pytest
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS, CPT_SDAI
 from rotkehlchen.chain.gnosis.modules.sdai.constants import GNOSIS_SDAI_ADDRESS
@@ -19,14 +18,13 @@ A_GNOSIS_SDAI = evm_address_to_identifier(
 )
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('gnosis_accounts', [['0x78E87757861185Ec5e8C0EF6BF0C69Fa7832df6C']])
-def test_deposit_xdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
+def test_deposit_xdai_to_sdai(gnosis_inquirer, gnosis_accounts):
     user_address = gnosis_accounts[0]
     tx_hash = deserialize_evm_tx_hash('0x1342646cab122d58f0b7dfae404dad5235d42224de881099dc05e59477bb93aa')  # noqa: E501
     actual_events, _ = get_decoded_events_of_transaction(
         evm_inquirer=gnosis_inquirer,
-        database=database,
         tx_hash=tx_hash,
     )
     timestamp = TimestampMS(1707169525000)
@@ -39,9 +37,9 @@ def test_deposit_xdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_XDAI,
-            balance=Balance(amount=FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
-            notes=f'Burned {gas_amount} XDAI for gas',
+            notes=f'Burn {gas_amount} XDAI for gas',
             tx_hash=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
@@ -51,7 +49,7 @@ def test_deposit_xdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_XDAI,
-            balance=Balance(amount=FVal(deposit_amount)),
+            amount=FVal(deposit_amount),
             location_label=user_address,
             notes=f'Deposit {deposit_amount} XDAI into the Savings xDAI contract',
             tx_hash=tx_hash,
@@ -64,7 +62,7 @@ def test_deposit_xdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
             asset=A_GNOSIS_SDAI,
-            balance=Balance(amount=FVal(receive_amount)),
+            amount=FVal(receive_amount),
             location_label=user_address,
             notes=f'Withdraw {receive_amount} sDAI from the Savings xDAI contract',
             tx_hash=tx_hash,
@@ -76,15 +74,14 @@ def test_deposit_xdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
     assert actual_events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('gnosis_accounts', [['0x4fFAD6ac852c0Af0AA301376F4C5Dea3a928b120']])
-def test_withdraw_xdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
+def test_withdraw_xdai_from_sdai(gnosis_inquirer, gnosis_accounts):
     user_address = gnosis_accounts[0]
     receive_address = '0xD499b51fcFc66bd31248ef4b28d656d67E591A94'
     tx_hash = deserialize_evm_tx_hash('0xe23ee1ac52b8981723c737b01781691b965c5819cccccdb98e7c8cb5894dddbb')  # noqa: E501
     actual_events, _ = get_decoded_events_of_transaction(
         evm_inquirer=gnosis_inquirer,
-        database=database,
         tx_hash=tx_hash,
     )
     timestamp = TimestampMS(1707070975000)
@@ -98,9 +95,9 @@ def test_withdraw_xdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_XDAI,
-            balance=Balance(amount=FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
-            notes=f'Burned {gas_amount} XDAI for gas',
+            notes=f'Burn {gas_amount} XDAI for gas',
             tx_hash=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
@@ -110,7 +107,7 @@ def test_withdraw_xdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
             asset=A_XDAI,
-            balance=Balance(amount=FVal(received_amount)),
+            amount=FVal(received_amount),
             location_label=user_address,
             notes=f'Withdraw {received_amount} XDAI from the Savings xDAI contract',
             tx_hash=tx_hash,
@@ -123,7 +120,7 @@ def test_withdraw_xdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_GNOSIS_SDAI,
-            balance=Balance(amount=FVal(sent_amount)),
+            amount=FVal(sent_amount),
             location_label=user_address,
             notes=f'Return {sent_amount} sDAI to the Savings xDAI contract',
             counterparty=CPT_SDAI,
@@ -135,14 +132,13 @@ def test_withdraw_xdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
     assert actual_events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('gnosis_accounts', [['0x5938852FE18Ad6963322FB98D1fDDA5c24DD8a0E']])
-def test_deposit_wxdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
+def test_deposit_wxdai_to_sdai(gnosis_inquirer, gnosis_accounts):
     user_address = gnosis_accounts[0]
     tx_hash = deserialize_evm_tx_hash('0xd406f40ecd2538d41adb2e645c8fb6d32cec5485510798bfed5d991c258d4b1d')  # noqa: E501
     actual_events, _ = get_decoded_events_of_transaction(
         evm_inquirer=gnosis_inquirer,
-        database=database,
         tx_hash=tx_hash,
     )
     timestamp = TimestampMS(1706794335000)
@@ -155,9 +151,9 @@ def test_deposit_wxdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_XDAI,
-            balance=Balance(amount=FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
-            notes=f'Burned {gas_amount} XDAI for gas',
+            notes=f'Burn {gas_amount} XDAI for gas',
             tx_hash=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
@@ -167,7 +163,7 @@ def test_deposit_wxdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_WXDAI,
-            balance=Balance(amount=FVal(deposit_amount)),
+            amount=FVal(deposit_amount),
             location_label=user_address,
             notes=f'Deposit {deposit_amount} WXDAI into the Savings xDAI contract',
             tx_hash=tx_hash,
@@ -180,7 +176,7 @@ def test_deposit_wxdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
             asset=A_GNOSIS_SDAI,
-            balance=Balance(amount=FVal(withdraw_amount)),
+            amount=FVal(withdraw_amount),
             location_label=user_address,
             notes=f'Withdraw {withdraw_amount} sDAI from the Savings xDAI contract',
             tx_hash=tx_hash,
@@ -192,14 +188,13 @@ def test_deposit_wxdai_to_sdai(database, gnosis_inquirer, gnosis_accounts):
     assert actual_events == expected_events
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('gnosis_accounts', [['0x23727b54163F63CffdD8B7769e0eCb13Df253b4e']])
-def test_withdraw_wxdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
+def test_withdraw_wxdai_from_sdai(gnosis_inquirer, gnosis_accounts):
     user_address = gnosis_accounts[0]
     tx_hash = deserialize_evm_tx_hash('0xd7e2123adc6c8f4fd8ced74733010cf47dba2bd4e0e5c468d63d53942b9e2dd3')  # noqa: E501
     actual_events, _ = get_decoded_events_of_transaction(
         evm_inquirer=gnosis_inquirer,
-        database=database,
         tx_hash=tx_hash,
     )
     timestamp = TimestampMS(1706699405000)
@@ -212,9 +207,9 @@ def test_withdraw_wxdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_XDAI,
-            balance=Balance(amount=FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
-            notes=f'Burned {gas_amount} XDAI for gas',
+            notes=f'Burn {gas_amount} XDAI for gas',
             tx_hash=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
@@ -224,7 +219,7 @@ def test_withdraw_wxdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_GNOSIS_SDAI,
-            balance=Balance(amount=FVal(redeem_amount)),
+            amount=FVal(redeem_amount),
             location_label=user_address,
             notes=f'Return {redeem_amount} sDAI to the Savings xDAI contract',
             tx_hash=tx_hash,
@@ -237,7 +232,7 @@ def test_withdraw_wxdai_from_sdai(database, gnosis_inquirer, gnosis_accounts):
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
             asset=A_WXDAI,
-            balance=Balance(amount=FVal(received_amount)),
+            amount=FVal(received_amount),
             location_label=user_address,
             notes=f'Withdraw {received_amount} WXDAI from the Savings xDAI contract',
             tx_hash=tx_hash,

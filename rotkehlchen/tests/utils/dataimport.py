@@ -1,6 +1,5 @@
 from typing import Literal
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset, CryptoAsset, EvmToken
 from rotkehlchen.assets.converters import asset_from_binance
 from rotkehlchen.assets.utils import symbol_to_asset_or_token
@@ -14,6 +13,7 @@ from rotkehlchen.constants.assets import (
     A_DAI,
     A_DOGE,
     A_DOT,
+    A_ETC,
     A_ETH,
     A_ETH2,
     A_ETH_MATIC,
@@ -31,20 +31,20 @@ from rotkehlchen.constants.assets import (
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.data_import.importers.constants import COINTRACKING_EVENT_PREFIX
 from rotkehlchen.db.filtering import (
-    AssetMovementsFilterQuery,
     HistoryEventFilterQuery,
     TradesFilterQuery,
 )
 from rotkehlchen.db.history_events import DBHistoryEvents
-from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.rotkehlchen import Rotkehlchen
+from rotkehlchen.tests.fixtures.websockets import WebsocketReader
 from rotkehlchen.tests.utils.constants import A_AXS, A_CRO, A_GBP, A_KCS, A_MCO, A_XMR, A_XTZ
 from rotkehlchen.types import (
     AssetAmount,
-    AssetMovementCategory,
     Fee,
     Location,
     Price,
@@ -59,22 +59,34 @@ def get_cryptocom_note(desc: str):
     return f'{desc}\nSource: crypto.com (CSV import)'
 
 
-def assert_cointracking_import_results(rotki: Rotkehlchen):
+def assert_cointracking_import_results(rotki: Rotkehlchen, websocket_connection: WebsocketReader):
     """A utility function to help assert on correctness of importing data from cointracking.info"""
     dbevents = DBHistoryEvents(rotki.data.db)
     with rotki.data.db.conn.read_ctx() as cursor:
         trades = rotki.data.db.get_trades(cursor, filter_query=TradesFilterQuery.make(), has_premium=True)  # noqa: E501
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
-            has_premium=True,
-        )
         events = dbevents.get_history_events(cursor, filter_query=HistoryEventFilterQuery.make(), has_premium=True)  # noqa: E501
 
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
-    assert len(warnings) == 4
+    assert len(warnings) == 0
+    websocket_connection.wait_until_messages_num(num=1, timeout=10)
+    assert websocket_connection.pop_message() == {
+        'type': 'progress_updates',
+        'data': {
+            'source_name': 'Cointracking',
+            'subtype': 'csv_import_result',
+            'total': 12,
+            'processed': 7,
+            'messages': [
+                {'msg': 'Not importing ETH Transactions from Cointracking. Cointracking does not export enough data for them. Simply enter your ethereum accounts and all your transactions will be auto imported directly from the chain', 'rows': [1, 2], 'is_error': True},  # noqa: E501
+                {'msg': 'Not importing BTC Transactions from Cointracking. Cointracking does not export enough data for them. Simply enter your BTC accounts and all your transactions will be auto imported directly from the chain', 'rows': [5], 'is_error': True},  # noqa: E501
+                {'msg': 'Unknown asset ADS.', 'rows': [9], 'is_error': True},
+                {'msg': 'Staking event for eip155:1/erc20:0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b(Axie Infinity Shard) at 1641386280 already exists in the DB', 'rows': [12]},  # noqa: E501
+            ],
+        },
+    }
+    assert websocket_connection.messages_num() == 0
 
     expected_trades = [Trade(
         timestamp=Timestamp(1566687719),
@@ -115,30 +127,34 @@ def assert_cointracking_import_results(rotki: Rotkehlchen):
     )]
     assert expected_trades == trades
 
-    expected_movements = [AssetMovement(
+    for movement in [AssetMovement(
+        identifier=1,
+        event_identifier='7626b5d52eb9c67f2c9d83a0c1a97f38c8d2e0466d055fd23c48a30afe2aa972',
         location=Location.POLONIEX,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1565848624),
-        address=None,
-        transaction_id=None,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1565848624000),
         asset=A_XMR,
-        amount=AssetAmount(FVal('5')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='',
+        amount=FVal('5.00000000'),
     ), AssetMovement(
+        identifier=2,
+        event_identifier='5dfd720e8b362491a663f4440477592a4e5c48bef0166bc42dd138c6e4ff0054',
         location=Location.COINBASE,
-        category=AssetMovementCategory.WITHDRAWAL,
-        address=None,
-        transaction_id=None,
-        timestamp=Timestamp(1566726155),
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1566726155000),
         asset=A_ETH,
-        amount=AssetAmount(FVal('0.05770427')),
-        fee_asset=A_ETH,
-        fee=Fee(FVal('0.0001')),
-        link='',
-    )]
-    assert expected_movements == asset_movements
+        amount=FVal('0.05770427'),
+    ), AssetMovement(
+        identifier=3,
+        event_identifier='5dfd720e8b362491a663f4440477592a4e5c48bef0166bc42dd138c6e4ff0054',
+        location=Location.COINBASE,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1566726155000),
+        asset=A_ETH,
+        amount=FVal('0.0001'),
+        is_fee=True,
+    )]:
+        assert movement in events
+        events.remove(movement)  # remove for simpler checking below.
 
     assert len(events) == 2, 'Duplicated event was not ignored'
     for event in events:
@@ -149,12 +165,12 @@ def assert_cointracking_import_results(rotki: Rotkehlchen):
         assert event.location_label is None
         if event.asset == A_AXS:
             assert event.timestamp == 1641386280000
-            assert event.balance.amount == FVal(1)
+            assert event.amount == ONE
             assert event.notes == 'Stake reward of 1.00000000 AXS in binance'
         else:
             assert event.asset == A_ETH
             assert event.timestamp == 1644319740000
-            assert event.balance.amount == FVal('2.12')
+            assert event.amount == FVal('2.12')
             assert event.notes == 'Stake reward of 2.12000000 ETH in binance'
 
 
@@ -162,11 +178,6 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing data from crypto.com"""
     with rotki.data.db.conn.read_ctx() as cursor:
         trades = rotki.data.db.get_trades(cursor, filter_query=TradesFilterQuery.make(), has_premium=True)  # noqa: E501
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
-            has_premium=True,
-        )
         events_db = DBHistoryEvents(rotki.data.db)
         events = events_db.get_history_events(
             cursor=cursor,
@@ -301,53 +312,44 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
     )]
     assert expected_trades == trades
 
-    expected_movements = [AssetMovement(
-        location=Location.CRYPTOCOM,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1596992965),
-        address=None,
-        transaction_id=None,
-        asset=A_DAI,
-        amount=AssetAmount(FVal('115')),
-        fee_asset=A_DAI,
-        fee=Fee(ZERO),
-        link='',
-    ), AssetMovement(
-        location=Location.CRYPTOCOM,
-        category=AssetMovementCategory.WITHDRAWAL,
-        address=None,
-        transaction_id=None,
-        timestamp=Timestamp(1596993025),
-        asset=A_DAI,
-        amount=AssetAmount(FVal('115')),
-        fee_asset=A_DAI,
-        fee=Fee(ZERO),
-        link='',
-    )]
-    assert expected_movements == asset_movements
-
     expected_events = [HistoryEvent(
-        identifier=5,
+        identifier=7,
         event_identifier='CCM_8742d989ca51cb724a6de9492cab6a647074635ea1fb5cad8c9db5596ec4cf46',
         sequence_index=0,
         timestamp=TimestampMS(1596014223000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('12.32402069')),
+        amount=FVal('12.32402069'),
         asset=A_MCO,
         notes=get_cryptocom_note('Sign-up Bonus Unlocked'),
     ), HistoryEvent(
-        identifier=4,
+        identifier=6,
         event_identifier='CCM_983789e023405101a67cc9bb77faba8819e49e78de4ad4fda5281d2ecffd8052',
         sequence_index=0,
         timestamp=TimestampMS(1596429934000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.00061475')),
+        amount=FVal('0.00061475'),
         asset=A_ETH,
         notes=get_cryptocom_note('Crypto Earn'),
+    ), AssetMovement(
+        identifier=5,
+        event_identifier='20b719f712a8951eeaa518e6976950c8410028dc974c2b6e72b62e6e8745d355',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1596992965000),
+        asset=A_DAI,
+        amount=FVal('115'),
+    ), AssetMovement(
+        identifier=4,
+        event_identifier='2e2bba27c61cf9d71b8c60e1fce061a59b01d150b294badbb060c940d603594b',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1596993025000),
+        asset=A_DAI,
+        amount=FVal('115'),
     ), HistoryEvent(
         identifier=3,
         event_identifier='CCM_f24eb95216e362d79bb4a9cec0743fbb5bfd387c743e98ce51a97c6b3c430987',
@@ -356,7 +358,7 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('138.256')),
+        amount=FVal('138.256'),
         asset=A_CRO,
         notes=get_cryptocom_note('Card Rebate: Deliveries'),
     ), HistoryEvent(
@@ -367,7 +369,7 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('52.151')),
+        amount=FVal('52.151'),
         asset=A_CRO,
         notes=get_cryptocom_note('Card Cashback'),
     ), HistoryEvent(
@@ -378,95 +380,95 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('482.2566417')),
+        amount=FVal('482.2566417'),
         asset=A_CRO,
         notes=get_cryptocom_note('Referral Bonus Reward'),
     ), HistoryEvent(
-        identifier=13,
+        identifier=15,
         event_identifier='CCM_da60cedfc97c1df9319d7c2102e0269cbca97d4abac374d2d96a385ab02d072c',
         sequence_index=0,
         timestamp=TimestampMS(1614989135000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('7.76792828')),
+        amount=FVal('7.76792828'),
         asset=A_CRO,
         notes=get_cryptocom_note('Card Rebate: Netflix'),
     ), HistoryEvent(
-        identifier=12,
+        identifier=14,
         event_identifier='CCM_0bcbe9abf2d75f68eecebc2c99611efb56e6f8795fbaa2e2c33db348864e6f4c',
         sequence_index=0,
         timestamp=TimestampMS(1615097829000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('7.76792828')),
+        amount=FVal('7.76792828'),
         asset=A_CRO,
         notes=get_cryptocom_note('Card Rebate Reversal: Netflix'),
     ), HistoryEvent(
-        identifier=10,
+        identifier=12,
         event_identifier='CCM_a5051400dab1a0736302f3d80c969067f60def2e01f00fe5088d46016c351121',
         sequence_index=0,
         timestamp=TimestampMS(1616237351000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('10')),
+        amount=FVal('10'),
         asset=A_CRO,
         notes=get_cryptocom_note('Pay Rewards'),
     ), HistoryEvent(
-        identifier=11,
+        identifier=13,
         event_identifier='CCM_f1b8ad8d5c58fbdc361faa8e2747ac6dd3d7ddc85025dc965f6324149ffe2b08',
         sequence_index=0,
         timestamp=TimestampMS(1616237351000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('100')),
+        amount=FVal('100'),
         asset=A_CRO,
         notes=get_cryptocom_note('To +49XXXXXXXXXX'),
     ), HistoryEvent(
-        identifier=9,
+        identifier=11,
         event_identifier='CCM_29fe97c4aa05263dfccd478c2f90177f0006fea259bd71e22d3813b6602d9692',
         sequence_index=0,
         timestamp=TimestampMS(1616266740000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('100')),
+        amount=FVal('100'),
         asset=symbol_to_asset_or_token('CRO'),
         notes=get_cryptocom_note('From +49XXXXXXXXXX'),
     ), HistoryEvent(
-        identifier=8,
+        identifier=10,
         event_identifier='CCM_5450de111ff9e242523f011a42f2b1ed9684110bf2cb1b3c893ea3c5957bc3db',
         sequence_index=0,
         timestamp=TimestampMS(1616669547000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('15.38')),
+        amount=FVal('15.38'),
         asset=A_CRO,
         notes=get_cryptocom_note('Merchant XXX'),
     ), HistoryEvent(
-        identifier=7,
+        identifier=9,
         event_identifier='CCM_61d0b5ca125f051c7a3b04be7d94ee450d86d6777b0ef9cd334689883138bf5e',
         sequence_index=0,
         timestamp=TimestampMS(1616669548000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.3076')),
+        amount=FVal('0.3076'),
         asset=A_CRO,
         notes=get_cryptocom_note('Pay Rewards'),
     ), HistoryEvent(
-        identifier=6,
+        identifier=8,
         event_identifier='CCM_68a055044785832276c423a6acc538b7118ce2e04021859a687c9655c47c16d9',
         sequence_index=0,
         timestamp=TimestampMS(1616670041000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('15.31')),
+        amount=FVal('15.31'),
         asset=A_CRO,
         notes=get_cryptocom_note('Refund from Merchant XXX'),
     )]
@@ -488,7 +490,39 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
     assert len(errors) == 0
     assert len(warnings) == 0
 
-    expected_events = [HistoryEvent(
+    expected_events = [AssetMovement(
+        identifier=12,
+        event_identifier='5d81565035faf4f9e3ec74685a4a5c275f6cd3b10a194e9a12e446042910dbcb',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1609534800000),
+        asset=A_ETC,
+        amount=FVal('1.0'),
+    ), AssetMovement(
+        identifier=11,
+        event_identifier='e973b9453f750c8286fdb718b8211abbd8b9027fea582a4e9365f3d0b5c371dc',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1609534860000),
+        asset=A_ETC,
+        amount=FVal('0.24'),
+    ), AssetMovement(
+        identifier=10,
+        event_identifier='6e7b476f5880af1cea17c22fd8781fc7aa75a67fc7808200f18d20b181589c34',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1609538400000),
+        asset=A_BTC,
+        amount=FVal('0.01'),
+    ), AssetMovement(
+        identifier=9,
+        event_identifier='edfb38684bb8ddfa0cd961a3a1fe0f90bda823f45a2095859b2d0e3c43401e4d',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1609542000000),
+        asset=A_BTC,
+        amount=FVal('0.01'),
+    ), HistoryEvent(
         identifier=1,
         event_identifier='CCM_26556241ec9e68acba8cd0d6a6e7b5c010f344b7c763d4b45fa1b6d2abfaf2af',
         sequence_index=0,
@@ -496,9 +530,33 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.00005')),
+        amount=FVal('0.00005'),
         asset=A_BTC,
         notes='Staking profit for BTC',
+    ), AssetMovement(
+        identifier=8,
+        event_identifier='dd3b3db7df9d05e2a725bfb2edfd15f55a4d8cd473941735ab863a321ad38d92',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1609624800000),
+        asset=A_BTC,
+        amount=FVal('0.02005'),
+    ), AssetMovement(
+        identifier=7,
+        event_identifier='4944f654c206336187e8df89b7ef8201fe7fdda65133a362166770de9283b6b6',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1609714800000),
+        asset=A_BTC,
+        amount=FVal('1.0'),
+    ), AssetMovement(
+        identifier=6,
+        event_identifier='99e05dba03cbcd7337e453049be2bdaa88814aec73cdcce26f40a0bc98d79f2e',
+        location=Location.CRYPTOCOM,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1609797600000),
+        asset=A_BTC,
+        amount=FVal('1.02005'),
     ), HistoryEvent(
         identifier=2,
         event_identifier='CCM_680977437f573e30752041fb8971be234a8fdb4d72f707d56eb5643d40908d82',
@@ -507,7 +565,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.02005')),
+        amount=FVal('0.02005'),
         asset=A_BTC,
         notes='Staking profit for BTC',
     ), HistoryEvent(
@@ -518,7 +576,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(ONE),
+        amount=ONE,
         asset=A_CRO,
         notes=get_cryptocom_note('CRO Stake Rewards'),
     ), HistoryEvent(
@@ -529,7 +587,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(ONE),
+        amount=ONE,
         asset=A_CRO,
         notes=get_cryptocom_note('CRO Airdrop to Exchange'),
     ), HistoryEvent(
@@ -540,29 +598,29 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.5')),
+        amount=FVal('0.5'),
         asset=A_MCO,
         notes=get_cryptocom_note('MCO Stake Rewards'),
     ), HistoryEvent(
-        identifier=6,
+        identifier=13,
         event_identifier='CCM_64288070ac60947e3fcaaf150f76c5768122a08538c8efdec806d689d4c49d62',
         sequence_index=0,
         timestamp=TimestampMS(1635390997000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.00356292')),
+        amount=FVal('0.00356292'),
         asset=A_AXS,
         notes=get_cryptocom_note('Supercharger Reward'),
     ), HistoryEvent(
-        identifier=7,
+        identifier=14,
         event_identifier='CCM_e66810bd6561fbe1d31aec4ad7942d854d63115808c2d1a7b2cd0df8bb110e49',
         sequence_index=0,
         timestamp=TimestampMS(1635477398000),
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.5678')),
+        amount=FVal('0.5678'),
         asset=A_CRO,
         notes=get_cryptocom_note('Card Cashback Reversal'),
     )]
@@ -605,27 +663,38 @@ def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
             filter_query=HistoryEventFilterQuery.make(),
             has_premium=True,
         )
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor=cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
-            has_premium=True,
-        )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
     assert len(warnings) == 0
 
-    expected_events = [HistoryEvent(
-        identifier=3,
+    expected_events = [AssetMovement(
+        identifier=5,
+        event_identifier='f62fb2e0ee8695192ae332e25c4afc3682466ae2d1ef019ed51bc08cfd3aa296',
+        location=Location.BLOCKFI,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1595247055000),
+        asset=A_BTC,
+        amount=FVal('1.11415058'),
+    ), HistoryEvent(
+        identifier=4,
         event_identifier='BLF_a8ef6e164b0130b0df9b4d1e877d1c0a601bbc66f244682b6d4f3fe3aadd66e9',
         sequence_index=0,
         timestamp=TimestampMS(1600293599000),
         location=Location.BLOCKFI,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.48385358')),
+        amount=FVal('0.48385358'),
         asset=A_ETH,
         notes='Bonus Payment from BlockFi',
+    ), AssetMovement(
+        identifier=3,
+        event_identifier='677c77a20f78f19f2dcc5333e260b16b15b511dbb4e42afab67d02ff907e161a',
+        location=Location.BLOCKFI,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1605977971000),
+        asset=A_ETH,
+        amount=FVal('3'),
     ), HistoryEvent(
         identifier=2,
         event_identifier='BLF_e027e251abadf0f748d49341c94f0a9bdaff50a2e4f735bb410dd5b594a3b1ec',
@@ -634,9 +703,25 @@ def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
         location=Location.BLOCKFI,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.00052383')),
+        amount=FVal('0.00052383'),
         asset=A_BTC,
         notes='Referral Bonus from BlockFi',
+    ), AssetMovement(
+        identifier=6,
+        event_identifier='7549573fba3392466dbd36b1f7a7e8bac06a276caa615008645d646f025f0b00',
+        location=Location.BLOCKFI,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1611734258000),
+        asset=A_USDC,
+        amount=FVal('3597.48627700'),
+    ), AssetMovement(
+        identifier=7,
+        event_identifier='731be1787656d4aa1e5bdc20f733f288728081884e2a607ccd3dafaca37c8e91',
+        location=Location.BLOCKFI,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1611820658000),
+        asset=A_BTC,
+        amount=FVal('2.11415058'),
     ), HistoryEvent(
         identifier=1,
         event_identifier='BLF_d6e38784f89609668f70a37dd67f67e57fb926a74fc9c1cd1ea4e557317c0b9d',
@@ -645,58 +730,11 @@ def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
         location=Location.BLOCKFI,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.56469042')),
+        amount=FVal('0.56469042'),
         asset=A_ETH,
         notes='Interest Payment from BlockFi',
     )]
     assert expected_events == events
-
-    expected_movements = [AssetMovement(
-        location=Location.BLOCKFI,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1595247055),
-        address=None,
-        transaction_id=None,
-        asset=A_BTC,
-        amount=AssetAmount(FVal('1.11415058')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='',
-    ), AssetMovement(
-        location=Location.BLOCKFI,
-        category=AssetMovementCategory.WITHDRAWAL,
-        address=None,
-        transaction_id=None,
-        timestamp=Timestamp(1605977971),
-        asset=A_ETH,
-        amount=AssetAmount(FVal('3')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='',
-    ), AssetMovement(
-        location=Location.BLOCKFI,
-        category=AssetMovementCategory.DEPOSIT,
-        address=None,
-        transaction_id=None,
-        timestamp=Timestamp(1611734258),
-        asset=A_USDC,
-        amount=AssetAmount(FVal('3597.48627700')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='',
-    ), AssetMovement(
-        location=Location.BLOCKFI,
-        category=AssetMovementCategory.WITHDRAWAL,
-        address=None,
-        transaction_id=None,
-        timestamp=Timestamp(1611820658),
-        asset=A_BTC,
-        amount=AssetAmount(FVal('2.11415058')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='',
-    )]
-    assert expected_movements == asset_movements
 
 
 def assert_blockfi_trades_import_results(rotki: Rotkehlchen):
@@ -724,7 +762,7 @@ def assert_blockfi_trades_import_results(rotki: Rotkehlchen):
     assert trades == expected_trades
 
 
-def assert_nexo_results(rotki: Rotkehlchen):
+def assert_nexo_results(rotki: Rotkehlchen, websocket_connection: WebsocketReader):
     """A utility function to help assert on correctness of importing data from nexo"""
     with rotki.data.db.conn.read_ctx() as cursor:
         events_db = DBHistoryEvents(rotki.data.db)
@@ -733,160 +771,285 @@ def assert_nexo_results(rotki: Rotkehlchen):
             filter_query=HistoryEventFilterQuery.make(),
             has_premium=True,
         )
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
-            has_premium=True,
-        )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
-    assert len(warnings) == 2
-    assert 'Found exchange/credit card status transaction in nexo csv' in str(warnings)
+    assert len(warnings) == 0
+    websocket_connection.wait_until_messages_num(num=1, timeout=10)
+    assert websocket_connection.pop_message() == {
+        'type': 'progress_updates',
+        'data': {
+            'subtype': 'csv_import_result',
+            'source_name': 'Nexo',
+            'total': 38,
+            'processed': 36,
+            'messages': [{'msg': 'Ignoring rejected entry.', 'rows': [2, 8]}],
+        },
+    }
+    assert websocket_connection.messages_num() == 0
 
-    expected_events = [HistoryEvent(
+    expected_events = [AssetMovement(
+        identifier=14,
+        event_identifier='30270894f93665bb104b59a693ccd2f1c3e19dbe559b8c86c5f1efbe47e2cf5b',
+        location=Location.NEXO,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1621940400000),
+        asset=A_GBP,
+        amount=FVal('5000'),
+    ), HistoryEvent(
         identifier=1,
-        event_identifier='NEXO_2d5982954882e11e51eb48b57dee0cfcdb81a694566ebec9ca676c1f98324549',
+        event_identifier='NEXO_df0cd4ec1cfef6d56ecdc864d71e41f6629074b6453b78cadd67cef214ad3997',
         sequence_index=0,
         timestamp=TimestampMS(1643698860000),
         location=Location.NEXO,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('127.5520683')),
+        amount=FVal('127.5520683'),
         asset=A_GBP,
         location_label='NXTZOvzs3be6e',
-        notes='FixedTermInterest from Nexo',
+        notes='Fixed Term Interest from Nexo',
     ), HistoryEvent(
-        identifier=2,
-        event_identifier='NEXO_94e18e416d15dc105fd81b7ae9521f3fb786893b6f9c0d5e82c1c7d1c3780b8d',
+        identifier=4,
+        event_identifier='NEXO_3c65434b92f9e41a5274160c861ebb51890a3bb9246982d18cb0500b3babb4f9',
         sequence_index=0,
         timestamp=TimestampMS(1646092800000),
         location=Location.NEXO,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.10000001')),
+        amount=FVal('0.10000001'),
         asset=symbol_to_asset_or_token('NEXO'),
         location_label='NXTabcdefghij',
         notes='Cashback from Nexo',
-    ), HistoryEvent(
+    ), AssetMovement(
         identifier=3,
-        event_identifier='NEXO_bbc830740a414967910f96e18d7cffe0d1374a88ad8e75da592e29379e4b6d2c',
+        event_identifier='46383f05d585bd112c7d8a3a03258569ab1cabe7a3834a13f516964a533b5f6c',
+        location=Location.NEXO,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1647963925000),
+        asset=A_ETH_MATIC,
+        amount=FVal('5.00000000'),
+    ), AssetMovement(
+        identifier=2,
+        event_identifier='a5f62498f9cc39ac8d99455fe9db0abdf26c9ce5d92b30f0bc9ecce9937c9189',
+        location=Location.NEXO,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1647964353000),
+        asset=A_ETH_MATIC,
+        amount=FVal('3050.00000000'),
+    ), HistoryEvent(
+        identifier=5,
+        event_identifier='NEXO_f5c25b7009473f1ed6fb48c0ed42c3febf0703883740ba2a1862953d71b1e8db',
         sequence_index=0,
         timestamp=TimestampMS(1649462400000),
         location=Location.NEXO,
-        event_type=HistoryEventType.SPEND,
+        event_type=HistoryEventType.LOSS,
         event_subtype=HistoryEventSubType.LIQUIDATE,
-        balance=Balance(FVal('710.82000000')),
+        amount=FVal('710.82000000'),
         asset=A_GBP,
         location_label='NXTabcdefghij',
         notes='Liquidation from Nexo',
     ), HistoryEvent(
-        identifier=4,
-        event_identifier='NEXO_c8f26485f6117a1065b3dbf0b37ed387e930b3ce36598132800a788661a0ca93',
+        identifier=6,
+        event_identifier='NEXO_178eb80900dce91bc7230e95d86bf63d5a16451edfde20336915209e0cf66244',
         sequence_index=0,
         timestamp=TimestampMS(1649548800000),
         location=Location.NEXO,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.00999999')),
+        amount=FVal('0.00999999'),
         asset=A_BTC,
         location_label='NXTabcdefghij',
-        notes='ReferralBonus from Nexo',
+        notes='Referral Bonus from Nexo',
+    ), AssetMovement(
+        identifier=7,
+        event_identifier='44082c1422aea2a9e03665529115684e81d37f04cf5ed4c112efc956c22a3aea',
+        location=Location.NEXO,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1649877300000),
+        asset=A_USDC,
+        amount=FVal('595.92'),
     ), HistoryEvent(
-        identifier=5,
-        event_identifier='NEXO_935f100260ccb46dca16fe73f73e403bc87980d73de4def178b41afea7f9b3a8',
+        identifier=8,
+        event_identifier='NEXO_1b9bf08b0a12bfb57beca6b558d3e38fd4133a6dfaea596df989753e7eef4af4',
+        sequence_index=0,
+        timestamp=TimestampMS(1650192060000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        amount=FVal('54'),
+        asset=A_GBP,
+        location_label='NXTsDa2LR4Pcw',
+        notes='Exchange from Nexo',
+    ), AssetMovement(
+        identifier=10,
+        event_identifier='fd3b3af4503ed66ab961365e9ae94cd4d301a1db2e944889c0ba00c43e3bcf9b',
+        location=Location.NEXO,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1650192060000),
+        asset=A_GBP,
+        amount=FVal('54'),
+    ), HistoryEvent(
+        identifier=9,
+        event_identifier='NEXO_1b9bf08b0a12bfb57beca6b558d3e38fd4133a6dfaea596df989753e7eef4af4',
+        sequence_index=1,
+        timestamp=TimestampMS(1650192060000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.RECEIVE,
+        amount=FVal('0.0017316'),
+        asset=A_BTC,
+        location_label='NXTsDa2LR4Pcw',
+        notes='Exchange from Nexo',
+    ), AssetMovement(
+        identifier=13,
+        event_identifier='22d48c31b52037480e31c626d6d38c34fc2ee501819cfea78b2e512e2900f140',
+        location=Location.NEXO,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1650192180000),
+        asset=A_BTC,
+        amount=FVal('0.0017316'),
+    ), HistoryEvent(
+        identifier=11,
+        event_identifier='NEXO_d31d7ee1cab8bcda90e3021abd70b578209414ac7d36d078072d8cbd052fa287',
         sequence_index=0,
         timestamp=TimestampMS(1650438000000),
         location=Location.NEXO,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('1.09246793')),
+        amount=FVal('1.09246793'),
         asset=A_USDC,
         location_label='NXTGWynyMmm5K',
         notes='Interest from Nexo',
     ), HistoryEvent(
-        identifier=6,
-        event_identifier='NEXO_ed51354616d9959a07babb6dbbc86903fbb03375fd5796e87694688148ff3ee7',
+        identifier=19,
+        event_identifier='NEXO_139c6bd4cb1c69ea8bc856c20bebca9b0180fcdd5acd66f2b7d33e8888094c3b',
+        sequence_index=0,
+        timestamp=TimestampMS(1656626402000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.RECEIVE,
+        event_subtype=HistoryEventSubType.NONE,
+        amount=FVal('0.01000000'),
+        asset=A_USD,
+        location_label='NXTslZ5J6wqqmKalgCjpDEQd',
+        notes='Interest from Nexo',
+    ), HistoryEvent(
+        identifier=24,
+        event_identifier='NEXO_6ca2336b08501cf491bc3a62e8c289f2de0d303fa605ab0eb8c5ff8ed5386dbe',
+        sequence_index=0,
+        timestamp=TimestampMS(1656702227000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.SPEND,
+        event_subtype=HistoryEventSubType.PAYBACK_DEBT,
+        amount=FVal('0.16962900'),
+        asset=A_USDC,
+        location_label='NXT53Q6ioNttPkX91sNAWbbnQ',
+        notes='Manual Sell Order from Nexo',
+    ), HistoryEvent(
+        identifier=12,
+        event_identifier='NEXO_e8137e27e69bc848578349c0dece234fd4af50487ecfdf42518de3246f900b23',
         sequence_index=0,
         timestamp=TimestampMS(1657782007000),
         location=Location.NEXO,
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
-        balance=Balance(FVal('0.00178799')),
+        amount=FVal('0.00178799'),
         asset=A_ETH,
         location_label='NXT1isX0Refua',
         notes='Interest from Nexo',
-    )]
-
-    expected_movements = [AssetMovement(
-        location=Location.NEXO,
-        category=AssetMovementCategory.WITHDRAWAL,
-        timestamp=Timestamp(1621940400),
-        address=None,
-        transaction_id=None,
-        asset=A_GBP,
-        amount=AssetAmount(FVal('5000')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='NXTo1JlZsUlAd',
     ), AssetMovement(
+        identifier=18,
+        event_identifier='c64cd362e062eba2958f2656ebb63ebb22107650e88c7a04c401687d81220056',
         location=Location.NEXO,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1647963925),
-        address=None,
-        transaction_id=None,
-        asset=A_ETH_MATIC,
-        amount=AssetAmount(FVal('5.00000000')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='NXT9aSBjiAOjq',
-    ), AssetMovement(
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1707003036000),
+        asset=A_EUR,
+        amount=FVal('47.99000000'),
+    ), HistoryEvent(
+        identifier=21,
+        event_identifier='NEXO_d368377375acf56c2133d1e9d023b6dc17bcffc747f07b108f523228e6ad4663',
+        sequence_index=0,
+        timestamp=TimestampMS(1719187529000),
         location=Location.NEXO,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1647964353),
-        address=None,
-        transaction_id=None,
-        asset=A_ETH_MATIC,
-        amount=AssetAmount(FVal('3050.00000000')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='NXTGjeCTHAXxg',
-    ), AssetMovement(
-        location=Location.NEXO,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1649877300),
-        address=None,
-        transaction_id=None,
-        asset=A_USDC,
-        amount=AssetAmount(FVal('595.92')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='NXTigcmvsts2L',
-    ), AssetMovement(
-        location=Location.NEXO,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1650192060),
-        address=None,
-        transaction_id=None,
-        asset=A_GBP,
-        amount=AssetAmount(FVal('54')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='NXT6r1e6CtfNI',
-    ), AssetMovement(
-        location=Location.NEXO,
-        category=AssetMovementCategory.WITHDRAWAL,
-        timestamp=Timestamp(1650192180),
-        address=None,
-        transaction_id=None,
+        event_type=HistoryEventType.RECEIVE,
+        event_subtype=HistoryEventSubType.NONE,
+        amount=FVal('0.00007929'),
         asset=A_BTC,
-        amount=AssetAmount(FVal('0.0017316')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='NXTdtS1ezWxeN',
+        location_label='NXT6tSqWCGWiEeOgZrG2ltm27',
+        notes='Referral Bonus from Nexo',
+    ), HistoryEvent(
+        identifier=20,
+        event_identifier='NEXO_b2d0ff5b09383635d27453682ac8c5f3a4f6a8b3c3e98edc0e0440c74cda72fe',
+        sequence_index=0,
+        timestamp=TimestampMS(1724371533000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.RECEIVE,
+        event_subtype=HistoryEventSubType.NONE,
+        amount=FVal('0.00001953'),
+        asset=A_BTC,
+        location_label='NXT5Xa0rjcaf90s3h3b5j0uZI',
+        notes='Referral Bonus from Nexo',
+    ), HistoryEvent(
+        identifier=17,
+        event_identifier='NEXO_05be9cf28e8f09148ffb0d1f7280419118aa19803dd13c6bdcdf71e7bc8e3e9d',
+        sequence_index=0,
+        timestamp=TimestampMS(1734971539000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.RECEIVE,
+        event_subtype=HistoryEventSubType.NONE,
+        amount=FVal('1.28539200'),
+        asset=A_USDC,
+        location_label='NXT44OjpCjxegVqhfHj3ZmeAa',
+        notes='Exchange Cashback from Nexo',
+    ), HistoryEvent(
+        identifier=22,
+        event_identifier='NEXO_dc19313d088deb51008fe1f8b8255606f33e65e7308412525cbd8187320a2bfe',
+        sequence_index=0,
+        timestamp=TimestampMS(1734971539000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        amount=FVal('500.00000000'),
+        asset=Asset('eip155:1/erc20:0x05Ac103f68e05da35E78f6165b9082432FE64B58'),
+        location_label='NXT4RYSlktqu0Ip9I4Wy2mIsv',
+        notes='Exchange from Nexo',
+    ), HistoryEvent(
+        identifier=23,
+        event_identifier='NEXO_dc19313d088deb51008fe1f8b8255606f33e65e7308412525cbd8187320a2bfe',
+        sequence_index=1,
+        timestamp=TimestampMS(1734971539000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.RECEIVE,
+        amount=FVal('514.15679500'),
+        asset=A_USDC,
+        location_label='NXT4RYSlktqu0Ip9I4Wy2mIsv',
+        notes='Exchange from Nexo',
+    ), HistoryEvent(
+        identifier=15,
+        event_identifier='NEXO_4cf8625c0bd44e83aab18c3f380f0de765ce52174806f71a232fd16492adcba8',
+        sequence_index=0,
+        timestamp=TimestampMS(1735365600000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.RECEIVE,
+        event_subtype=HistoryEventSubType.NONE,
+        amount=FVal('5.37250072'),
+        asset=Asset('eip155:1/erc20:0xB62132e35a6c13ee1EE0f84dC5d40bad8d815206'),
+        location_label='NXT5Gz0cNLEHLbYtc3xDkZ8eR',
+        notes='Fixed Term Interest from Nexo',
+    ), HistoryEvent(
+        identifier=16,
+        event_identifier='NEXO_a1ef61959184d70ed118df337ddae6c1c63538989cd3438ab663b7ca9dc29538',
+        sequence_index=0,
+        timestamp=TimestampMS(1735365600000),
+        location=Location.NEXO,
+        event_type=HistoryEventType.RECEIVE,
+        event_subtype=HistoryEventSubType.NONE,
+        amount=FVal('0.12179800'),
+        asset=A_USDC,
+        location_label='NXT4OTjYHHRW6xseMpUarHKKT',
+        notes='Interest from Nexo',
     )]
     assert events == expected_events
-    assert asset_movements == expected_movements
 
 
 def assert_shapeshift_trades_import_results(rotki: Rotkehlchen):
@@ -951,11 +1114,6 @@ def assert_uphold_transactions_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing trades data from uphold"""
     with rotki.data.db.conn.read_ctx() as cursor:
         trades = rotki.data.db.get_trades(cursor, filter_query=TradesFilterQuery.make(), has_premium=True)  # noqa: E501
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
-            has_premium=True,
-        )
         history_db = DBHistoryEvents(rotki.data.db)
         events = history_db.get_history_events(
             cursor=cursor,
@@ -1051,34 +1209,28 @@ Activity from uphold with uphold transaction id:
         link='',
         notes=notes4,
     )]
-    expected_movements = [AssetMovement(
-        location=Location.UPHOLD,
-        category=AssetMovementCategory.WITHDRAWAL,
-        timestamp=Timestamp(1589376604),
-        address=None,
-        transaction_id=None,
-        asset=symbol_to_asset_or_token('GBP'),
-        amount=AssetAmount(FVal('24.65')),
-        fee_asset=symbol_to_asset_or_token('GBP'),
-        fee=Fee(ZERO),
-        link='',
-    )]
     expected_events = [HistoryEvent(
-        identifier=1,
+        identifier=2,
         event_identifier='UPH_55d4d58869d96ad9adf18929bf89caaae87e657482ea20ae4c8c66b8ab34f4e2',
         sequence_index=0,
         timestamp=TimestampMS(1576780809000),
         location=Location.UPHOLD,
         asset=A_BAT,
-        balance=Balance(amount=FVal('5.15')),
+        amount=FVal('5.15'),
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
         notes=notes5,
+    ), AssetMovement(
+        identifier=1,
+        event_identifier='c85215d66a23ae39cbf232dd931dafa40006acb065d5314382f623b7bb8ce707',
+        location=Location.UPHOLD,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1589376604000),
+        asset=symbol_to_asset_or_token('GBP'),
+        amount=FVal('24.65'),
     )]
     assert len(trades) == 4
     assert trades == expected_trades
-    assert len(asset_movements) == 1
-    assert asset_movements == expected_movements
     assert events == expected_events
 
 
@@ -1088,35 +1240,37 @@ def assert_custom_cointracking(rotki: Rotkehlchen):
     when using custom formats for dates
     """
     with rotki.data.db.conn.read_ctx() as cursor:
-        asset_movements = rotki.data.db.get_asset_movements(
+        events = DBHistoryEvents(rotki.data.db).get_history_events(
             cursor=cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
+            filter_query=HistoryEventFilterQuery.make(),
             has_premium=True,
         )
-    expected_movements = [AssetMovement(
-        location=Location.POLONIEX,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1504646040),
-        address=None,
-        transaction_id=None,
-        asset=A_XMR,
-        amount=AssetAmount(FVal('5')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='',
-    ), AssetMovement(
+    assert events == [AssetMovement(
+        identifier=2,
+        event_identifier='2bb82301ad9d4b4251e404c11026f53f9f1c5190a943a26aa654e4fa0969ccbd',
         location=Location.COINBASE,
-        category=AssetMovementCategory.WITHDRAWAL,
-        address=None,
-        transaction_id=None,
-        timestamp=Timestamp(1504646040),
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1504646040000),
         asset=A_ETH,
-        amount=AssetAmount(FVal('0.05770427')),
-        fee_asset=A_ETH,
-        fee=Fee(FVal('0.0001')),
-        link='',
+        amount=FVal('0.05770427'),
+    ), AssetMovement(
+        identifier=1,
+        event_identifier='55220a50d1f1af04042410f6c0223518cd14e1a5ad250dfb65be6404c7b6a01e',
+        location=Location.POLONIEX,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1504646040000),
+        asset=A_XMR,
+        amount=FVal('5.00000000'),
+    ), AssetMovement(
+        identifier=3,
+        event_identifier='2bb82301ad9d4b4251e404c11026f53f9f1c5190a943a26aa654e4fa0969ccbd',
+        location=Location.COINBASE,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1504646040000),
+        asset=A_ETH,
+        amount=FVal('0.0001'),
+        is_fee=True,
     )]
-    assert expected_movements == asset_movements
 
 
 def assert_bisq_trades_import_results(rotki: Rotkehlchen):
@@ -1241,30 +1395,35 @@ def assert_bisq_trades_import_results(rotki: Rotkehlchen):
 
 
 def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
-    expected_asset_movements = [
+    expected_events = [
         AssetMovement(
+            identifier=3,
+            event_identifier='016035ad3c5a14f733b11d39f19f82cefa1000d0db62d5377548d2e6456a16fc',
             location=Location.BITMEX,
-            category=AssetMovementCategory.DEPOSIT,
-            address=None,
-            transaction_id=None,
-            timestamp=Timestamp(1574825791),
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1574825791000),
             asset=A_BTC,
-            amount=FVal(0.05000000),
-            fee_asset=A_BTC,
-            fee=Fee(FVal(00000000)),
-            link='Imported from BitMEX CSV file. Transact Type: Deposit',
+            amount=FVal('0.05000000'),
         ),
         AssetMovement(
+            identifier=1,
+            event_identifier='c7ee1cfaa00878d7079cdc2ebf0f15477e9116fc1284f0ebf298db26405e5897',
             location=Location.BITMEX,
-            category=AssetMovementCategory.WITHDRAWAL,
-            address='3Qsy5NGSnGA1vd1cmcNgeMjLrKPsKNhfCe',
-            transaction_id=None,
-            timestamp=Timestamp(1577252845),
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1577252845000),
             asset=A_BTC,
-            amount=FVal(0.05746216),
-            fee_asset=A_BTC,
-            fee=Fee(FVal(0.00100000)),
-            link='Imported from BitMEX CSV file. Transact Type: Withdrawal',
+            amount=FVal('0.05746216'),
+            extra_data={'address': '3Qsy5NGSnGA1vd1cmcNgeMjLrKPsKNhfCe'},
+        ),
+        AssetMovement(
+            identifier=2,
+            event_identifier='415ec13a5c2e79c101ede3f4178cfb3dd576c96ed3037fd96d56e1ea89ba039d',
+            location=Location.BITMEX,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1577252845000),
+            asset=A_BTC,
+            amount=FVal('0.00100000'),
+            is_fee=True,
         ),
     ]
     expected_margin_positions = [
@@ -1274,7 +1433,7 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
             close_time=Timestamp(1576738800),
             profit_loss=AssetAmount(FVal(0.00000373)),
             pl_currency=A_BTC,
-            fee=Fee(FVal(0)),
+            fee=Fee(ZERO),
             fee_currency=A_BTC,
             link='Imported from BitMEX CSV file. Transact Type: RealisedPNL',
             notes='PnL from trade on XBTUSD',
@@ -1285,7 +1444,7 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
             close_time=Timestamp(1576825200),
             profit_loss=AssetAmount(FVal(0.00000016)),
             pl_currency=A_BTC,
-            fee=Fee(FVal(0)),
+            fee=Fee(ZERO),
             fee_currency=A_BTC,
             link='Imported from BitMEX CSV file. Transact Type: RealisedPNL',
             notes='PnL from trade on XBTUSD',
@@ -1296,7 +1455,7 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
             close_time=Timestamp(1576911600),
             profit_loss=AssetAmount(FVal(-0.00000123)),
             pl_currency=A_BTC,
-            fee=Fee(FVal(0)),
+            fee=Fee(ZERO),
             fee_currency=A_BTC,
             link='Imported from BitMEX CSV file. Transact Type: RealisedPNL',
             notes='PnL from trade on XBTUSD',
@@ -1307,7 +1466,7 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
             close_time=Timestamp(1576998000),
             profit_loss=AssetAmount(FVal(-0.00000075)),
             pl_currency=A_BTC,
-            fee=Fee(FVal(0)),
+            fee=Fee(ZERO),
             fee_currency=A_BTC,
             link='Imported from BitMEX CSV file. Transact Type: RealisedPNL',
             notes='PnL from trade on XBTUSD',
@@ -1318,7 +1477,7 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
             close_time=Timestamp(1577084400),
             profit_loss=AssetAmount(FVal(-0.00000203)),
             pl_currency=A_BTC,
-            fee=Fee(FVal(0)),
+            fee=Fee(ZERO),
             fee_currency=A_BTC,
             link='Imported from BitMEX CSV file. Transact Type: RealisedPNL',
             notes='PnL from trade on XBTUSD',
@@ -1329,7 +1488,7 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
             close_time=Timestamp(1577170800),
             profit_loss=AssetAmount(FVal(-0.00000201)),
             pl_currency=A_BTC,
-            fee=Fee(FVal(0)),
+            fee=Fee(ZERO),
             fee_currency=A_BTC,
             link='Imported from BitMEX CSV file. Transact Type: RealisedPNL',
             notes='PnL from trade on XBTUSD',
@@ -1340,7 +1499,7 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
             close_time=Timestamp(1577257200),
             profit_loss=AssetAmount(FVal(0.00085517)),
             pl_currency=A_BTC,
-            fee=Fee(FVal(0)),
+            fee=Fee(ZERO),
             fee_currency=A_BTC,
             link='Imported from BitMEX CSV file. Transact Type: RealisedPNL',
             notes='PnL from trade on XBTUSD',
@@ -1350,18 +1509,18 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
         margin_positions = rotki.data.db.get_margin_positions(cursor)
         warnings = rotki.msg_aggregator.consume_warnings()
         errors = rotki.msg_aggregator.consume_errors()
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
+        events = DBHistoryEvents(rotki.data.db).get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
             has_premium=True,
         )
-    assert asset_movements == expected_asset_movements
+    assert events == expected_events
     assert margin_positions == expected_margin_positions
     assert len(warnings) == 0
     assert len(errors) == 0
 
 
-def assert_binance_import_results(rotki: Rotkehlchen):
+def assert_binance_import_results(rotki: Rotkehlchen, websocket_connection: WebsocketReader):
     expected_trades = [
         Trade(
             timestamp=Timestamp(1603922583),
@@ -1595,269 +1754,275 @@ def assert_binance_import_results(rotki: Rotkehlchen):
             link='',
             notes='Imported from binance CSV file. Binance operation: Buy / Sell',
         ),
+        Trade(
+            timestamp=Timestamp(1704118880),
+            location=Location.BINANCE,
+            base_asset=A_ETH,
+            quote_asset=A_EUR,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.03605')),
+            rate=Price(FVal('0.000268085733817674892430599305657949412222028604747798345911022344945913703202284')),
+            fee=Fee(FVal('0.00003605')),
+            fee_currency=A_ETH,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
     ]
 
-    expected_asset_movements = [
+    expected_events = [
         AssetMovement(
+            identifier=1,
+            event_identifier='3f9a750608754c8361951f87f0e21ea71bf98221d52a69c809c27307c65fff13',
             location=Location.BINANCE,
-            category=AssetMovementCategory.DEPOSIT,
-            timestamp=Timestamp(1603922583),
-            address=None,
-            transaction_id=None,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1603922583000),
             asset=A_EUR,
             amount=FVal(245.25),
-            fee_asset=A_USD,
-            fee=Fee(ZERO),
-            link='Imported from binance CSV file. Binance operation: Deposit',
-        ),
-        AssetMovement(
-            location=Location.BINANCE,
-            category=AssetMovementCategory.WITHDRAWAL,
-            timestamp=Timestamp(1606853204),
-            address=None,
-            transaction_id=None,
-            asset=A_KNC,
-            amount=FVal(0.16),
-            fee_asset=A_USD,
-            fee=Fee(ZERO),
-            link='Imported from binance CSV file. Binance operation: Withdraw',
-        ),
-        AssetMovement(
-            location=Location.BINANCE,
-            category=AssetMovementCategory.DEPOSIT,
-            timestamp=Timestamp(1686571601),
-            asset=A_BUSD,
-            amount=FVal('479.6780028'),
-            fee_asset=A_USD,
-            fee=Fee(ZERO),
-            address=None,
-            transaction_id=None,
-            link='Imported from binance CSV file. Binance operation: Buy Crypto',
-        ),
-        AssetMovement(
-            location=Location.BINANCE,
-            category=AssetMovementCategory.DEPOSIT,
-            timestamp=Timestamp(1686571762),
-            asset=A_EUR,
-            amount=FVal('2435.34'),
-            fee_asset=A_USD,
-            address=None,
-            transaction_id=None,
-            fee=Fee(ZERO),
-            link='Imported from binance CSV file. Binance operation: Fiat Deposit',
-        ),
-    ]
-    expected_events = [
-        HistoryEvent(
-            identifier=1,
+        ), HistoryEvent(
+            identifier=2,
             event_identifier='BNC_1a75acacbf626a04e8be50cb3f79ec8abd1f573e2cb9d9650df576626e437ddf',
             sequence_index=0,
             timestamp=TimestampMS(1603926662000),
             location=Location.BINANCE,
             asset=A_BNB,
-            balance=Balance(amount=FVal('0.577257355')),
+            amount=FVal('0.577257355'),
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.NONE,
             notes='Imported from binance CSV file. Binance operation: POS savings purchase',
         ), HistoryEvent(
-            identifier=2,
+            identifier=3,
             event_identifier='BNC_14e2f3956bf5c9506a460c8bf35ff199139555118a0ef40ea6f732248fcac5a0',
             sequence_index=0,
             timestamp=TimestampMS(1604223373000),
             location=Location.BINANCE,
             asset=A_ETH2,
-            balance=Balance(amount=FVal('0.000004615')),
+            amount=FVal('0.000004615'),
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             notes='Imported from binance CSV file. Binance operation: ETH 2.0 Staking Rewards',
         ), HistoryEvent(
-            identifier=3,
+            identifier=4,
             event_identifier='BNC_d5dc6cca7342e668707b496d951a317156146eee348073cbb55ba852fb8f7a72',
             sequence_index=0,
             timestamp=TimestampMS(1604274610000),
             location=Location.BINANCE,
             asset=EvmToken('eip155:56/erc20:0x23CE9e926048273eF83be0A3A8Ba9Cb6D45cd978'),
-            balance=Balance(amount=FVal('0.115147055')),
+            amount=FVal('0.115147055'),
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             notes='Imported from binance CSV file. Binance operation: Launchpool Interest',
         ), HistoryEvent(
-            identifier=4,
+            identifier=5,
             event_identifier='BNC_2d10e01a5946dac7ff1904203810cb6a6bafd1ab92e387fc6850384b17d1eae9',
             sequence_index=0,
             timestamp=TimestampMS(1604450188000),
             location=Location.BINANCE,
             asset=A_AXS,
-            balance=Balance(amount=FVal('1.18837124')),
+            amount=FVal('1.18837124'),
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             notes='Imported from binance CSV file. Binance operation: POS savings redemption',
         ), HistoryEvent(
-            identifier=5,
+            identifier=6,
             event_identifier='BNC_9a2793560cc940557e51500ca876e0a0d11324666eae644f3145cf7038cbc9bd',
             sequence_index=0,
             timestamp=TimestampMS(1604456888000),
             location=Location.BINANCE,
             asset=A_BNB,
-            balance=Balance(amount=FVal('0.000092675')),
+            amount=FVal('0.000092675'),
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
             notes='Imported from binance CSV file. Binance operation: POS savings interest',
+        ), AssetMovement(
+            identifier=7,
+            event_identifier='da21894e86cb5aea08db8cf0fad34836b96c380ebc401e46922864533f306e46',
+            location=Location.BINANCE,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1606853204000),
+            asset=A_KNC,
+            amount=FVal(0.16),
         ), HistoryEvent(
-            identifier=6,
+            identifier=8,
             event_identifier='BNC_ac8a1a8ccd32547766f312428a59ac8ea667f72c33c0c4695b3fc82a7896645f',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1640910825)),
             location=Location.BINANCE,
             asset=A_USDT,
-            balance=Balance(amount=FVal(500.00000000)),
+            amount=FVal(500.00000000),
             event_type=HistoryEventType.TRANSFER,
             event_subtype=HistoryEventSubType.NONE,
             location_label='CSV import',
             notes='Transfer Between Main and Funding Wallet',
         ), HistoryEvent(
-            identifier=7,
+            identifier=9,
             event_identifier='BNC_29a2d52a91b9bbb7213d4710ad190d587c4febc197373291289d85ae275ec7a5',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1640912422)),
             location=Location.BINANCE,
             asset=A_USDT,
-            balance=Balance(amount=FVal(100.00000000)),
-            event_type=HistoryEventType.TRANSFER,
-            event_subtype=HistoryEventSubType.NONE,
-            location_label='CSV import',
-            notes='Transfer Between Spot Account and UM Futures Account',
-        ), HistoryEvent(
-            identifier=8,
-            event_identifier='BNC_33a197c8698d3de4db57bb5d8a43e48addb28538587f73cd624792036b69a870',
-            sequence_index=0,
-            timestamp=ts_sec_to_ms(Timestamp(1640912706)),
-            location=Location.BINANCE,
-            asset=A_USDT,
-            balance=Balance(amount=FVal(60.00000000)),
-            event_type=HistoryEventType.TRANSFER,
-            event_subtype=HistoryEventSubType.NONE,
-            location_label='CSV import',
-            notes='Transfer Between Spot Account and CM Futures Account',
-        ), HistoryEvent(
-            identifier=9,
-            event_identifier='BNC_a5e6e8af4008679025ce68ac818ee4ae3f8b9f461d70eeb3d30f20f3c9a8d92f',
-            sequence_index=0,
-            timestamp=ts_sec_to_ms(Timestamp(1640913498)),
-            location=Location.BINANCE,
-            asset=A_USDT,
-            balance=Balance(amount=FVal(40.00000000)),
+            amount=FVal(100.00000000),
             event_type=HistoryEventType.TRANSFER,
             event_subtype=HistoryEventSubType.NONE,
             location_label='CSV import',
             notes='Transfer Between Spot Account and UM Futures Account',
         ), HistoryEvent(
             identifier=10,
+            event_identifier='BNC_33a197c8698d3de4db57bb5d8a43e48addb28538587f73cd624792036b69a870',
+            sequence_index=0,
+            timestamp=ts_sec_to_ms(Timestamp(1640912706)),
+            location=Location.BINANCE,
+            asset=A_USDT,
+            amount=FVal(60.00000000),
+            event_type=HistoryEventType.TRANSFER,
+            event_subtype=HistoryEventSubType.NONE,
+            location_label='CSV import',
+            notes='Transfer Between Spot Account and CM Futures Account',
+        ), HistoryEvent(
+            identifier=11,
+            event_identifier='BNC_a5e6e8af4008679025ce68ac818ee4ae3f8b9f461d70eeb3d30f20f3c9a8d92f',
+            sequence_index=0,
+            timestamp=ts_sec_to_ms(Timestamp(1640913498)),
+            location=Location.BINANCE,
+            asset=A_USDT,
+            amount=FVal(40.00000000),
+            event_type=HistoryEventType.TRANSFER,
+            event_subtype=HistoryEventSubType.NONE,
+            location_label='CSV import',
+            notes='Transfer Between Spot Account and UM Futures Account',
+        ), HistoryEvent(
+            identifier=12,
             event_identifier='BNC_5d651c8364e0b853f3f4c4b3812b2d370607fc008bedb30291137fabae0d93ef',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1673587740)),
             location=Location.BINANCE,
             asset=EvmToken('eip155:1/erc20:0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0'),
-            balance=Balance(amount=FVal('0.00001605')),
+            amount=FVal('0.00001605'),
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             location_label='CSV import',
             notes='Reward from Simple Earn Locked Rewards',
         ), HistoryEvent(
-            identifier=11,
+            identifier=13,
             event_identifier='BNC_e2433b7eddb388759cbab8d440dda8447a0d1d6733889000f2bd3145454cae59',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1673589660)),
             location=Location.BINANCE,
             asset=EvmToken('eip155:1/erc20:0x4Fabb145d64652a948d72533023f6E7A623C7C53'),
-            balance=Balance(amount=FVal('0.00003634')),
+            amount=FVal('0.00003634'),
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             location_label='CSV import',
             notes='Reward from Simple Earn Flexible Interest',
         ), HistoryEvent(
-            identifier=13,
+            identifier=15,
             event_identifier='BNC_f5b62b836a4f520729099765bd12f49bce839ae53aef5c53f6e2b12cd4a5d2e2',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1673590320)),
             location=Location.BINANCE,
             asset=EvmToken('eip155:1/erc20:0x4Fabb145d64652a948d72533023f6E7A623C7C53'),
-            balance=Balance(amount=FVal('0.00003634')),
+            amount=FVal('0.00003634'),
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             location_label='CSV import',
             notes='Reward from Simple Earn Flexible Interest',
         ), HistoryEvent(
-            identifier=12,
+            identifier=14,
             event_identifier='BNC_8ee2c667b24dc991ccaf81050b48cf33d9ccdd45471e1517efcb64c0bbfcb318',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1673593020)),
             location=Location.BINANCE,
             asset=EvmToken('eip155:1/erc20:0x4Fabb145d64652a948d72533023f6E7A623C7C53'),
-            balance=Balance(amount=FVal('0.00003634')),
+            amount=FVal('0.00003634'),
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             location_label='CSV import',
             notes='Deposit in Simple Earn Flexible Subscription',
         ), HistoryEvent(
-            identifier=14,
+            identifier=16,
             event_identifier='BNC_6f2a1947e66d9d38c1d07ade18706be20fbbddf48cdbfbd345e6976a85333e35',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1673593560)),
             location=Location.BINANCE,
             asset=EvmToken('eip155:1/erc20:0x4Fabb145d64652a948d72533023f6E7A623C7C53'),
-            balance=Balance(amount=FVal('0.00003634')),
+            amount=FVal('0.00003634'),
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             location_label='CSV import',
             notes='Deposit in Simple Earn Flexible Subscription',
         ), HistoryEvent(
-            identifier=15,
+            identifier=17,
             event_identifier='BNC_93ffcc0bba0a90bddb72dd100479e6c784e5dd5ea68e2bf4c5a0a9c3432a24b9',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1686389700)),
             location=Location.BINANCE,
             asset=CryptoAsset('SUI'),
-            balance=Balance(amount=FVal('0.0080696')),
+            amount=FVal('0.0080696'),
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
             location_label='CSV import',
             notes='Reward from BNB Vault Rewards',
         ), HistoryEvent(
-            identifier=16,
+            identifier=18,
+            event_identifier='BNC_2d4a94bee000e141e2f5b63195fc805d28757e6f2b7cc8f7af9488e9c3ea3f1b',
+            sequence_index=0,
+            timestamp=ts_sec_to_ms(Timestamp(1686538886)),
+            location=Location.BINANCE, event_type=HistoryEventType.STAKING,
+            event_subtype=HistoryEventSubType.REMOVE_ASSET,
+            asset=A_BNB,
+            amount=FVal('0.95901726'),
+            location_label='CSV import',
+            notes='Unstake eip155:1/erc20:0xB8c77482e45F1F44dE1745F52C74426C631bDD52(Binance Coin) in Staking Redemption',  # noqa: E501
+        ), HistoryEvent(
+            identifier=19,
             event_identifier='BNC_60fcc311b4f38019dde25c9c55b28058faf57f602ecf3d775004515ff934a152',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1686539468)),
             location=Location.BINANCE, event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_BNB,
-            balance=Balance(amount=FVal(0.96455172)),
+            amount=FVal(0.96455172),
             location_label='CSV import',
             notes='Deposit in Staking Purchase',
         ), HistoryEvent(
-            identifier=17,
+            identifier=20,
             event_identifier='BNC_4259a864eeb6e39a046bbd4030a62d63bcaafebb36c4a5f55b00d1e78a90569e',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1686543089)),
             location=Location.BINANCE, event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=A_ETH_MATIC,
-            balance=Balance(amount=FVal(602.5193197)),
+            amount=FVal(602.5193197),
             location_label='CSV import',
             notes='Deposit in Simple Earn Locked Subscription',
+        ), AssetMovement(
+            identifier=21,
+            event_identifier='504972a5e897bc3324adc5635514fcf1a2e8c8adae380ebdc60cec9d52227176',
+            location=Location.BINANCE,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1686571601000),
+            asset=A_BUSD,
+            amount=FVal('479.6780028'),
+        ), AssetMovement(
+            identifier=22,
+            event_identifier='805fdb95ec899ebd25a799fa8aa9a8735ee3cd423d804b874a3319f42ddb98e5',
+            location=Location.BINANCE,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1686571762000),
+            asset=A_EUR,
+            amount=FVal('2435.34'),
         ), HistoryEvent(
-            identifier=18,
+            identifier=23,
             event_identifier='BNC_4b706868b7c8906507b66b1b35017dcaa9eec3c27e63563603e8aa7475243f81',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1686824951)),
             location=Location.BINANCE, event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.REWARD,
             asset=A_BUSD,
-            balance=Balance(amount=FVal(0.35628294)),
+            amount=FVal(0.35628294),
             location_label='CSV import',
             notes='Reward from Cash Voucher Distribution',
         ), HistoryEvent(
-            identifier=19,
+            identifier=24,
             event_identifier='BNC_6b282ed5ab3de42a924f008ed20e35ebcbbe1618b60c0a120c7c76278240f725',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1686825000)),
@@ -1865,11 +2030,11 @@ def assert_binance_import_results(rotki: Rotkehlchen):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.REWARD,
             asset=A_BUSD,
-            balance=Balance(amount=FVal(4.87068)),
+            amount=FVal(4.87068),
             location_label='CSV import',
             notes='Reward from Mission Reward Distribution',
         ), HistoryEvent(
-            identifier=20,
+            identifier=25,
             event_identifier='BNC_d6a38298147f2c10d888205893ac2baeccad83d1dbed1477a3e2f4ddd943761f',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1694505602)),
@@ -1877,11 +2042,11 @@ def assert_binance_import_results(rotki: Rotkehlchen):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_USDT,
-            balance=Balance(amount=FVal(0.07779065)),
+            amount=FVal(0.07779065),
             location_label='CSV import',
             notes='0.07779065 USDT fee paid on binance USD-MFutures',
         ), HistoryEvent(
-            identifier=21,
+            identifier=26,
             event_identifier='BNC_982287169e9675e5c799ca2f9d2b7f345eb6be73dbe6cfdb60a161949fdf8c01',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1694623421)),
@@ -1889,11 +2054,11 @@ def assert_binance_import_results(rotki: Rotkehlchen):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.PAYBACK_DEBT,
             asset=A_USDT,
-            balance=Balance(amount=FVal(0.05576000)),
+            amount=FVal(0.05576000),
             location_label='CSV import',
             notes='0.05576000 USDT realized loss on binance USD-MFutures',
         ), HistoryEvent(
-            identifier=22,
+            identifier=27,
             event_identifier='BNC_cd4e771cb6692df31c11743419800b4ccd73c3ac2b4b3f948f731cf663c7db0a',
             sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(1694623421)),
@@ -1901,7 +2066,7 @@ def assert_binance_import_results(rotki: Rotkehlchen):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.REWARD,
             asset=A_USDT,
-            balance=Balance(amount=FVal('1.29642000')),
+            amount=FVal('1.29642000'),
             location_label='CSV import',
             notes='1.29642000 USDT realized profit on binance USD-MFutures',
         ),
@@ -1909,12 +2074,6 @@ def assert_binance_import_results(rotki: Rotkehlchen):
 
     with rotki.data.db.conn.read_ctx() as cursor:
         trades = rotki.data.db.get_trades(cursor, filter_query=TradesFilterQuery.make(), has_premium=True)  # noqa: E501
-        warnings = rotki.msg_aggregator.consume_warnings()
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
-            has_premium=True,
-        )
         history_db = DBHistoryEvents(rotki.data.db)
         events = history_db.get_history_events(
             cursor=cursor,
@@ -1922,16 +2081,27 @@ def assert_binance_import_results(rotki: Rotkehlchen):
             has_premium=True,
         )
     assert trades == expected_trades
-    assert asset_movements == expected_asset_movements
     assert expected_events == events
-    expected_warnings = [
-        '2 Binance rows have bad format. Check logs for details.',
-        'Skipped 4 rows during processing binance csv file. Check logs for details',
-    ]
-    assert warnings == expected_warnings
+    websocket_connection.wait_until_messages_num(num=1, timeout=10)
+    assert websocket_connection.pop_message() == {
+        'type': 'progress_updates',
+        'data': {
+            'subtype': 'csv_import_result',
+            'source_name': 'Binance',
+            'total': 87,
+            'processed': 81,
+            'messages': [
+                {'msg': 'Failed to deserialize a timestamp from a null entry in binance', 'rows': [4], 'is_error': True},  # noqa: E501
+                {'msg': 'Unknown asset "" provided.', 'rows': [5], 'is_error': True},
+                {'msg': 'Could not process row in multi-line entry. Expected a valid combination of operations but got "Small assets exchange BNB, Small assets exchange BNB, Small assets exchange BNB" instead', 'rows': [31, 32, 33], 'is_error': True},  # noqa: E501
+                {'msg': 'Could not process row in multi-line entry. Expected a valid combination of operations but got "ABC" instead', 'rows': [41], 'is_error': True},  # noqa: E501
+            ],
+        },
+    }
+    assert websocket_connection.messages_num() == 0
 
 
-def assert_rotki_generic_trades_import_results(rotki: Rotkehlchen):
+def assert_rotki_generic_trades_import_results(rotki: Rotkehlchen, websocket_connection: WebsocketReader):  # noqa: E501
     expected_trades = [
         Trade(  # Sell 1875.64 USDC for 1 ETH
             timestamp=Timestamp(1659085200),
@@ -1970,17 +2140,26 @@ def assert_rotki_generic_trades_import_results(rotki: Rotkehlchen):
     ]
     with rotki.data.db.conn.read_ctx() as cursor:
         trades = rotki.data.db.get_trades(cursor, filter_query=TradesFilterQuery.make(), has_premium=True)  # noqa: E501
-        warnings = rotki.msg_aggregator.consume_warnings()
 
-    expected_warnings = [
-        'Deserialization error during rotki generic trades CSV import. Failed to deserialize Location value luno. Ignoring entry',  # noqa: E501
-        "During rotki generic trades import, csv row {'Location': 'bisq', 'Base Currency': 'eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F', 'Quote Currency': 'eip155:1/erc20:0xdAC17F958D2ee523a2206206994597C13D831ec7', 'Type': ' BuY ', 'Buy Amount': '0', 'Sell Amount': '4576.6400', 'Fee': '5.1345', 'Fee Currency': 'USD', 'Description': 'Trade USDT for DAI', 'Timestamp': '1659345600000'} has zero amount bought. Ignoring entry",  # noqa: E501
-    ]
     assert trades == expected_trades
-    assert warnings == expected_warnings
+    websocket_connection.wait_until_messages_num(num=1, timeout=10)
+    assert websocket_connection.pop_message() == {
+        'type': 'progress_updates',
+        'data': {
+            'subtype': 'csv_import_result',
+            'source_name': 'Rotki generic trades',
+            'total': 5,
+            'processed': 3,
+            'messages': [
+                {'msg': 'Deserialization error: Failed to deserialize Location value luno.', 'rows': [4], 'is_error': True},  # noqa: E501
+                {'msg': 'Entry has zero amount bought.', 'rows': [5], 'is_error': True},
+            ],
+        },
+    }
+    assert websocket_connection.messages_num() == 0
 
 
-def assert_rotki_generic_events_import_results(rotki: Rotkehlchen):
+def assert_rotki_generic_events_import_results(rotki: Rotkehlchen, websocket_connection: WebsocketReader):  # noqa: E501
     expected_history_events = [
         HistoryEvent(
             identifier=1,
@@ -1991,10 +2170,7 @@ def assert_rotki_generic_events_import_results(rotki: Rotkehlchen):
             asset=A_EUR,
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
-            balance=Balance(
-                amount=FVal('1000.00'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('1000.00'),
             notes='Deposit EUR to Kucoin',
         ), HistoryEvent(
             identifier=2,
@@ -2005,10 +2181,7 @@ def assert_rotki_generic_events_import_results(rotki: Rotkehlchen):
             asset=A_USDT,
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
-            balance=Balance(
-                amount=FVal('99.00'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('99.00'),
             notes='',
         ), HistoryEvent(
             identifier=3,
@@ -2019,10 +2192,7 @@ def assert_rotki_generic_events_import_results(rotki: Rotkehlchen):
             asset=A_USDT,
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
-            balance=Balance(
-                amount=FVal('1.00'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('1.00'),
             notes='',
         ), HistoryEvent(
             identifier=4,
@@ -2033,10 +2203,7 @@ def assert_rotki_generic_events_import_results(rotki: Rotkehlchen):
             asset=A_BNB,
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
-            balance=Balance(
-                amount=FVal('1.01'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('1.01'),
             notes='',
         ), HistoryEvent(
             identifier=5,
@@ -2047,10 +2214,7 @@ def assert_rotki_generic_events_import_results(rotki: Rotkehlchen):
             asset=A_BTC,
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.NONE,
-            balance=Balance(
-                amount=FVal('0.0910'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('0.0910'),
             notes='',
         ),
     ]
@@ -2062,15 +2226,26 @@ def assert_rotki_generic_events_import_results(rotki: Rotkehlchen):
             has_premium=True,
         )
         warnings = rotki.msg_aggregator.consume_warnings()
-    expected_warnings = [
-        'Deserialization error during rotki generic events CSV import. Failed to deserialize Location value luno. Ignoring entry',  # noqa: E501
-        'Deserialization error during rotki generic events CSV import. Failed to deserialize Location value cex. Ignoring entry',  # noqa: E501
-        "Unsupported entry Invalid. Data: {'Type': 'Invalid', 'Location': 'bisq', 'Currency': 'BCH', 'Amount': '0.3456', 'Fee': '', 'Fee Currency': '', 'Description': '', 'Timestamp': '1659686400000'}",  # noqa: E501
-    ]
+
     assert len(history_events) == 5
     assert len(expected_history_events) == 5
-    assert len(warnings) == 3
-    assert warnings == expected_warnings
+    assert len(warnings) == 0
+    websocket_connection.wait_until_messages_num(num=1, timeout=10)
+    assert websocket_connection.pop_message() == {
+        'type': 'progress_updates',
+        'data': {
+            'subtype': 'csv_import_result',
+            'source_name': 'Rotki generic events',
+            'total': 7,
+            'processed': 4,
+            'messages': [
+                {'msg': 'Deserialization error: Failed to deserialize Location value luno.', 'rows': [4], 'is_error': True},  # noqa: E501
+                {'msg': 'Deserialization error: Failed to deserialize Location value cex.', 'rows': [6], 'is_error': True},   # noqa: E501
+                {'msg': "Unsupported entry Invalid. Data: {'Type': 'Invalid', 'Location': 'bisq', 'Currency': 'BCH', 'Amount': '0.3456', 'Fee': '', 'Fee Currency': '', 'Description': '', 'Timestamp': '1659686400000'}", 'rows': [7], 'is_error': True},  # noqa: E501
+            ],
+        },
+    }
+    assert websocket_connection.messages_num() == 0
     for actual, expected in zip(history_events, expected_history_events, strict=True):
         assert_is_equal_history_event(actual=actual, expected=expected)
 
@@ -2103,10 +2278,7 @@ def assert_bitcoin_tax_trades_import_results(
                 asset=A_EUR,
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.SPEND,
-                balance=Balance(
-                    amount=FVal('1008'),
-                    usd_value=ZERO,
-                ),
+                amount=FVal('1008'),
                 notes='',
             ),
             HistoryEvent(
@@ -2118,10 +2290,7 @@ def assert_bitcoin_tax_trades_import_results(
                 asset=A_BCH,
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.RECEIVE,
-                balance=Balance(
-                    amount=FVal('0.99735527'),
-                    usd_value=ZERO,
-                ),
+                amount=FVal('0.99735527'),
                 notes='',
             ),
             HistoryEvent(
@@ -2133,10 +2302,7 @@ def assert_bitcoin_tax_trades_import_results(
                 asset=A_EUR,
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.FEE,
-                balance=Balance(
-                    amount=FVal('3.01495511'),
-                    usd_value=ZERO,
-                ),
+                amount=FVal('3.01495511'),
                 notes='',
             ),
             HistoryEvent(
@@ -2148,10 +2314,7 @@ def assert_bitcoin_tax_trades_import_results(
                 asset=A_USDT,
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.SPEND,
-                balance=Balance(
-                    amount=FVal('713.952'),
-                    usd_value=ZERO,
-                ),
+                amount=FVal('713.952'),
                 notes='',
             ),
             HistoryEvent(
@@ -2163,10 +2326,7 @@ def assert_bitcoin_tax_trades_import_results(
                 asset=A_BTC,
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.RECEIVE,
-                balance=Balance(
-                    amount=FVal('0.110778'),
-                    usd_value=ZERO,
-                ),
+                amount=FVal('0.110778'),
                 notes='',
             ),
             HistoryEvent(
@@ -2178,10 +2338,7 @@ def assert_bitcoin_tax_trades_import_results(
                 asset=A_BTC,
                 event_type=HistoryEventType.TRADE,
                 event_subtype=HistoryEventSubType.FEE,
-                balance=Balance(
-                    amount=FVal('0.000222'),
-                    usd_value=ZERO,
-                ),
+                amount=FVal('0.000222'),
                 notes='',
             ),
         ]
@@ -2209,10 +2366,7 @@ def assert_bitcoin_tax_trades_import_results(
                 asset=A_BTC,
                 event_type=HistoryEventType.SPEND,
                 event_subtype=HistoryEventSubType.NONE,
-                balance=Balance(
-                    amount=FVal('0.05'),
-                    usd_value=ZERO,
-                ),
+                amount=FVal('0.05'),
                 notes='',
             ),
         ]
@@ -2260,10 +2414,7 @@ def assert_bitstamp_trades_import_results(rotki: Rotkehlchen):
             asset=A_ETH,
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
-            balance=Balance(
-                amount=FVal('2.00000000'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('2.00000000'),
             notes='Deposit of 2.00000000 ETH(Ethereum) on Bitstamp',
         ),
         HistoryEvent(
@@ -2275,10 +2426,7 @@ def assert_bitstamp_trades_import_results(rotki: Rotkehlchen):
             asset=A_ETH,
             event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.SPEND,
-            balance=Balance(
-                amount=FVal('1.00000000'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('1.00000000'),
             notes='Spend 1.00000000 ETH(Ethereum) as the result of a trade on Bitstamp',
         ),
         HistoryEvent(
@@ -2290,10 +2438,7 @@ def assert_bitstamp_trades_import_results(rotki: Rotkehlchen):
             asset=A_EUR,
             event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.RECEIVE,
-            balance=Balance(
-                amount=FVal('2214.01'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('2214.01'),
             notes='Receive 2214.01 EUR(Euro) as the result of a trade on Bitstamp',
         ),
         HistoryEvent(
@@ -2305,10 +2450,7 @@ def assert_bitstamp_trades_import_results(rotki: Rotkehlchen):
             asset=A_EUR,
             event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.FEE,
-            balance=Balance(
-                amount=FVal('10.87005'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('10.87005'),
             notes='Fee of 10.87005 EUR(Euro) as the result of a trade on Bitstamp',
         ),
         HistoryEvent(
@@ -2320,10 +2462,7 @@ def assert_bitstamp_trades_import_results(rotki: Rotkehlchen):
             asset=A_EUR,
             event_type=HistoryEventType.WITHDRAWAL,
             event_subtype=HistoryEventSubType.REMOVE_ASSET,
-            balance=Balance(
-                amount=FVal('2211.01'),
-                usd_value=ZERO,
-            ),
+            amount=FVal('2211.01'),
             notes='Withdrawal of 2211.01 EUR(Euro) on Bitstamp',
         ),
     ]
@@ -2336,9 +2475,9 @@ def assert_bittrex_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing data from bittrex"""
     with rotki.data.db.conn.read_ctx() as cursor:
         trades = rotki.data.db.get_trades(cursor, filter_query=TradesFilterQuery.make(), has_premium=True)  # noqa: E501
-        asset_movements = rotki.data.db.get_asset_movements(
-            cursor,
-            filter_query=AssetMovementsFilterQuery.make(),
+        events = DBHistoryEvents(rotki.data.db).get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
             has_premium=True,
         )
 
@@ -2395,72 +2534,69 @@ def assert_bittrex_import_results(rotki: Rotkehlchen):
         link='Imported bittrex trade 0 from csv',
         notes=None,
     )]
-    assert asset_movements == [AssetMovement(
+    assert events == [AssetMovement(
+        identifier=5,
+        event_identifier='28c432c0faec444c6c0b3c6da30171260273a05a2f684f67fa5e3184500ee83a',
         location=Location.BITTREX,
-        category=AssetMovementCategory.WITHDRAWAL,
-        timestamp=Timestamp(1451576024),
-        address=None,
-        transaction_id='0x',
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1451576024000),
         asset=A_ETH,
-        amount=AssetAmount(ONE),
-        fee_asset=A_ETH,
-        fee=Fee(ZERO),
-        link='Imported from bittrex CSV file',
+        amount=ONE,
+        extra_data={'transaction_id': '0x'},
     ), AssetMovement(
+        identifier=4,
+        event_identifier='aac9b816a80599e72bd3e68adb9ce6165adddfcecd54ec682defbc57eb1cfe15',
         location=Location.BITTREX,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1483273298),
-        address='3m',
-        transaction_id='a5577',
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1483273298000),
         asset=A_BTC,
-        amount=AssetAmount(FVal('0.001')),
-        fee_asset=A_BTC,
-        fee=Fee(ZERO),
-        link='Imported from bittrex CSV file',
+        amount=FVal('0.001'),
+        extra_data={
+            'address': '3m',
+            'transaction_id': 'a5577',
+        },
     ), AssetMovement(
+        identifier=3,
+        event_identifier='3fea1671268ba41b048e6a82cc8c2e06ec296a25992b25f887d349e73c140a7a',
         location=Location.BITTREX,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1495373867),
-        address='3bamsmdamsd',
-        transaction_id='aaaa',
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1495373867000),
         asset=A_BTC,
-        amount=AssetAmount(ONE),
-        fee_asset=A_BTC,
-        fee=Fee(ZERO),
-        link='Imported from bittrex CSV file',
+        amount=ONE,
+        extra_data={
+            'address': '3bamsmdamsd',
+            'transaction_id': 'aaaa',
+        },
     ), AssetMovement(
+        identifier=2,
+        event_identifier='538f61a7ca39a7dc1805121b14fcb5e0ba389f952bad6b3f4b52854d94dd4f70',
         location=Location.BITTREX,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1632868521),
-        address=None,
-        transaction_id='1A313456CCEA5AF45B334881513CF472',
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1632868521000),
         asset=Asset('BCHA'),
-        amount=AssetAmount(FVal('0.00000001')),
-        fee_asset=Asset('BCHA'),
-        fee=Fee(ZERO),
-        link='Imported from bittrex CSV file',
+        amount=FVal('0.00000001'),
+        extra_data={'transaction_id': '1A313456CCEA5AF45B334881513CF472'},
     ), AssetMovement(
+        identifier=1,
+        event_identifier='082a31a46ebe3e9f89e49c5b24a52c8069c4f42a9a5a1ec1cb34ae21779cd91d',
         location=Location.BITTREX,
-        category=AssetMovementCategory.WITHDRAWAL,
-        timestamp=Timestamp(1678175503),
-        address='0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5',
-        transaction_id='0xecac30357b613f6bcb5bc148fdd1d608bd94021e95a59233003948fde0c7c4d9',
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1678175503000),
         asset=A_ETH,
-        amount=AssetAmount(FVal('0.20084931')),
-        fee_asset=A_ETH,
-        fee=Fee(ZERO),
-        link='Imported from bittrex CSV file',
+        amount=FVal('0.20084931'),
+        extra_data={
+            'address': '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5',
+            'transaction_id': '0xecac30357b613f6bcb5bc148fdd1d608bd94021e95a59233003948fde0c7c4d9',
+        },
     ), AssetMovement(
+        identifier=6,
+        event_identifier='0cedd8004a902913273c81448450dba57001176234745e4b43e142760cebe561',
         location=Location.BITTREX,
-        category=AssetMovementCategory.WITHDRAWAL,
-        timestamp=Timestamp(1698881807),
-        address=None,
-        transaction_id='Aaaa',
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1698881807000),
         asset=A_BTC,
-        amount=AssetAmount(ONE),
-        fee_asset=A_BTC,
-        fee=Fee(ZERO),
-        link='Imported from bittrex CSV file',
+        amount=ONE,
+        extra_data={'transaction_id': 'Aaaa'},
     )]
 
 
@@ -2514,3 +2650,223 @@ def assert_kucoin_import_results(rotki: Rotkehlchen):
         fee_currency=A_USDT,
     )]
     assert trades == expected_trades
+
+
+def assert_blockpit_import_results(rotki: Rotkehlchen):
+    """A utility function to help assert on correctness of importing data from blockpit"""
+    dbevents = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.read_ctx() as cursor:
+        trades = rotki.data.db.get_trades(cursor=cursor, filter_query=TradesFilterQuery.make(), has_premium=True)  # noqa: E501
+        history_events = dbevents.get_history_events(cursor=cursor, filter_query=HistoryEventFilterQuery.make(), has_premium=True)  # noqa: E501
+
+    warnings = rotki.msg_aggregator.consume_warnings()
+    errors = rotki.msg_aggregator.consume_errors()
+    assert len(errors) == len(warnings) == 0
+
+    assert trades == [
+        Trade(
+            timestamp=Timestamp(1673181840),
+            location=Location.BINANCE,
+            base_asset=A_ETH_MATIC,
+            quote_asset=A_EUR,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('223.7')),
+            rate=Price(FVal('0.7541')),
+            fee=Fee(FVal('0.2237')),
+            fee_currency=A_ETH_MATIC,
+            notes='spot',
+        ), Trade(
+            timestamp=Timestamp(1673192880),
+            location=Location.BINANCE,
+            base_asset=A_EUR,
+            quote_asset=A_ETH_MATIC,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('106.1899')),
+            rate=Price(FVal('1.32310134956337655464408573696745170680074093675575549087060068801270177295581')),
+            fee=Fee(FVal('0.1061899')),
+            fee_currency=A_EUR,
+            notes='spot',
+        ), Trade(
+            timestamp=Timestamp(1673195040),
+            location=Location.BINANCE,
+            base_asset=A_BNB,
+            quote_asset=A_USDT,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.00092036')),
+            rate=Price(FVal('263.048328914772480333782432961015254900256421400321613281759311573732017906037')),
+            fee=Fee(FVal('0.0000184')),
+            fee_currency=A_BNB,
+            notes='',
+        ),
+    ]
+
+    expected_history_events = [
+        HistoryEvent(
+            identifier=1,
+            event_identifier='',
+            sequence_index=0,
+            timestamp=TimestampMS(1673035680000),
+            location=Location.EXTERNAL,
+            asset=A_ETH_MATIC,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            amount=FVal('0.001537148341223424'),
+            notes='Fee of 0.001537148341223424 MATIC in external',
+        ), HistoryEvent(
+            identifier=2,
+            event_identifier='',
+            sequence_index=1,
+            timestamp=TimestampMS(1673035680000),
+            location=Location.EXTERNAL,
+            asset=Asset('META'),
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.NONE,
+            amount=FVal('10'),
+            notes='Spend 10 META in external',
+        ), HistoryEvent(
+            identifier=3,
+            event_identifier='',
+            sequence_index=1,
+            timestamp=TimestampMS(1673139600000),
+            location=Location.BINANCE,
+            asset=A_EUR,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.NONE,
+            amount=FVal('0.01061899'),
+            notes='Receive 0.01061899 EUR in binance',
+        ), AssetMovement(
+            identifier=4,
+            location=Location.BINANCE,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1673194740000),
+            asset=A_BNB,
+            amount=FVal('0.0095'),
+        ), AssetMovement(
+            identifier=6,
+            location=Location.EXTERNAL,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1673194740000),
+            asset=A_BNB,
+            amount=FVal('0.0095'),
+        ), AssetMovement(
+            identifier=5,
+            location=Location.BINANCE,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1673194740000),
+            asset=A_BNB,
+            amount=FVal('0.0005'),
+            is_fee=True,
+        ), HistoryEvent(
+            identifier=7,
+            event_identifier='',
+            sequence_index=1,
+            timestamp=TimestampMS(1673194800000),
+            location=Location.EXTERNAL,
+            asset=A_BNB,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            amount=FVal('0.00024391'),
+            notes='Fee of 0.00024391 BNB in external',
+        ), AssetMovement(
+            identifier=8,
+            location=Location.EXTERNAL,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1673194920000),
+            asset=A_BNB,
+            amount=FVal('0.00915109'),
+        ), AssetMovement(
+            identifier=10,
+            location=Location.BINANCE,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1673194920000),
+            asset=A_BNB,
+            amount=FVal('0.00915109'),
+        ), AssetMovement(
+            identifier=9,
+            location=Location.EXTERNAL,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1673194920000),
+            asset=A_BNB,
+            amount=FVal('0.000105'),
+            is_fee=True,
+        ), AssetMovement(
+            identifier=11,
+            location=Location.EXTERNAL,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1673204160000),
+            asset=A_EUR,
+            amount=FVal('150'),
+        ), AssetMovement(
+            identifier=12,
+            location=Location.BITPANDA,
+            event_type=HistoryEventType.DEPOSIT,
+            timestamp=TimestampMS(1674759960000),
+            asset=A_EUR,
+            amount=FVal('1000'),
+        ), AssetMovement(
+            identifier=13,
+            location=Location.BITPANDA,
+            event_type=HistoryEventType.WITHDRAWAL,
+            timestamp=TimestampMS(1674760200000),
+            asset=A_EUR,
+            amount=FVal('1000'),
+        ), HistoryEvent(
+            identifier=14,
+            event_identifier='',
+            sequence_index=1,
+            timestamp=TimestampMS(1675532220000),
+            location=Location.KRAKEN,
+            asset=A_EUR,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.NONE,
+            amount=FVal('0.0181'),
+            notes='Spend 0.0181 EUR in kraken',
+        ), HistoryEvent(
+            identifier=15,
+            event_identifier='',
+            sequence_index=0,
+            timestamp=TimestampMS(1675532700000),
+            location=Location.KRAKEN,
+            asset=A_EUR,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            amount=FVal('0.0021'),
+            notes='Fee of 0.0021 EUR in kraken',
+        ), HistoryEvent(
+            identifier=16,
+            event_identifier='',
+            sequence_index=1,
+            timestamp=TimestampMS(1675532700000),
+            location=Location.KRAKEN,
+            asset=A_EUR,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.NONE,
+            amount=FVal('0.0025'),
+            notes='Receive 0.0025 EUR in kraken',
+        ), HistoryEvent(
+            identifier=17,
+            event_identifier='',
+            sequence_index=1,
+            timestamp=TimestampMS(1675913100000),
+            location=Location.KRAKEN,
+            asset=A_ETH_MATIC,
+            event_type=HistoryEventType.STAKING,
+            event_subtype=HistoryEventSubType.REWARD,
+            amount=FVal('0.1932938'),
+            notes='Staking reward of 0.1932938 MATIC in kraken',
+        ), HistoryEvent(
+            identifier=18,
+            event_identifier='',
+            sequence_index=1,
+            timestamp=TimestampMS(1675954800000),
+            location=Location.KRAKEN,
+            asset=A_EUR,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.NONE,
+            amount=FVal('0.06'),
+            notes='Receive 0.06 EUR in kraken',
+        ),
+    ]
+
+    for actual, expected in zip(history_events, expected_history_events, strict=True):
+        assert_is_equal_history_event(actual=actual, expected=expected)

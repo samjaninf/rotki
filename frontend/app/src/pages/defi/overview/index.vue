@@ -1,6 +1,17 @@
 <script setup lang="ts">
-import { type TablePaginationData, useBreakpoint } from '@rotki/ui-library-compat';
+import { type TablePaginationData, useBreakpoint } from '@rotki/ui-library';
 import { Section } from '@/types/status';
+import { useStatusStore } from '@/store/status';
+import { useDefiOverviewStore } from '@/store/defi/overview';
+import { useDefiStore } from '@/store/defi';
+import Overview from '@/components/defi/Overview.vue';
+import NoDataScreen from '@/components/common/NoDataScreen.vue';
+import ProgressScreen from '@/components/helper/ProgressScreen.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+
+definePage({
+  name: 'defi-overview',
+});
 
 const page = ref(1);
 const itemsPerPage = ref(9);
@@ -12,7 +23,7 @@ const section = Section.DEFI_OVERVIEW;
 
 const { t } = useI18n();
 
-const { isMdAndDown, isMd, is2xl } = useBreakpoint();
+const { is2xl, isMd, isMdAndDown } = useBreakpoint();
 
 const firstLimit = computed(() => {
   if (get(isMdAndDown))
@@ -27,12 +38,12 @@ const firstLimit = computed(() => {
   return 9;
 });
 
-const { shouldShowLoadingScreen, isLoading } = useStatusStore();
+const { isLoading, shouldShowLoadingScreen } = useStatusStore();
 
 const loading = shouldShowLoadingScreen(section);
 const refreshing = isLoading(section);
 
-const refreshTooltip: ComputedRef<string> = computed(() =>
+const refreshTooltip = computed<string>(() =>
   t('helpers.refresh_header.tooltip', {
     title: t('decentralized_overview.title').toLocaleLowerCase(),
   }),
@@ -52,10 +63,10 @@ const limits = computed(() => {
 const paginationData = computed({
   get() {
     return {
-      page: get(page),
-      total: get(currentOverview).length,
       limit: get(itemsPerPage),
       limits: get(limits),
+      page: get(page),
+      total: get(currentOverview).length,
     };
   },
   set(value: TablePaginationData) {
@@ -78,9 +89,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <TablePageLayout
-    :title="[t('navigation_menu.defi'), t('decentralized_overview.title')]"
-  >
+  <TablePageLayout :title="[t('navigation_menu.defi'), t('decentralized_overview.title')]">
     <template #buttons>
       <RuiTooltip :open-delay="400">
         <template #activator>
@@ -91,7 +100,7 @@ onMounted(async () => {
             @click="refresh()"
           >
             <template #prepend>
-              <RuiIcon name="refresh-line" />
+              <RuiIcon name="lu-refresh-ccw" />
             </template>
             {{ t('common.refresh') }}
           </RuiButton>
@@ -105,26 +114,35 @@ onMounted(async () => {
         {{ t('decentralized_overview.loading') }}
       </template>
     </ProgressScreen>
-    <NoDataScreen v-else-if="currentOverview.length === 0">
-      <template #title>
-        {{ t('decentralized_overview.empty_title') }}
-      </template>
-      {{ t('decentralized_overview.empty_subtitle') }}
-    </NoDataScreen>
     <template v-else>
-      <div
-        class="grid gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
-      >
-        <Overview
-          v-for="summary in visibleData"
-          :key="summary.protocol"
-          :summary="summary"
-        />
-      </div>
+      <div>
+        <RuiAlert
+          type="warning"
+          :title="t('common.important_notice')"
+          class="mb-6"
+        >
+          {{ t('decentralized_overview.deprecated_warning') }}
+        </RuiAlert>
+        <NoDataScreen v-if="currentOverview.length === 0">
+          <template #title>
+            {{ t('decentralized_overview.empty_title') }}
+          </template>
+          {{ t('decentralized_overview.empty_subtitle') }}
+        </NoDataScreen>
+        <template v-else>
+          <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            <Overview
+              v-for="summary in visibleData"
+              :key="summary.protocol"
+              :summary="summary"
+            />
+          </div>
 
-      <RuiCard v-if="currentOverview.length > visibleData.length">
-        <RuiTablePagination v-model="paginationData" />
-      </RuiCard>
+          <RuiCard v-if="currentOverview.length > visibleData.length">
+            <RuiTablePagination v-model="paginationData" />
+          </RuiCard>
+        </template>
+      </div>
     </template>
   </TablePageLayout>
 </template>

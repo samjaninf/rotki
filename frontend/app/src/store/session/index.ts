@@ -7,26 +7,42 @@ import {
   type UnlockPayload,
 } from '@/types/login';
 import { TaskType } from '@/types/task-type';
-import { UserAccount, type UserSettingsModel } from '@/types/user';
-import type { Exchange } from '@/types/exchanges';
+import { type SettingsUpdate, UserAccount, type UserSettingsModel } from '@/types/user';
+import { api } from '@/services/rotkehlchen-api';
+import { logger } from '@/utils/logging';
+import { lastLogin } from '@/utils/account-management';
+import { useMonitorStore } from '@/store/monitor';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useTaskStore } from '@/store/tasks';
+import { useMessageStore } from '@/store/message';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useAppNavigation } from '@/composables/navigation';
+import { useLastLanguage } from '@/composables/session/language';
+import { useInterop } from '@/composables/electron-interop';
+import { useExchangeApi } from '@/composables/api/balances/exchanges';
+import { useSettingsApi } from '@/composables/api/settings/settings-api';
+import { useUsersApi } from '@/composables/api/session/users';
+import { useSessionSettings } from '@/composables/session/settings';
+import { migrateSettingsIfNeeded } from '@/types/settings/frontend-settings-migrations';
 import type { SupportedLanguage } from '@/types/settings/frontend-settings';
+import type { Exchange } from '@/types/exchanges';
 import type { TaskMeta } from '@/types/task';
 import type { ChangePasswordPayload } from '@/types/session';
 import type { ActionStatus } from '@/types/action';
 
 export const useSessionStore = defineStore('session', () => {
-  const showUpdatePopup: Ref<boolean> = ref(false);
-  const darkModeEnabled: Ref<boolean> = ref(false);
-  const checkForAssetUpdate: Ref<boolean> = ref(false);
+  const showUpdatePopup = ref<boolean>(false);
+  const darkModeEnabled = ref<boolean>(false);
+  const checkForAssetUpdate = ref<boolean>(false);
 
   const authStore = useSessionAuthStore();
   const {
-    logged,
-    username,
-    syncConflict,
     conflictExist,
     incompleteUpgradeConflict,
+    logged,
     shouldFetchData,
+    syncConflict,
+    username,
   } = storeToRefs(authStore);
 
   const { initialize } = useSessionSettings();
@@ -36,11 +52,15 @@ export const useSessionStore = defineStore('session', () => {
 
   const { setMessage } = useMessageStore();
 
-  const { checkForUpdates, resetTray, isPackaged, clearPassword } = useInterop();
+  const { checkForUpdates, clearPassword, isPackaged, resetTray } = useInterop();
   const { awaitTask } = useTaskStore();
 
   const { t } = useI18n();
   const { start } = useMonitorStore();
+
+  api.setOnAuthFailure(() => {
+    set(logged, false);
+  });
 
   const createActionStatus = (error: any): ActionStatus => {
     let message = '';
@@ -59,15 +79,10 @@ export const useSessionStore = defineStore('session', () => {
       message = error.message;
     }
 
-    return { success: false, message };
+    return { message, success: false };
   };
 
-  const unlock = ({
-    settings,
-    exchanges,
-    fetchData,
-    username: user,
-  }: UnlockPayload): ActionStatus => {
+  const unlock = ({ exchanges, fetchData, settings, username: user }: UnlockPayload): ActionStatus => {
     try {
       initialize(settings, exchanges);
       set(username, user);
@@ -83,42 +98,32 @@ export const useSessionStore = defineStore('session', () => {
     }
   };
 
-  const createAccount = async (
-    payload: CreateAccountPayload,
-  ): Promise<ActionStatus> => {
+  const createAccount = async (payload: CreateAccountPayload): Promise<ActionStatus> => {
     try {
       start();
       const taskType = TaskType.CREATE_ACCOUNT;
       const { taskId } = await usersApi.createAccount(payload);
-      const { result } = await awaitTask<UserAccount, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: 'creating account',
-        },
-      );
-      const { settings, exchanges } = UserAccount.parse(result);
+      const { result } = await awaitTask<UserAccount, TaskMeta>(taskId, taskType, {
+        title: 'creating account',
+      });
+      const { exchanges, settings } = UserAccount.parse(result);
       const data: UnlockPayload = {
-        settings,
         exchanges,
-        username: payload.credentials.username,
         fetchData: payload.premiumSetup?.syncDatabase,
+        settings,
+        username: payload.credentials.username,
       };
       return unlock(data);
     }
     catch (error: any) {
       logger.error(error);
-      return { success: false, message: error.message };
+      return { message: error.message, success: false };
     }
   };
 
-  const login = async (
-    credentials: LoginCredentials,
-  ): Promise<ActionStatus> => {
+  const login = async (credentials: LoginCredentials): Promise<ActionStatus> => {
     try {
-      const username = credentials.username
-        ? credentials.username
-        : lastLogin();
+      const username = credentials.username ? credentials.username : lastLogin();
       const isLogged = await usersApi.checkIfLogged(username);
 
       let settings: UserSettingsModel;
@@ -126,41 +131,45 @@ export const useSessionStore = defineStore('session', () => {
       const conflict = get(conflictExist);
 
       if (isLogged && !conflict) {
-        [settings, exchanges] = await Promise.all([
-          settingsApi.getSettings(),
-          exchangeApi.getExchanges(),
-        ]);
+        [settings, exchanges] = await Promise.all([settingsApi.getSettings(), exchangeApi.getExchanges()]);
       }
       else {
         if (!credentials.username)
-          return { success: false, message: '' };
+          return { message: '', success: false };
 
         authStore.resetSyncConflict();
         authStore.resetIncompleteUpgradeConflict();
         const taskType = TaskType.LOGIN;
         const { taskId } = await usersApi.login(credentials);
         start();
-        const { result } = await awaitTask<UserAccount, TaskMeta>(
-          taskId,
-          taskType,
-          {
-            title: 'login in',
-          },
-        );
+        const { result } = await awaitTask<{
+          settings: SettingsUpdate;
+          exchanges: Exchange[];
+        }, TaskMeta>(taskId, taskType, {
+          title: 'login in',
+        });
+
+        const migratedSettings = migrateSettingsIfNeeded(result.settings.frontendSettings);
+
+        if (migratedSettings) {
+          await settingsApi.setSettings({ frontendSettings: migratedSettings });
+          result.settings.frontendSettings = migratedSettings;
+        }
 
         const account = UserAccount.parse(result);
-        ({ settings, exchanges } = account);
+        ({ exchanges, settings } = account);
       }
 
       return unlock({
-        settings,
         exchanges,
-        username,
         fetchData: true,
+        settings,
+        username,
       });
     }
     catch (error: any) {
       logger.error(error);
+      authStore.clearUpgradeMessages();
       return createActionStatus(error);
     }
   };
@@ -179,8 +188,8 @@ export const useSessionStore = defineStore('session', () => {
     catch (error: any) {
       logger.error(error);
       setMessage({
-        title: 'Logout failed',
         description: error.message,
+        title: 'Logout failed',
       });
     }
 
@@ -191,17 +200,16 @@ export const useSessionStore = defineStore('session', () => {
   const logoutRemoteSession = async (): Promise<ActionStatus> => {
     try {
       const loggedUsers = await usersApi.loggedUsers();
-      for (const user of loggedUsers)
-        await usersApi.logout(user);
+      for (const user of loggedUsers) await usersApi.logout(user);
 
       return { success: true };
     }
     catch (error: any) {
       setMessage({
-        title: 'Remote session logout failure',
         description: error.message,
+        title: 'Remote session logout failure',
       });
-      return { success: false, message: error.message };
+      return { message: error.message, success: false };
     }
   };
 
@@ -209,18 +217,11 @@ export const useSessionStore = defineStore('session', () => {
     set(showUpdatePopup, await checkForUpdates());
   };
 
-  const changePassword = async ({
-    currentPassword,
-    newPassword,
-  }: ChangePasswordPayload): Promise<ActionStatus> => {
+  const changePassword = async ({ currentPassword, newPassword }: ChangePasswordPayload): Promise<ActionStatus> => {
     try {
-      const success = await usersApi.changeUserPassword(
-        get(username),
-        currentPassword,
-        newPassword,
-      );
+      const success = await usersApi.changeUserPassword(get(username), currentPassword, newPassword);
       setMessage({
-        description: t('actions.session.password_change.success').toString(),
+        description: t('actions.session.password_change.success'),
         success: true,
       });
 
@@ -238,11 +239,11 @@ export const useSessionStore = defineStore('session', () => {
       setMessage({
         description: t('actions.session.password_change.error', {
           message: error.message,
-        }).toString(),
+        }),
       });
       return {
-        success: false,
         message: error.message,
+        success: false,
       };
     }
   };
@@ -250,7 +251,7 @@ export const useSessionStore = defineStore('session', () => {
   const { lastLanguage } = useLastLanguage();
   const { language } = storeToRefs(useFrontendSettingsStore());
 
-  const adaptiveLanguage: ComputedRef<SupportedLanguage> = computed(() => {
+  const adaptiveLanguage = computed<SupportedLanguage>(() => {
     const selectedLanguageVal = get(lastLanguage);
     return !get(logged) && selectedLanguageVal !== 'undefined'
       ? (selectedLanguageVal as SupportedLanguage)
@@ -259,15 +260,15 @@ export const useSessionStore = defineStore('session', () => {
 
   return {
     adaptiveLanguage,
-    showUpdatePopup,
+    changePassword,
+    checkForAssetUpdate,
+    checkForUpdate,
+    createAccount,
     darkModeEnabled,
     login,
     logout,
     logoutRemoteSession,
-    createAccount,
-    changePassword,
-    checkForUpdate,
-    checkForAssetUpdate,
+    showUpdatePopup,
   };
 });
 

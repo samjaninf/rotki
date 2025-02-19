@@ -1,7 +1,7 @@
 import os
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -10,7 +10,8 @@ import requests
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE_NAME
 from rotkehlchen.chain.ethereum.modules.convex.constants import CPT_CONVEX
-from rotkehlchen.chain.ethereum.modules.curve.constants import CPT_CURVE
+from rotkehlchen.chain.evm.decoding.curve.constants import CPT_CURVE
+from rotkehlchen.chain.evm.types import NodeName
 from rotkehlchen.constants.misc import DEFAULT_MAX_LOG_BACKUP_FILES, DEFAULT_SQL_VM_INSTRUCTIONS_CB
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmProduct
@@ -20,8 +21,12 @@ from rotkehlchen.tests.utils.api import (
     assert_proper_response,
     assert_proper_sync_response_with_result,
 )
+from rotkehlchen.tests.utils.factories import make_evm_address
 from rotkehlchen.types import ChainID, Location, SupportedBlockchain
 from rotkehlchen.utils.misc import get_system_spec
+
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
 
 
 def generate_expected_info(
@@ -30,8 +35,8 @@ def generate_expected_info(
         latest_version: str | None = None,
         accept_docker_risk: bool = False,
         download_url: str | None = None,
-):
-    result = {
+) -> dict[str, Any]:
+    return {
         'version': {
             'our_version': expected_version,
             'latest_version': latest_version,
@@ -46,10 +51,9 @@ def generate_expected_info(
             'sqlite_instructions': 5000,
         },
     }
-    return result
 
 
-def test_query_info_version_when_up_to_date(rotkehlchen_api_server):
+def test_query_info_version_when_up_to_date(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that endpoint to query the rotki version works if no new version is available"""
     expected_version = '1.1.0'
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
@@ -57,7 +61,7 @@ def test_query_info_version_when_up_to_date(rotkehlchen_api_server):
     def patched_get_system_spec() -> dict[str, Any]:
         return {'rotkehlchen': f'v{expected_version}'}
 
-    def patched_get_latest_release(_klass):
+    def patched_get_latest_release(_klass: Any) -> tuple[str, str]:
         return expected_version, f'https://github.com/rotki/rotki/releases/tag/{expected_version}'
     release_patch = patch(
         'rotkehlchen.externalapis.github.Github.get_latest_release',
@@ -109,7 +113,7 @@ def test_query_info_version_when_up_to_date(rotkehlchen_api_server):
     )
 
 
-def test_query_ping(rotkehlchen_api_server):
+def test_query_ping(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that the ping endpoint works"""
     expected_result = True
     expected_message = ''
@@ -122,14 +126,14 @@ def test_query_ping(rotkehlchen_api_server):
     assert response_json['message'] == expected_message
 
 
-def test_query_version_when_update_required(rotkehlchen_api_server):
+def test_query_version_when_update_required(rotkehlchen_api_server: 'APIServer') -> None:
     """
     Test that endpoint to query app version and available updates works
     when a new version is available.
     """
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
 
-    def patched_get_latest_release(_klass):
+    def patched_get_latest_release(_klass: Any) -> tuple[str, str]:
         new_latest = 'v99.99.99'
         return new_latest, f'https://github.com/rotki/rotki/releases/tag/{new_latest}'
 
@@ -159,7 +163,7 @@ def test_query_version_when_update_required(rotkehlchen_api_server):
 
 
 @pytest.mark.parametrize('ethereum_manager_connect_at_start', ['DEFAULT'])
-def test_manage_nodes(rotkehlchen_api_server):
+def test_manage_nodes(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that list of nodes can be correctly updated and queried"""
     database = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
     blockchain = SupportedBlockchain.ETHEREUM
@@ -417,7 +421,7 @@ def test_manage_nodes(rotkehlchen_api_server):
 
 
 @pytest.mark.parametrize('max_size_in_mb_all_logs', [659])
-def test_configuration(rotkehlchen_api_server):
+def test_configuration(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that the configuration endpoint returns the expected information"""
     response = requests.get(api_url_for(rotkehlchen_api_server, 'configurationsresource'))
     result = assert_proper_sync_response_with_result(response)
@@ -429,7 +433,7 @@ def test_configuration(rotkehlchen_api_server):
     assert result['sqlite_instructions']['value'] == DEFAULT_SQL_VM_INSTRUCTIONS_CB
 
 
-def test_query_all_chain_ids(rotkehlchen_api_server):
+def test_query_all_chain_ids(rotkehlchen_api_server: 'APIServer') -> None:
     response = requests.get(api_url_for(rotkehlchen_api_server, 'allevmchainsresource'))
     result = assert_proper_sync_response_with_result(response)
     for chain in ChainID:
@@ -440,7 +444,7 @@ def test_query_all_chain_ids(rotkehlchen_api_server):
 
 @pytest.mark.parametrize('have_decoders', [True])
 @pytest.mark.parametrize('added_exchanges', [(Location.KRAKEN, Location.BINANCE)])
-def test_events_mappings(rotkehlchen_api_server_with_exchanges):
+def test_events_mappings(rotkehlchen_api_server_with_exchanges: 'APIServer') -> None:
     """
     Test different mappings and information that we provide for rendering events information
     - Test that the structure for types mappings is correctly generated
@@ -494,12 +498,12 @@ def test_events_mappings(rotkehlchen_api_server_with_exchanges):
     )
     result = assert_proper_sync_response_with_result(response)
     assert result['mappings'][CPT_CONVEX] == [EvmProduct.GAUGE.serialize(), EvmProduct.STAKING.serialize()]  # noqa: E501
-    assert result['mappings'][CPT_CURVE] == [EvmProduct.GAUGE.serialize()]
+    assert result['mappings'][CPT_CURVE] == [EvmProduct.GAUGE.serialize(), EvmProduct.BRIBE.serialize()]  # noqa: E501
     assert result['products'] == [product.serialize() for product in EvmProduct]
 
 
 @pytest.mark.parametrize('have_decoders', [True])
-def test_counterparties(rotkehlchen_api_server_with_exchanges):
+def test_counterparties(rotkehlchen_api_server_with_exchanges: 'APIServer') -> None:
     """Test serialization of the counterparties"""
     response = requests.get(
         api_url_for(
@@ -513,4 +517,70 @@ def test_counterparties(rotkehlchen_api_server_with_exchanges):
         assert 'label' in counterparty_details
         assert 'icon' in counterparty_details or 'image' in counterparty_details
         if counterparty_details['identifier'] == 'gas':
-            assert counterparty_details['icon'] == 'fire-line'
+            assert counterparty_details['icon'] == 'lu-flame'
+
+
+@pytest.mark.parametrize('base_manager_connect_at_start', ['DEFAULT'])
+@pytest.mark.parametrize('ethereum_accounts', [[make_evm_address()]])
+def test_connecting_to_node(rotkehlchen_api_server: 'APIServer') -> None:
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    base = rotki.chains_aggregator.base
+    patched_connection = patch.object(
+        base.node_inquirer,
+        'attempt_connect',
+        lambda *args, **kwargs: (True, ''),
+    )
+    assert len(base.node_inquirer.get_connected_nodes()) == 0
+
+    with patched_connection:
+        rpc_url = api_url_for(rotkehlchen_api_server, 'rpcnodesresource', blockchain='base')
+        response = requests.post(url=rpc_url, json={'identifier': 24})
+        assert_proper_sync_response_with_result(response)
+
+        # check case of a bad identifier
+        response = requests.post(url=rpc_url, json={'identifier': 999})
+        assert_error_response(
+            response=response,
+            contained_in_msg='RPC node not found',
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
+        # check connecting to a non evm node
+        response = requests.post(
+            url=api_url_for(rotkehlchen_api_server, 'rpcnodesresource', blockchain='ksm'),
+            json={'identifier': 999},
+        )
+        assert_error_response(
+            response=response,
+            contained_in_msg='kusama nodes are connected at login',
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
+    connected_nodes = []
+
+    def custom_connect(node: NodeName) -> tuple[bool, str]:
+        connected_nodes.append(node.name)
+        return True, ''
+
+    with patch.object(
+        base.node_inquirer,
+        'attempt_connect',
+        custom_connect,
+    ):  # connect to all the nodes
+        rpc_url = api_url_for(rotkehlchen_api_server, 'rpcnodesresource', blockchain='base')
+        response = requests.post(url=rpc_url)
+        assert_proper_sync_response_with_result(response)
+        assert len(connected_nodes) >= 4
+
+    with patch.object(
+        base.node_inquirer,
+        'attempt_connect',
+        lambda *args, **kwargs: (False, 'Custom error'),
+    ):
+        # check error during connection
+        rpc_url = api_url_for(rotkehlchen_api_server, 'rpcnodesresource', blockchain='base')
+        response = requests.post(url=rpc_url, json={'identifier': 24})
+        assert response.json()['result'] == {
+            'errors': [{'name': 'base BlockPi', 'error': 'Custom error'}],
+        }
+        assert response.status_code == HTTPStatus.OK

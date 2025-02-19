@@ -1,15 +1,20 @@
 <script setup lang="ts">
+import SummaryCardRefreshMenu from '@/components/dashboard/summary-card/SummaryCardRefreshMenu.vue';
+import NavigatorLink from '@/components/helper/NavigatorLink.vue';
+import CardTitle from '@/components/typography/CardTitle.vue';
+import type { RouteLocationRaw } from 'vue-router';
+
 withDefaults(
   defineProps<{
     name: string;
     isLoading?: boolean;
     canRefresh?: boolean;
-    navigatesTo?: string;
+    navigatesTo?: RouteLocationRaw;
   }>(),
   {
-    isLoading: false,
     canRefresh: false,
-    navigatesTo: '',
+    isLoading: false,
+    navigatesTo: undefined,
   },
 );
 
@@ -22,8 +27,6 @@ function refresh(balanceSource: string) {
 }
 
 const { t } = useI18n();
-
-const slots = useSlots();
 </script>
 
 <template>
@@ -32,12 +35,10 @@ const slots = useSlots();
     class="py-4 h-auto"
   >
     <template #custom-header>
-      <CardTitle
-        class="capitalize flex-nowrap flex justify-between gap-2 pb-2 px-6"
-      >
+      <CardTitle class="capitalize flex-nowrap flex justify-between gap-2 pb-2 px-6">
         <NavigatorLink
           :enabled="!!navigatesTo"
-          :to="{ path: navigatesTo }"
+          :to="navigatesTo"
           tag="div"
           class="text-clip truncate"
           :title="t('summary_card.title', { name })"
@@ -55,7 +56,7 @@ const slots = useSlots();
             @refresh="refresh(name)"
           >
             <template
-              v-if="slots.refreshMenu"
+              v-if="$slots.refreshMenu"
               #refreshMenu
             >
               <slot name="refreshMenu" />

@@ -23,13 +23,7 @@ function binaryDependencyPlugin(): Plugin {
         return;
       }
       const parsedPath = parse(rootDir);
-      const psList = join(
-        parsedPath.dir,
-        'app',
-        'node_modules',
-        'ps-list',
-        'vendor',
-      );
+      const psList = join(parsedPath.dir, 'app', 'node_modules', 'ps-list', 'vendor');
       const files = fs.readdirSync(psList);
       const output = join(rootDir, outDir, 'vendor');
       if (!fs.existsSync(output))
@@ -50,8 +44,12 @@ export default defineConfig({
   envDir: process.cwd(),
   resolve: {
     alias: {
-      '@': `${join(PACKAGE_ROOT, 'src')}/`,
+      '@electron': `${join(PACKAGE_ROOT, 'electron')}/`,
+      '@shared': `${join(PACKAGE_ROOT, 'shared')}/`,
     },
+  },
+  optimizeDeps: {
+    include: ['tasklist > csv'],
   },
   plugins: [binaryDependencyPlugin()],
   build: {
@@ -60,18 +58,21 @@ export default defineConfig({
     assetsDir: '.',
     minify: !isDevelopment,
     lib: {
-      entry: 'src/background.ts',
-      formats: ['cjs'],
+      entry: 'electron/main/index.ts',
+      formats: ['es'],
     },
     rollupOptions: {
-      external: [
-        'csv',
-        'electron',
-        'electron-devtools-installer',
-        ...builtinModules.flatMap(p => [p, `node:${p}`]),
-      ],
+      external: ['csv', 'electron', ...builtinModules.flatMap(p => [p, `node:${p}`])],
       output: {
-        entryFileNames: '[name].js',
+        entryFileNames: 'main.js',
+        manualChunks(id) {
+          if (id.includes('node_modules'))
+            return 'background-vendor';
+          if (id.includes('subprocess-handler'))
+            return 'background-subprocess-handler';
+          if (id.includes('http'))
+            return 'background-http';
+        },
       },
     },
     emptyOutDir: false,

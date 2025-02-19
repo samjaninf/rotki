@@ -1,9 +1,14 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from rotkehlchen.chain.ethereum.modules.curve.constants import VOTING_ESCROW
 from rotkehlchen.chain.ethereum.modules.makerdao.cache import ilk_cache_foreach
+from rotkehlchen.chain.ethereum.modules.monerium.constants import (
+    ETHEREUM_MONERIUM_LEGACY_ADDRESSES,
+)
 from rotkehlchen.chain.evm.tokens import EvmTokensWithDSProxy
 from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.chain.structures import EvmTokenDetectionData
 from rotkehlchen.constants.assets import A_DAI, A_ETH, A_WETH
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.types import ChainID, ChecksumEvmAddress
@@ -18,7 +23,7 @@ ETH_TOKEN_EXCEPTIONS = {
     # defi SDK as part of locked CRV in Vote Escrowed CRV. Which is the right way
     # to approach it as there is no way to assign a price to 1 veCRV. It
     # can be 1 CRV locked for 4 years or 4 CRV locked for 1 year etc.
-    string_to_evm_address('0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2'),
+    VOTING_ESCROW,
     # Ignore for now xsushi since is queried by defi SDK. We'll do it for now
     # since the SDK entry might return other tokens from sushi and we don't
     # fully support sushi now.
@@ -27,7 +32,7 @@ ETH_TOKEN_EXCEPTIONS = {
     # duplicated the balances at upgrade instead of doing a token swap.
     # e.g.: https://github.com/rotki/rotki/issues/3548
     # TODO: At some point we should actually remove them from the DB and
-    # upgrade possible occurences in the user DB
+    # upgrade possible occurrences in the user DB
     #
     # Old contract of Fetch.ai
     string_to_evm_address('0x1D287CC25dAD7cCaF76a26bc660c5F7C8E2a05BD'),
@@ -50,23 +55,47 @@ class EthereumTokens(EvmTokensWithDSProxy):
             database=database,
             evm_inquirer=ethereum_inquirer,
         )
-        self.tokens_for_proxies = [A_DAI.resolve_to_evm_token(), A_WETH.resolve_to_evm_token()]
+        dai = A_DAI.resolve_to_evm_token()
+        weth = A_WETH.resolve_to_evm_token()
+        self.tokens_for_proxies = [
+            EvmTokenDetectionData(
+                identifier=dai.identifier,
+                address=dai.evm_address,
+                decimals=dai.decimals,  # type: ignore  # TODO: those tokens have decimals. We need to fix the type in the EVMToken class.
+            ), EvmTokenDetectionData(
+                identifier=weth.identifier,
+                address=weth.evm_address,
+                decimals=weth.decimals,  # type: ignore
+            ),
+        ]
         # Add aave tokens
-        self.tokens_for_proxies.extend(GlobalDBHandler().get_evm_tokens(
+        self.tokens_for_proxies.extend(GlobalDBHandler.get_token_detection_data(
             chain_id=ChainID.ETHEREUM,
+            exceptions=set(),
             protocol='aave',
         ))
-        self.tokens_for_proxies.extend(GlobalDBHandler().get_evm_tokens(
+        self.tokens_for_proxies.extend(GlobalDBHandler.get_token_detection_data(
             chain_id=ChainID.ETHEREUM,
+            exceptions=set(),
             protocol='aave-v2',
         ))
+
         # Add Makerdao vault collateral tokens
         with GlobalDBHandler().conn.read_ctx() as cursor:
-            self.tokens_for_proxies.extend([x for _, _, x, _ in ilk_cache_foreach(cursor) if x != A_ETH])  # type: ignore  # noqa: E501
+            for _, _, asset, _ in ilk_cache_foreach(cursor):
+                if asset == A_ETH:
+                    continue
+
+                token = asset.resolve_to_evm_token()
+                self.tokens_for_proxies.append(EvmTokenDetectionData(
+                    identifier=token.identifier,
+                    address=token.evm_address,
+                    decimals=token.decimals,  # type: ignore
+                ))
 
     # -- methods that need to be implemented per chain
     def _per_chain_token_exceptions(self) -> set[ChecksumEvmAddress]:
-        return ETH_TOKEN_EXCEPTIONS.copy()
+        return ETH_TOKEN_EXCEPTIONS.copy() | ETHEREUM_MONERIUM_LEGACY_ADDRESSES
 
     def maybe_detect_proxies_tokens(self, addresses: Sequence[ChecksumEvmAddress]) -> None:
         """Detect tokens for proxies that are owned by the given addresses"""

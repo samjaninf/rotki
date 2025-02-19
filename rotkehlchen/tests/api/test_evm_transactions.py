@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.modules.makerdao.sai.constants import CPT_SAI
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import EvmTransactionsFilterQuery
 from rotkehlchen.db.history_events import (
@@ -84,7 +84,7 @@ def _assert_evm_transaction_status(
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.freeze_time('2022-12-29 10:10:00 GMT')
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
-def test_query_transactions(rotkehlchen_api_server: 'APIServer'):
+def test_query_transactions(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that querying the evm transactions endpoint for an address with
     transactions in multiple chains works fine.
 
@@ -147,7 +147,7 @@ def test_evm_transaction_hash_addition(rotkehlchen_api_server: 'APIServer') -> N
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_ETH,
-            balance=Balance(),
+            amount=ZERO,
             location_label='0x01349510117dC9081937794939552463F5616dfb',
             notes='Create CDP 131',
             counterparty=CPT_SAI,
@@ -208,7 +208,7 @@ def test_evm_transaction_hash_addition(rotkehlchen_api_server: 'APIServer') -> N
             'associated_address': ADDY,
         },
     )
-    assert_error_response(response, 'Given chain_id fantom is not one of ethereum,optimism,polygon_pos,arbitrum_one,base,gnosis,scroll as needed by the endpoint')  # noqa: E501
+    assert_error_response(response, 'Given chain_id fantom is not one of ethereum,optimism,polygon_pos,arbitrum_one,base,gnosis,scroll,binance_sc as needed by the endpoint')  # noqa: E501
 
     # add an already existing transaction
     response = requests.put(

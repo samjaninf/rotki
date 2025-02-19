@@ -41,6 +41,7 @@ class BlockchainBalances:
     base: defaultdict[ChecksumEvmAddress, BalanceSheet] = field(init=False)
     gnosis: defaultdict[ChecksumEvmAddress, BalanceSheet] = field(init=False)
     scroll: defaultdict[ChecksumEvmAddress, BalanceSheet] = field(init=False)
+    binance_sc: defaultdict[ChecksumEvmAddress, BalanceSheet] = field(init=False)
     eth2: defaultdict[Eth2PubKey, BalanceSheet] = field(init=False)
     btc: dict[BTCAddress, Balance] = field(init=False)
     bch: dict[BTCAddress, Balance] = field(init=False)
@@ -99,8 +100,7 @@ class BlockchainBalances:
         """
         for supported_chain in (SupportedBlockchain.BITCOIN, SupportedBlockchain.BITCOIN_CASH):
             chain_key = supported_chain.get_key()
-            # mypy fails to see it
-            yield (supported_chain, getattr(self, chain_key))  # type: ignore
+            yield (supported_chain, getattr(self, chain_key))
 
     def copy(self) -> 'BlockchainBalances':
         balances = BlockchainBalances(db=self.db)

@@ -1,9 +1,11 @@
+import json
 import warnings as test_warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
 
+from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_poloniex
 from rotkehlchen.constants.assets import A_BCH, A_BTC, A_ETH
@@ -12,6 +14,8 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import Trade, TradeType
 from rotkehlchen.exchanges.poloniex import Poloniex, trade_from_poloniex
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.constants import A_AIR2
 from rotkehlchen.tests.utils.exchanges import (
     POLONIEX_BALANCES_RESPONSE,
@@ -19,12 +23,13 @@ from rotkehlchen.tests.utils.exchanges import (
     POLONIEX_TRADES_RESPONSE,
     get_exchange_asset_symbols,
 )
-from rotkehlchen.tests.utils.history import assert_poloniex_asset_movements
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.types import AssetMovementCategory, Location
+from rotkehlchen.types import Location, Timestamp, TimestampMS
 
 if TYPE_CHECKING:
     from rotkehlchen.globaldb.handler import GlobalDBHandler
+    from rotkehlchen.tests.fixtures.messages import MockRotkiNotifier
+
 
 TEST_RATE_STR = '0.00022999'
 TEST_AMOUNT_STR = '613.79427133'
@@ -129,7 +134,7 @@ def test_query_trade_history(poloniex):
 
     with patch.object(poloniex.session, 'get', side_effect=mock_api_return):
         trades = poloniex.query_trade_history(
-            start_ts=0,
+            start_ts=1500000000,
             end_ts=1565732120,
             only_cache=False,
         )
@@ -169,7 +174,7 @@ def test_query_trade_history_unexpected_data(poloniex):
 
         with patch.object(poloniex.session, 'get', side_effect=mock_api_return):
             trades, _ = poloniex.query_online_trade_history(
-                start_ts=0,
+                start_ts=1500000000,
                 end_ts=1565732120,
             )
 
@@ -203,10 +208,6 @@ def test_query_trade_history_unexpected_data(poloniex):
     given_input = input_trades.replace('"ETH_BTC"', '"0"')
     mock_poloniex_and_query(given_input, expected_warnings_num=0, expected_errors_num=1)
 
-    # symbol with unknown asset
-    given_input = input_trades.replace('"ETH_BTC"', '"ETH_SDSDSD"')
-    mock_poloniex_and_query(given_input, expected_warnings_num=1, expected_errors_num=0)
-
     # symbol with unsupported asset
     given_input = input_trades.replace('"ETH_BTC"', '"ETH_BALLS"')
     mock_poloniex_and_query(given_input, expected_warnings_num=1, expected_errors_num=0)
@@ -232,6 +233,24 @@ def test_query_trade_history_unexpected_data(poloniex):
     mock_poloniex_and_query(given_input, expected_warnings_num=0, expected_errors_num=0)
 
 
+@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
+def test_query_trade_history_unknown_asset(poloniex):
+    """Test that poloniex trade history querying returning unknown asset is handled correctly"""
+    TEST_POLO_TRADE['symbol'] = 'ETH_SDSDSD'
+
+    def mock_api_return(url, **kwargs):  # pylint: disable=unused-argument
+        return MockResponse(200, json.dumps([TEST_POLO_TRADE]))
+
+    with patch.object(poloniex.session, 'get', side_effect=mock_api_return):
+        trades, _ = poloniex.query_online_trade_history(
+            start_ts=1500000000,
+            end_ts=1565732120,
+        )
+
+    assert len(trades) == 0
+    assert len(poloniex.msg_aggregator.rotki_notifier.messages) == 1
+
+
 def test_poloniex_assets_are_known(poloniex: 'Poloniex', globaldb: 'GlobalDBHandler'):
     for asset in get_exchange_asset_symbols(Location.POLONIEX):
         assert globaldb.is_asset_symbol_unsupported(Location.POLONIEX, asset) is False, f'Poloniex assets {asset} should not be unsupported'  # noqa: E501
@@ -249,6 +268,7 @@ def test_poloniex_assets_are_known(poloniex: 'Poloniex', globaldb: 'GlobalDBHand
                 ))
 
 
+@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_poloniex_query_balances_unknown_asset(poloniex):
     """Test that if a poloniex balance query returns unknown asset no exception
@@ -268,67 +288,132 @@ def test_poloniex_query_balances_unknown_asset(poloniex):
     assert balances[A_ETH].amount == FVal('11.0')
     assert balances[A_ETH].usd_value == FVal('16.5')
 
-    warnings = poloniex.msg_aggregator.consume_warnings()
-    assert len(warnings) == 2
-    assert 'unknown poloniex asset IDONTEXIST' in warnings[0]
-    assert 'unsupported poloniex asset CNOTE' in warnings[1]
+    messages = poloniex.msg_aggregator.rotki_notifier.messages
+    assert len(messages) == 2
+    assert messages[0].message_type == WSMessageType.EXCHANGE_UNKNOWN_ASSET
+    assert 'unsupported poloniex asset CNOTE' in messages[1].data['value']
 
 
+@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
-def test_poloniex_deposits_withdrawal_unknown_asset(poloniex):
+def test_poloniex_deposits_withdrawal_unknown_asset(poloniex: 'Poloniex') -> None:
     """Test that if a poloniex asset movement query returns unknown asset no exception
     is raised and a warning is generated. Same for unsupported assets"""
 
     def mock_api_return(url, **kwargs):  # pylint: disable=unused-argument
-        response = MockResponse(
+        return MockResponse(
             200,
             POLONIEX_MOCK_DEPOSIT_WITHDRAWALS_RESPONSE,
         )
-        return response
 
     with patch.object(poloniex.session, 'get', side_effect=mock_api_return):
         # Test that after querying the api only ETH and BTC assets are there
-        asset_movements = poloniex.query_online_deposits_withdrawals(
-            start_ts=0,
-            end_ts=1488994442,
+        asset_movements = poloniex.query_online_history_events(
+            start_ts=Timestamp(0),
+            end_ts=Timestamp(1488994442),
         )
-    assert_poloniex_asset_movements(to_check_list=asset_movements, deserialized=False)
 
-    warnings = poloniex.msg_aggregator.consume_warnings()
-    assert len(warnings) == 4
-    assert 'Found withdrawal of unknown poloniex asset IDONTEXIST' in warnings[0]
-    assert 'Found withdrawal of unsupported poloniex asset DIS' in warnings[1]
-    assert 'Found deposit of unknown poloniex asset IDONTEXIST' in warnings[2]
-    assert 'Found deposit of unsupported poloniex asset EBT' in warnings[3]
+    assert asset_movements == [AssetMovement(
+        location=Location.POLONIEX,
+        location_label=poloniex.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1458994442000),
+        asset=A_BTC,
+        amount=FVal('5.0'),
+        unique_id='withdrawal_1',
+        extra_data={
+            'address': '131rdg5Rzn6BFufnnQaHhVa5ZtRU1J2EZR',
+            'transaction_id': '2d27ae26fa9c70d6709e27ac94d4ce2fde19b3986926e9f3bfcf3e2d68354ec5',
+        },
+    ), AssetMovement(
+        location=Location.POLONIEX,
+        location_label=poloniex.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1458994442000),
+        asset=A_BTC,
+        amount=FVal('0.5'),
+        unique_id='withdrawal_1',
+        is_fee=True,
+    ), AssetMovement(
+        location=Location.POLONIEX,
+        location_label=poloniex.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1468994442000),
+        asset=A_ETH,
+        amount=FVal('10.0'),
+        unique_id='withdrawal_2',
+        extra_data={
+            'address': '0xB7E033598Cb94EF5A35349316D3A2e4f95f308Da',
+            'transaction_id': '0xbd4da74e1a0b81c21d056c6f58a5b306de85d21ddf89992693b812bb117eace4',
+        },
+    ), AssetMovement(
+        location=Location.POLONIEX,
+        location_label=poloniex.name,
+        event_type=HistoryEventType.WITHDRAWAL,
+        timestamp=TimestampMS(1468994442000),
+        asset=A_ETH,
+        amount=FVal('0.1'),
+        unique_id='withdrawal_2',
+        is_fee=True,
+    ), AssetMovement(
+        location=Location.POLONIEX,
+        location_label=poloniex.name,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1448994442000),
+        asset=A_BTC,
+        amount=FVal('50.0'),
+        unique_id='deposit_1',
+        extra_data={
+            'address': '131rdg5Rzn6BFufnnQaHhVa5ZtRU1J2EZR',
+            'transaction_id': 'b05bdec7430a56b5a5ed34af4a31a54859dda9b7c88a5586bc5d6540cdfbfc7a',
+        },
+    ), AssetMovement(
+        location=Location.POLONIEX,
+        location_label=poloniex.name,
+        event_type=HistoryEventType.DEPOSIT,
+        timestamp=TimestampMS(1438994442000),
+        asset=A_ETH,
+        amount=FVal('100.0'),
+        unique_id='deposit_2',
+        extra_data={
+            'address': '0xB7E033598Cb94EF5A35349316D3A2e4f95f308Da',
+            'transaction_id': '0xf7e7eeb44edcad14c0f90a5fffb1cbb4b80e8f9652124a0838f6906ca939ccd2',
+        },
+    )]
+
+    messages = cast('MockRotkiNotifier', poloniex.msg_aggregator.rotki_notifier).messages
+    assert len(messages) == 4
+    assert messages[0].message_type == WSMessageType.EXCHANGE_UNKNOWN_ASSET
+    assert 'Found withdrawal of unsupported poloniex asset DIS' in messages[1].data['value']  # type: ignore
+    assert messages[2].message_type == WSMessageType.EXCHANGE_UNKNOWN_ASSET
+    assert 'Found deposit of unsupported poloniex asset EBT' in messages[3].data['value']  # type: ignore
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
-def test_poloniex_deposits_withdrawal_null_fee(poloniex):
+def test_poloniex_deposits_withdrawal_null_fee(poloniex: 'Poloniex'):
     """
     Test that if a poloniex asset movement query returns null for fee we don't crash.
     Regression test for issue #76
     """
 
     def mock_api_return(url, **kwargs):  # pylint: disable=unused-argument
-        response = MockResponse(
+        return MockResponse(
             200,
             '{"withdrawals": [{"currency": "FAC", "timestamp": 1478994442, '
             '"amount": "100.5", "fee": null, "withdrawalRequestsId": 1, "address": "131rdg5Rzn6BFufnnQaHhVa5ZtRU1J2EZR", "status": "COMPLETED"}], "deposits": []}',  # noqa: E501
         )
-        return response
 
     with patch.object(poloniex.session, 'get', side_effect=mock_api_return):
-        asset_movements = poloniex.query_online_deposits_withdrawals(
-            start_ts=0,
-            end_ts=1488994442,
+        asset_movements = poloniex.query_online_history_events(
+            start_ts=Timestamp(0),
+            end_ts=Timestamp(1488994442),
         )
 
     assert len(asset_movements) == 1
-    assert asset_movements[0].category == AssetMovementCategory.WITHDRAWAL
-    assert asset_movements[0].timestamp == 1478994442
+    assert asset_movements[0].event_type == HistoryEventType.WITHDRAWAL
+    assert asset_movements[0].timestamp == TimestampMS(1478994442000)
     assert asset_movements[0].asset == Asset('FAIR')
     assert asset_movements[0].amount == FVal('100.5')
-    assert asset_movements[0].fee == FVal('0')
 
     warnings = poloniex.msg_aggregator.consume_warnings()
     assert len(warnings) == 0
@@ -347,13 +432,16 @@ def test_poloniex_deposits_withdrawal_unexpected_data(poloniex):
             return MockResponse(200, given_movements)
 
         with patch.object(poloniex.session, 'get', side_effect=mock_api_return):
-            asset_movements = poloniex.query_online_deposits_withdrawals(
+            asset_movements = poloniex.query_online_history_events(
                 start_ts=0,
                 end_ts=1488994442,
             )
 
         if expected_errors_num == 0 and expected_warnings_num == 0:
-            assert len(asset_movements) == 1
+            if len(asset_movements) == 2:
+                assert asset_movements[1].event_subtype == HistoryEventSubType.FEE
+            else:
+                assert len(asset_movements) == 1
         else:
             assert len(asset_movements) == 0
             warnings = poloniex.msg_aggregator.consume_warnings()
@@ -382,10 +470,6 @@ def test_poloniex_deposits_withdrawal_unexpected_data(poloniex):
         # invalid currency type
         movements = given_input.replace('"FAC"', '[]')
         mock_poloniex_and_query(movements, expected_warnings_num=0, expected_errors_num=1)
-
-        # unknown currency
-        movements = given_input.replace('"FAC"', '"DSDSDSD"')
-        mock_poloniex_and_query(movements, expected_warnings_num=1, expected_errors_num=0)
 
         # missing key error
         movements = given_input.replace('"timestamp": 1478994442,', '')

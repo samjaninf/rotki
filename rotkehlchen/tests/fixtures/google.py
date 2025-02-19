@@ -11,6 +11,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from rotkehlchen.db.utils import str_to_bool
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ class GoogleService:
         self.drive_service = _login('drive', 'v3', DRIVE_SCOPES, credentials_path)
         self.sheets_service = _login('sheets', 'v4', SHEETS_SCOPES, credentials_path)
         self.user_email = os.environ.get('GOOGLE_EMAIL', None)
-        self.send_email = os.environ.get('SEND_GOOGLE_SHARE_EMAIL', False)
+        self.send_email = str_to_bool(os.environ.get('SEND_GOOGLE_SHARE_EMAIL', 'False'))
         if isinstance(self.send_email, str):
             self.send_email = self.send_email.lower() == 'true'
 
@@ -162,13 +163,6 @@ class GoogleService:
             spreadsheetId=sheet_id,
             body={'requests': requests},
         ).execute()
-
-    def get_cell_range(self, sheet_id: str, range_name: str) -> list[list[str]]:
-        result = self.sheets_service.spreadsheets().values().get(  # pylint: disable=no-member
-            spreadsheetId=sheet_id,
-            range=range_name,
-        ).execute()
-        return result.get('values', [])
 
     def get_cell_ranges(self, sheet_id: str, range_names: list[str]) -> list[dict[str, Any]]:
         result = self.sheets_service.spreadsheets().values().batchGet(  # pylint: disable=no-member

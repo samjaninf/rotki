@@ -1,10 +1,11 @@
-import { type Wrapper, mount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
+import { type VueWrapper, mount } from '@vue/test-utils';
 import { type Pinia, setActivePinia } from 'pinia';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import GetPremiumButton from '@/components/premium/GetPremiumButton.vue';
+import { usePremiumStore } from '@/store/session/premium';
 
 describe('getPremiumButton.vue', () => {
-  let wrapper: Wrapper<GetPremiumButton>;
+  let wrapper: VueWrapper<InstanceType<typeof GetPremiumButton>>;
   let store: ReturnType<typeof usePremiumStore>;
   let pinia: Pinia;
 
@@ -13,13 +14,16 @@ describe('getPremiumButton.vue', () => {
     setActivePinia(pinia);
   });
 
-  const createWrapper = () => {
-    const vuetify = new Vuetify();
-    return mount(GetPremiumButton, {
-      pinia,
-      vuetify,
+  afterEach(() => {
+    wrapper.unmount();
+  });
+
+  const createWrapper = () =>
+    mount(GetPremiumButton, {
+      global: {
+        plugins: [pinia],
+      },
     });
-  };
 
   it('should show get premium button', () => {
     wrapper = createWrapper();

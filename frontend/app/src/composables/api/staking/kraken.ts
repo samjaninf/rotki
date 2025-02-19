@@ -1,29 +1,23 @@
 import { snakeCaseTransformer } from '@/services/axios-tranformers';
 import { api } from '@/services/rotkehlchen-api';
-import {
-  handleResponse,
-  validWithSessionAndExternalService,
-} from '@/services/utils';
-import {
-  KrakenStakingEvents,
-  type KrakenStakingPagination,
-  emptyPagination,
-} from '@/types/staking';
-import type { ActionResult } from '@rotki/common/lib/data';
+import { handleResponse, validWithSessionAndExternalService } from '@/services/utils';
+import { KrakenStakingEvents, type KrakenStakingPagination, emptyPagination } from '@/types/staking';
+import type { ActionResult } from '@rotki/common';
 import type { PendingTask } from '@/types/task';
 
-export function useKrakenApi() {
-  const internalKrakenStaking = async <T>(
-    pagination: KrakenStakingPagination,
-    asyncQuery = false,
-  ): Promise<T> => {
+interface UseKrakenApiReturn {
+  refreshKrakenStaking: () => Promise<PendingTask>;
+  fetchKrakenStakingEvents: (pagination: KrakenStakingPagination) => Promise<KrakenStakingEvents>;
+}
+
+export function useKrakenApi(): UseKrakenApiReturn {
+  const internalKrakenStaking = async <T>(pagination: KrakenStakingPagination, asyncQuery = false): Promise<T> => {
     const response = await api.instance.post<ActionResult<T>>(
       '/staking/kraken',
       snakeCaseTransformer({
         asyncQuery,
         ...pagination,
-        orderByAttributes:
-          pagination.orderByAttributes?.map(item => transformCase(item)) ?? [],
+        orderByAttributes: pagination.orderByAttributes?.map(item => transformCase(item)) ?? [],
       }),
       {
         validateStatus: validWithSessionAndExternalService,
@@ -32,12 +26,9 @@ export function useKrakenApi() {
     return handleResponse(response);
   };
 
-  const refreshKrakenStaking = async (): Promise<PendingTask> =>
-    await internalKrakenStaking(emptyPagination(), true);
+  const refreshKrakenStaking = async (): Promise<PendingTask> => internalKrakenStaking(emptyPagination(), true);
 
-  const fetchKrakenStakingEvents = async (
-    pagination: KrakenStakingPagination,
-  ): Promise<KrakenStakingEvents> => {
+  const fetchKrakenStakingEvents = async (pagination: KrakenStakingPagination): Promise<KrakenStakingEvents> => {
     const data = await internalKrakenStaking({
       ...pagination,
       onlyCache: true,
@@ -46,7 +37,7 @@ export function useKrakenApi() {
   };
 
   return {
-    refreshKrakenStaking,
     fetchKrakenStakingEvents,
+    refreshKrakenStaking,
   };
 }

@@ -1,7 +1,20 @@
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { Blockchain } from '@rotki/common';
+import { startPromise } from '@shared/utils';
 import { Section, Status } from '@/types/status';
+import { logger } from '@/utils/logging';
+import { useStatisticsStore } from '@/store/statistics';
+import { useLocationStore } from '@/store/locations';
+import { useWhitelistedAssetsStore } from '@/store/assets/whitelisted';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { useTagStore } from '@/store/session/tags';
+import { useWatchersStore } from '@/store/session/watchers';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useBalances } from '@/composables/balances';
+import { useStatusUpdater } from '@/composables/status';
 
-export function useDataLoader() {
+interface UseDataLoaderReturn { load: () => void }
+
+export function useDataLoader(): UseDataLoaderReturn {
   const { shouldFetchData } = storeToRefs(useSessionAuthStore());
   const { fetchWatchers } = useWatchersStore();
   const { fetchTags } = useTagStore();

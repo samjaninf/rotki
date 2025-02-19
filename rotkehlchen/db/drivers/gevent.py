@@ -92,7 +92,11 @@ class DBCursor:
             logger.trace(f'FINISH EXECUTE {statement}')
         return self
 
-    def executemany(self, statement: str, *bindings: Sequence[Sequence]) -> 'DBCursor':
+    def executemany(
+            self,
+            statement: str,
+            *bindings: Sequence[Sequence] | Generator[Sequence, None, None],
+    ) -> 'DBCursor':
         if __debug__:
             logger.trace(f'EXECUTEMANY {statement}')
         self._cursor.executemany(statement, *bindings)
@@ -199,10 +203,10 @@ def _progress_callback(connection: Optional['DBConnection']) -> int:
     # without this rotkehlchen/tests/db/test_async.py::test_async_segfault fails
     with connection.in_callback:
         if __debug__:
-            logger.trace(f'Got in locked section of the progress callback for {connection.connection_type} with id {identifier}')  # noqa: E501
+            logger.trace(f'Got in locked section of the progress callback for {connection.connection_type} with id {identifier}')  # noqa: E501  # pyright: ignore  # if debug identifier is set
         gevent.sleep(0)
         if __debug__:
-            logger.trace(f'Going out of the progress callback for {connection.connection_type} with id {identifier}')  # noqa: E501
+            logger.trace(f'Going out of the progress callback for {connection.connection_type} with id {identifier}')  # noqa: E501  # pyright: ignore  # if debug identifier is set
         return 0
 
 
@@ -385,7 +389,7 @@ class DBConnection:
     ) -> Generator['DBCursor', None, None]:
         """
         Creates a savepoint context with the provided name. If the code inside the savepoint fails,
-        rolls back this savepoint, otherwise releases it (aka forgets it -- this is not commited to the DB).
+        rolls back this savepoint, otherwise releases it (aka forgets it -- this is not committed to the DB).
         Savepoints work like nested transactions, more information here: https://www.sqlite.org/lang_savepoint.html
         """    # noqa: E501
         cursor, savepoint_name = self._enter_savepoint(savepoint_name)
@@ -428,7 +432,7 @@ class DBConnection:
                 f'already exists. Current savepoints: {list(self.savepoints)}',
             )
         cursor = self.cursor()
-        cursor.execute(f'SAVEPOINT "{savepoint_name}"')
+        cursor.execute(f"SAVEPOINT '{savepoint_name}'")
         self.savepoints[savepoint_name] = None
         self.savepoint_greenlet_id = current_id
         return cursor, savepoint_name
@@ -451,7 +455,7 @@ class DBConnection:
                 f'Incorrect use of savepoints! Wanted to {rollback_or_release.lower()} savepoint '
                 f'{savepoint_name}, but it is not present in the stack: {list_savepoints}',
             )
-        self.execute(f'{rollback_or_release} SAVEPOINT "{savepoint_name}"')
+        self.execute(f"{rollback_or_release} SAVEPOINT '{savepoint_name}'")
 
         # Release all savepoints until, and including, the one with name `savepoint_name`.
         # For rollback we don't remove the savepoints since they are not released yet.

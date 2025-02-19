@@ -1,4 +1,12 @@
-import { BackendCode } from '@/electron-main/backend-code';
+import { BackendCode } from '@shared/ipc';
+import { checkIfDevelopment, startPromise } from '@shared/utils';
+import { logger } from '@/utils/logging';
+import { useAreaVisibilityStore } from '@/store/session/visibility';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useMainStore } from '@/store/main';
+import { useMonitorStore } from '@/store/monitor';
+import { useInterop } from '@/composables/electron-interop';
+import { useBackendManagement } from '@/composables/backend';
 
 export const useBackendMessagesStore = defineStore('backendMessages', () => {
   const startupErrorMessage = ref('');
@@ -16,13 +24,11 @@ export const useBackendMessagesStore = defineStore('backendMessages', () => {
 
   onBeforeMount(() => {
     setupListeners({
+      onAbout: () => set(showAbout, true),
       onError: (backendOutput: string | Error, code: BackendCode) => {
         logger.error(backendOutput, code);
         if (code === BackendCode.TERMINATED) {
-          const message
-            = typeof backendOutput === 'string'
-              ? backendOutput
-              : backendOutput.message;
+          const message = typeof backendOutput === 'string' ? backendOutput : backendOutput.message;
           set(startupErrorMessage, message);
         }
         else if (code === BackendCode.MACOS_VERSION) {
@@ -32,18 +38,17 @@ export const useBackendMessagesStore = defineStore('backendMessages', () => {
           set(isWinVersionUnsupported, true);
         }
       },
-      onAbout: () => set(showAbout, true),
-      onRestart: async () => {
-        set(startupErrorMessage, '');
-        await restartBackend();
-      },
       onProcessDetected: (pids) => {
         set(
           startupErrorMessage,
           t('error.process_running', {
             pids: pids.join(', '),
-          }).toString(),
+          }),
         );
+      },
+      onRestart: () => {
+        set(startupErrorMessage, '');
+        startPromise(restartBackend());
       },
     });
 
@@ -58,14 +63,11 @@ export const useBackendMessagesStore = defineStore('backendMessages', () => {
   });
 
   return {
-    startupErrorMessage,
     isMacOsVersionUnsupported,
     isWinVersionUnsupported,
+    startupErrorMessage,
   };
 });
 
-if (import.meta.hot) {
-  import.meta.hot.accept(
-    acceptHMRUpdate(useBackendMessagesStore, import.meta.hot),
-  );
-}
+if (import.meta.hot)
+  import.meta.hot.accept(acceptHMRUpdate(useBackendMessagesStore, import.meta.hot));

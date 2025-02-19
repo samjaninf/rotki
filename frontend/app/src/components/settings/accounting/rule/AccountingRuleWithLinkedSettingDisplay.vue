@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useAccountingRuleMappings } from '@/composables/settings/accounting/rule-mapping';
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
 import type { AccountingRuleWithLinkedProperty } from '@/types/settings/accounting';
 
 const props = defineProps<{
@@ -18,9 +20,7 @@ const selectedLinkableSetting = computed(() => {
   const itemVal = get(item);
   const linkedProperty = itemVal.linkedSetting;
   if (linkedProperty) {
-    const foundItem = get(linkableSettingOptions).find(
-      item => item.identifier === linkedProperty,
-    );
+    const foundItem = get(linkableSettingOptions).find(item => item.identifier === linkedProperty);
 
     if (foundItem)
       return foundItem;
@@ -29,7 +29,7 @@ const selectedLinkableSetting = computed(() => {
   return null;
 });
 
-const value: ComputedRef<boolean> = computed(() => {
+const value = computed<boolean>(() => {
   const selectedLinkableSettingVal = get(selectedLinkableSetting);
   if (selectedLinkableSettingVal)
     return get(selectedLinkableSettingVal).state;
@@ -44,7 +44,7 @@ const value: ComputedRef<boolean> = computed(() => {
     size="sm"
     color="secondary"
     class="[&_span]:!px-0"
-    :value="!!selectedLinkableSetting"
+    :model-value="!!selectedLinkableSetting"
   >
     <template #icon>
       <RuiTooltip
@@ -55,7 +55,7 @@ const value: ComputedRef<boolean> = computed(() => {
         <template #activator>
           <RuiIcon
             size="12"
-            name="links-line"
+            name="lu-link"
           />
         </template>
         <div>{{ t('accounting_settings.rule.value_overwritten') }}</div>

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useAccountingSettingsStore } from '@/store/settings/accounting';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const crypto2CryptoTrades = ref(false);
 const { includeCrypto2crypto } = storeToRefs(useAccountingSettingsStore());
 
@@ -17,12 +20,12 @@ const { t } = useI18n();
   >
     <RuiSwitch
       v-model="crypto2CryptoTrades"
-      class="accounting-settings__crypto2crypto"
+      data-cy="crypto2crypto-switch"
       :label="t('accounting_settings.trade.labels.include_crypto2crypto')"
       color="primary"
       :success-messages="success"
       :error-messages="error"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

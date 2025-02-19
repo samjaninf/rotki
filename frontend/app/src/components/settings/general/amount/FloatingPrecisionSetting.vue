@@ -2,16 +2,16 @@
 import useVuelidate from '@vuelidate/core';
 import { helpers, required } from '@vuelidate/validators';
 import { toMessages } from '@/utils/validation';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useValidation } from '@/composables/validation';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
 const floatingPrecision = ref<string>('0');
 const maxFloatingPrecision = 8;
 const { t } = useI18n();
 const rules = {
   floatingPrecision: {
-    required: helpers.withMessage(
-      t('general_settings.validation.floating_precision.non_empty'),
-      required,
-    ),
+    required: helpers.withMessage(t('general_settings.validation.floating_precision.non_empty'), required),
   },
 };
 
@@ -57,14 +57,12 @@ onMounted(() => {
       color="primary"
       min="1"
       :max="maxFloatingPrecision"
-      class="general-settings__fields__floating-precision"
+      data-cy="floating-precision-settings"
       :label="t('general_settings.amount.labels.floating_precision')"
       type="number"
       :success-messages="success"
-      :error-messages="
-        error || toMessages(v$.floatingPrecision)
-      "
-      @input="callIfValid($event, update)"
+      :error-messages="error || toMessages(v$.floatingPrecision)"
+      @update:model-value="callIfValid($event, update)"
     />
   </SettingsOption>
 </template>

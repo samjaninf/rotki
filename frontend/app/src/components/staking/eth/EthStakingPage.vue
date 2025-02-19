@@ -1,20 +1,42 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { objectOmit } from '@vueuse/core';
-import { isEmpty } from 'lodash-es';
+import {
+  type BigNumber,
+  Blockchain,
+  type Eth2ValidatorEntry,
+  type Eth2Validators,
+  type EthStakingCombinedFilter,
+  type EthStakingFilter,
+} from '@rotki/common';
+import { isEmpty } from 'es-toolkit/compat';
 import dayjs from 'dayjs';
+import { startPromise } from '@shared/utils';
+import { omit } from 'es-toolkit';
 import { EthStaking } from '@/premium/premium';
 import { Module } from '@/types/modules';
 import { Section } from '@/types/status';
 import { TaskType } from '@/types/task-type';
 import { OnlineHistoryEventsQueryType } from '@/types/history/events';
-import type { BigNumber } from '@rotki/common';
-import type {
-  Eth2ValidatorEntry,
-  Eth2Validators,
-  EthStakingCombinedFilter,
-  EthStakingFilter,
-} from '@rotki/common/lib/staking/eth2';
+import { logger } from '@/utils/logging';
+import { nonEmptyProperties } from '@/utils/data';
+import { useTaskStore } from '@/store/tasks';
+import { useBlockchainValidatorsStore } from '@/store/blockchain/validators';
+import { useStatusStore } from '@/store/status';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useBlockchainBalances } from '@/composables/blockchain/balances';
+import { usePremium } from '@/composables/premium';
+import { useEthStaking } from '@/composables/blockchain/accounts/staking';
+import { useBlockchainAccountsApi } from '@/composables/api/blockchain/accounts';
+import { useStatusUpdater } from '@/composables/status';
+import { useEth2DailyStats } from '@/composables/staking/eth2/daily-stats';
+import { useModules } from '@/composables/session/modules';
+import { useEth2Staking } from '@/composables/staking/eth2/eth2';
+import EthValidatorFilter from '@/components/staking/eth/EthValidatorFilter.vue';
+import EthStakingPageSettingMenu from '@/components/staking/eth/EthStakingPageSettingMenu.vue';
+import ActiveModules from '@/components/defi/ActiveModules.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import ModuleNotActive from '@/components/defi/ModuleNotActive.vue';
+import NoPremiumPlaceholder from '@/components/premium/NoPremiumPlaceholder.vue';
 
 const module = Module.ETH2;
 const performanceSection = Section.STAKING_ETH2;
@@ -29,25 +51,21 @@ const selection = ref<EthStakingFilter>({
 
 const total = ref<BigNumber>(Zero);
 
-const lastRefresh = useSessionStorage('rotki.staking.last_refresh', 0);
+const { username } = storeToRefs(useSessionAuthStore());
 
-const {
-  performance,
-  performanceLoading,
-  pagination: performancePagination,
-  refreshPerformance,
-} = useEth2Staking();
+function createLastRefreshStorage(username: string): Ref<number> {
+  return useSessionStorage(`rotki.staking.last_refresh.${username}`, 0);
+}
+
+const lastRefresh = createLastRefreshStorage(get(username));
+const { shouldRefreshValidatorDailyStats } = storeToRefs(useFrontendSettingsStore());
+
+const { pagination: performancePagination, performance, performanceLoading, refreshPerformance } = useEth2Staking();
 
 const { isModuleEnabled } = useModules();
 
 const enabled = isModuleEnabled(module);
-const {
-  dailyStats,
-  dailyStatsLoading,
-  pagination,
-  refresh: reloadStats,
-  refreshStats,
-} = useEth2DailyStats();
+const { dailyStats, dailyStatsLoading, pagination, refresh: reloadStats, refreshStats } = useEth2DailyStats();
 
 const { isLoading } = useStatusStore();
 const { isTaskRunning } = useTaskStore();
@@ -68,13 +86,16 @@ const refreshing = logicOr(
 
 const { getEth2Validators } = useBlockchainAccountsApi();
 const { fetchEthStakingValidators } = useEthStaking();
-const { ethStakingValidators, stakingValidatorsLimits } = storeToRefs(useBlockchainStore());
+const { ethStakingValidators, stakingValidatorsLimits } = storeToRefs(useBlockchainValidatorsStore());
 const { fetchBlockchainBalances } = useBlockchainBalances();
 
 const premium = usePremium();
 const { t } = useI18n();
 
 function shouldRefreshDailyStats() {
+  if (!get(shouldRefreshValidatorDailyStats))
+    return false;
+
   const threshold = dayjs().subtract(1, 'hour').unix();
   return get(lastRefresh) < threshold;
 }
@@ -82,8 +103,8 @@ function shouldRefreshDailyStats() {
 async function refresh(userInitiated = false): Promise<void> {
   const refreshValidators = async (userInitiated: boolean) => {
     await fetchBlockchainBalances({
-      ignoreCache: userInitiated || isFirstLoad(),
       blockchain: Blockchain.ETH2,
+      ignoreCache: userInitiated || isFirstLoad(),
     });
     await fetchEthStakingValidators();
   };
@@ -103,15 +124,9 @@ async function refresh(userInitiated = false): Promise<void> {
   await refreshValidators(userInitiated);
   setTotal();
 
-  const statsRefresh: Promise<void>[] = (
-    (!get(statsRefreshing) && shouldRefreshDailyStats())
-      ? [refreshStats(userInitiated)]
-      : [reloadStats()]
-  );
-  await Promise.allSettled([
-    updatePerformance(userInitiated),
-    ...statsRefresh,
-  ]);
+  const statsRefresh: Promise<void>[]
+    = !get(statsRefreshing) && shouldRefreshDailyStats() ? [refreshStats(userInitiated)] : [reloadStats()];
+  await Promise.allSettled([updatePerformance(userInitiated), ...statsRefresh]);
   set(lastRefresh, dayjs().unix());
 }
 
@@ -119,10 +134,9 @@ function setTotal(validators?: Eth2Validators['entries']) {
   const publicKeys = validators?.map((validator: Eth2ValidatorEntry) => validator.publicKey);
   const stakingValidators = get(ethStakingValidators);
   const selectedValidators = publicKeys
-    ? stakingValidators.filter(validator => publicKeys.includes(validator.data.publicKey))
+    ? stakingValidators.filter(validator => publicKeys.includes(validator.publicKey))
     : stakingValidators;
-  const totalStakedAmount = selectedValidators
-    .reduce((sum, item) => sum.plus(item.amount), Zero);
+  const totalStakedAmount = selectedValidators.reduce((sum, item) => sum.plus(item.amount), Zero);
   set(total, totalStakedAmount);
 }
 
@@ -133,16 +147,17 @@ watch([selection, filter], async () => {
 async function fetchValidatorsWithFilter() {
   const filterVal = get(filter);
   const selectionVal = get(selection);
-  const statusFilter = filterVal ? objectOmit(filterVal, ['fromTimestamp', 'toTimestamp']) : {};
-  const accounts = 'accounts' in selectionVal
-    ? { addresses: selectionVal.accounts.map(account => account.address) }
-    : { validatorIndices: selectionVal.validators.map((validator: Eth2ValidatorEntry) => validator.index) };
+  const statusFilter = filterVal ? omit(filterVal, ['fromTimestamp', 'toTimestamp']) : {};
+  const accounts
+    = 'accounts' in selectionVal
+      ? { addresses: selectionVal.accounts.map(account => account.address) }
+      : { validatorIndices: selectionVal.validators.map((validator: Eth2ValidatorEntry) => validator.index) };
 
   const combinedFilter = nonEmptyProperties({ ...statusFilter, ...accounts });
 
   const validators = isEmpty(combinedFilter) ? undefined : (await getEth2Validators(combinedFilter)).entries;
   setTotal(validators);
-};
+}
 
 onBeforeMount(async () => {
   if (get(enabled))
@@ -150,6 +165,11 @@ onBeforeMount(async () => {
 
   await fetchValidatorsWithFilter();
 });
+
+function forceRefreshStats() {
+  startPromise(refreshStats(true));
+  set(lastRefresh, dayjs().unix());
+}
 </script>
 
 <template>
@@ -181,32 +201,35 @@ onBeforeMount(async () => {
                 @click="refresh(true)"
               >
                 <template #prepend>
-                  <RuiIcon name="refresh-line" />
+                  <RuiIcon name="lu-refresh-ccw" />
                 </template>
                 {{ t('common.refresh') }}
               </RuiButton>
             </template>
             {{ t('premium_components.staking.refresh') }}
           </RuiTooltip>
+          <EthStakingPageSettingMenu />
         </div>
       </template>
 
       <EthStaking
+        v-model:performance-pagination="performancePagination"
+        v-model:stats-pagination="pagination"
+        v-model:filter="filter"
         :refreshing="refreshing"
         :total="total"
         :accounts="selection"
-        :filter.sync="filter"
         :performance="performance"
         :performance-loading="performanceLoading"
-        :performance-pagination.sync="performancePagination"
         :stats="dailyStats"
+        :stats-refreshing="statsRefreshing"
         :stats-loading="dailyStatsLoading"
-        :stats-pagination.sync="pagination"
+        @refresh-stats="forceRefreshStats()"
       >
         <template #selection>
           <EthValidatorFilter
             v-model="selection"
-            :filter.sync="filter"
+            v-model:filter="filter"
           />
         </template>
       </EthStaking>

@@ -1,17 +1,23 @@
 <script setup lang="ts">
+import RestoreAssetDbButton from '@/components/asset-manager/RestoreAssetDbButton.vue';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
+
 const { t } = useI18n();
 </script>
 
 <template>
-  <RuiCard class="mt-8">
-    <template #header>
+  <SettingsItem>
+    <template #title>
       {{ t('asset_update.restore.title') }}
     </template>
-    <template #subheader>
+    <template #subtitle>
       {{ t('asset_update.restore.subtitle') }}
     </template>
-    <template #footer>
+    <div class="flex flex-col gap-4">
+      <RuiAlert type="warning">
+        {{ t('asset_update.restore.warning') }}
+      </RuiAlert>
       <RestoreAssetDbButton />
-    </template>
-  </RuiCard>
+    </div>
+  </SettingsItem>
 </template>

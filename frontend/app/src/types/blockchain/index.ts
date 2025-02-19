@@ -1,8 +1,5 @@
 import { Routes } from '@/router/routes';
-import {
-  L2_LOOPRING,
-  type SupportedSubBlockchainProtocol,
-} from '@/types/protocols';
+import { L2_LOOPRING, type SupportedSubBlockchainProtocol } from '@/types/protocols';
 import type { BigNumber } from '@rotki/common';
 import type { ActionDataEntry } from '@/types/action';
 
@@ -12,10 +9,10 @@ export const samePriceAssets: Record<string, string[]> = {
 
 export const SupportedSubBlockchainProtocolData: ActionDataEntry[] = [
   {
+    detailPath: Routes.BALANCES_BLOCKCHAIN.toString(),
     identifier: L2_LOOPRING,
+    image: './assets/images/protocols/loopring.svg',
     label: 'Loopring',
-    icon: './assets/images/protocols/loopring.svg',
-    detailPath: `${Routes.ACCOUNTS_BALANCES_BLOCKCHAIN}#blockchain-balances-LRC`,
   },
 ];
 

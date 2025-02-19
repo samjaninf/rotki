@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useLinks } from '@/composables/links';
+
 const props = withDefaults(
   defineProps<{
     text?: string;
@@ -22,17 +24,18 @@ const { href, onLinkClick } = useLinks(url);
         size="sm"
         variant="text"
         :icon="!text"
-        :text="!!text"
         color="primary"
         tag="a"
         :href="href"
         target="_blank"
         @click="onLinkClick()"
       >
-        <span v-if="text">{{ text }}</span>
+        <span v-if="text">
+          {{ text }}
+        </span>
         <template #append>
           <RuiIcon
-            name="external-link-line"
+            name="lu-external-link"
             :size="16"
           />
         </template>

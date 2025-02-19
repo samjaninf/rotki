@@ -25,7 +25,6 @@ from rotkehlchen.types import (
     Timestamp,
     deserialize_evm_tx_hash,
 )
-from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import hexstr_to_int, ts_now
 
 from .constants import MAKERDAO_REQUERY_PERIOD, RAD
@@ -33,6 +32,7 @@ from .constants import MAKERDAO_REQUERY_PERIOD, RAD
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -109,7 +109,7 @@ class MakerdaoDsr(HasDSProxy):
             ethereum_inquirer: 'EthereumInquirer',
             database: 'DBHandler',
             premium: Premium | None,
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
     ) -> None:
 
         super().__init__(
@@ -163,9 +163,7 @@ class MakerdaoDsr(HasDSProxy):
             # Calculation is from here:
             # https://docs.makerdao.com/smart-contract-modules/rates-module#a-note-on-setting-rates
             current_dsr_percentage = ((FVal(current_dsr / RAY) ** 31622400) % 1) * 100
-            result = DSRCurrentBalances(balances=balances, current_dsr=current_dsr_percentage)
-
-        return result
+            return DSRCurrentBalances(balances=balances, current_dsr=current_dsr_percentage)
 
     def _get_vat_join_exit_at_transaction(
             self,
@@ -203,7 +201,7 @@ class MakerdaoDsr(HasDSProxy):
         for event in events:
             if event['transactionIndex'] == transaction_index:
                 if value is not None:
-                    log.error(  # type: ignore
+                    log.error(
                         'Mistaken assumption: There is multiple vat.move events for '
                         'the same transaction',
                     )

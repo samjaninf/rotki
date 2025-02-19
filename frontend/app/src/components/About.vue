@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import type { SystemVersion } from '@/electron-main/ipc';
+import { useMainStore } from '@/store/main';
+import { usePremium } from '@/composables/premium';
+import { useInterop } from '@/composables/electron-interop';
+import DateDisplay from '@/components/display/DateDisplay.vue';
+import CopyButton from '@/components/helper/CopyButton.vue';
+import AppUpdateIndicator from '@/components/status/AppUpdateIndicator.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import RotkiLogo from '@/components/common/RotkiLogo.vue';
 import type { WebVersion } from '@/types';
-
-const css = useCssModule();
+import type { SystemVersion } from '@shared/ipc';
 
 const store = useMainStore();
-const { version: getVersion, isPackaged, openPath } = useInterop();
+const { isPackaged, openPath, version: getVersion } = useInterop();
 const { t } = useI18n();
 
-const { version, dataDirectory } = toRefs(store);
-const versionInfo = asyncComputed<SystemVersion | WebVersion>(() =>
-  getVersion(),
-);
+const { dataDirectory, version } = toRefs(store);
+const versionInfo = asyncComputed<SystemVersion | WebVersion>(() => getVersion());
 
 const premium = usePremium();
 const componentsVersion = computed(() => {
@@ -24,8 +28,8 @@ const componentsVersion = computed(() => {
     return null;
 
   return {
-    version: cmp.version as string,
     build: cmp.build as number,
+    version: cmp.version as string,
   };
 });
 
@@ -122,7 +126,7 @@ const { copy } = useClipboard({ source: versionText });
       <table class="w-full">
         <tbody>
           <tr>
-            <td :class="css.label">
+            <td :class="$style.label">
               {{ t('about.data_directory') }}
             </td>
             <td>
@@ -134,12 +138,12 @@ const { copy } = useClipboard({ source: versionText });
                   <template #activator>
                     <div
                       class="truncate text-rui-text-secondary"
-                      :class="css.directory"
+                      :class="$style.directory"
                     >
                       {{ dataDirectory }}
                     </div>
                   </template>
-                  <span :class="css.directory">
+                  <span :class="$style.directory">
                     {{ dataDirectory }}
                   </span>
                 </RuiTooltip>
@@ -160,7 +164,7 @@ const { copy } = useClipboard({ source: versionText });
                       >
                         <RuiIcon
                           size="18"
-                          name="folder-open-line"
+                          name="lu-folder-open"
                         />
                       </RuiButton>
                     </template>
@@ -178,7 +182,7 @@ const { copy } = useClipboard({ source: versionText });
             </td>
           </tr>
           <tr>
-            <td :class="css.label">
+            <td :class="$style.label">
               {{ t('about.frontend_version') }}
             </td>
             <td class="text-rui-text-secondary">
@@ -187,7 +191,7 @@ const { copy } = useClipboard({ source: versionText });
           </tr>
           <template v-if="webVersion">
             <tr>
-              <td :class="css.label">
+              <td :class="$style.label">
                 {{ t('about.platform') }}
               </td>
               <td class="text-rui-text-secondary">
@@ -195,7 +199,7 @@ const { copy } = useClipboard({ source: versionText });
               </td>
             </tr>
             <tr>
-              <td :class="css.label">
+              <td :class="$style.label">
                 {{ t('about.user_agent') }}
               </td>
               <td class="text-rui-text-secondary">
@@ -205,7 +209,7 @@ const { copy } = useClipboard({ source: versionText });
           </template>
           <template v-if="electronVersion">
             <tr>
-              <td :class="css.label">
+              <td :class="$style.label">
                 {{ t('about.platform') }}
               </td>
               <td class="text-rui-text-secondary">
@@ -214,7 +218,7 @@ const { copy } = useClipboard({ source: versionText });
               </td>
             </tr>
             <tr>
-              <td :class="css.label">
+              <td :class="$style.label">
                 {{ t('about.electron') }}
               </td>
               <td class="text-rui-text-secondary">
@@ -231,7 +235,7 @@ const { copy } = useClipboard({ source: versionText });
               </td>
             </tr>
             <tr v-if="componentsVersion.version">
-              <td :class="css.label">
+              <td :class="$style.label">
                 {{ t('about.components.version') }}
               </td>
               <td class="text-rui-text-secondary">
@@ -239,7 +243,7 @@ const { copy } = useClipboard({ source: versionText });
               </td>
             </tr>
             <tr v-if="componentsVersion.build">
-              <td :class="css.label">
+              <td :class="$style.label">
                 {{ t('about.components.build') }}
               </td>
               <td class="text-rui-text-secondary">
@@ -259,7 +263,7 @@ const { copy } = useClipboard({ source: versionText });
           <template #prepend>
             <RuiIcon
               size="20"
-              name="file-copy-line"
+              name="lu-copy"
             />
           </template>
           {{ t('about.copy_information_tooltip') }}

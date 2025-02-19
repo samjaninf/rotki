@@ -6,9 +6,10 @@ from rotkehlchen.assets.asset import CryptoAsset
 from rotkehlchen.chain.evm.contracts import EvmContract, EvmContracts
 from rotkehlchen.chain.evm.l2_with_l1_fees.etherscan import L2WithL1FeesEtherscan
 from rotkehlchen.chain.evm.l2_with_l1_fees.types import SupportedL2WithL1FeesType
-from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer, UpdatableCacheDataMixin
+from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
 from rotkehlchen.chain.evm.proxies_inquirer import EvmProxiesInquirer
 from rotkehlchen.chain.evm.types import WeightedNode
+from rotkehlchen.externalapis.blockscout import Blockscout
 from rotkehlchen.externalapis.utils import maybe_read_integer
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -38,6 +39,7 @@ class L2WithL1FeesInquirer(EvmNodeInquirer, ABC):
             contract_scan: 'EvmContract',
             contract_multicall: 'EvmContract',
             native_token: CryptoAsset,
+            blockscout: Blockscout | None = None,
     ) -> None:
         super().__init__(
             greenlet_manager=greenlet_manager,
@@ -51,6 +53,7 @@ class L2WithL1FeesInquirer(EvmNodeInquirer, ABC):
             contract_multicall=contract_multicall,
             contract_scan=contract_scan,
             native_token=native_token,
+            blockscout=blockscout,
         )
 
     def _additional_receipt_processing(self, tx_receipt: dict[str, Any]) -> None:
@@ -64,7 +67,7 @@ class L2WithL1FeesInquirer(EvmNodeInquirer, ABC):
         tx_receipt['l1Fee'] = maybe_read_integer(data=tx_receipt, key='l1Fee', api=f'web3 {self.blockchain.name.lower()}')  # noqa: E501
 
 
-class DSProxyL2WithL1FeesInquirerWithCacheData(L2WithL1FeesInquirer, UpdatableCacheDataMixin, ABC):
+class DSProxyL2WithL1FeesInquirerWithCacheData(L2WithL1FeesInquirer, ABC):
 
     def __init__(
             self,
@@ -80,8 +83,8 @@ class DSProxyL2WithL1FeesInquirerWithCacheData(L2WithL1FeesInquirer, UpdatableCa
             contract_multicall: 'EvmContract',
             dsproxy_registry: 'EvmContract',
             native_token: CryptoAsset,
+            blockscout: Blockscout | None = None,
     ) -> None:
-        UpdatableCacheDataMixin.__init__(self, database)
         super().__init__(
             greenlet_manager=greenlet_manager,
             database=database,
@@ -94,6 +97,7 @@ class DSProxyL2WithL1FeesInquirerWithCacheData(L2WithL1FeesInquirer, UpdatableCa
             contract_multicall=contract_multicall,
             contract_scan=contract_scan,
             native_token=native_token,
+            blockscout=blockscout,
         )
         self.proxies_inquirer = EvmProxiesInquirer(
             node_inquirer=self,

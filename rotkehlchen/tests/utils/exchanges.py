@@ -1,12 +1,12 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Final
-from unittest.mock import patch
+from typing import TYPE_CHECKING, Any, Final, Literal, overload
+from unittest.mock import _patch, patch
 
-from rotkehlchen.assets.asset import Asset, AssetWithOracles
+from rotkehlchen.assets.asset import AssetWithOracles
 from rotkehlchen.assets.converters import asset_from_kraken
-from rotkehlchen.constants import ONE, ZERO
+from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_ETH2, A_EUR
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.errors.asset import UnprocessableTradePair
@@ -18,10 +18,11 @@ from rotkehlchen.exchanges.bitpanda import Bitpanda
 from rotkehlchen.exchanges.bitstamp import Bitstamp
 from rotkehlchen.exchanges.bybit import Bybit
 from rotkehlchen.exchanges.coinbase import Coinbase
-from rotkehlchen.exchanges.coinbasepro import Coinbasepro
-from rotkehlchen.exchanges.data_structures import AssetMovement, Trade
+from rotkehlchen.exchanges.coinbaseprime import Coinbaseprime
+from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface
 from rotkehlchen.exchanges.gemini import Gemini
+from rotkehlchen.exchanges.htx import Htx
 from rotkehlchen.exchanges.iconomi import Iconomi
 from rotkehlchen.exchanges.independentreserve import Independentreserve
 from rotkehlchen.exchanges.kucoin import Kucoin
@@ -32,6 +33,8 @@ from rotkehlchen.exchanges.utils import create_binance_symbols_to_pair
 from rotkehlchen.exchanges.woo import Woo
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.tests.utils.constants import A_XMR
 from rotkehlchen.tests.utils.factories import (
     make_api_key,
@@ -44,14 +47,17 @@ from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetAmount,
-    AssetMovementCategory,
     Fee,
     Location,
     Price,
     Timestamp,
+    TimestampMS,
     TradeType,
 )
 from rotkehlchen.user_messages import MessagesAggregator
+
+if TYPE_CHECKING:
+    from rotkehlchen.exchanges.kraken import Kraken
 
 POLONIEX_MOCK_DEPOSIT_WITHDRAWALS_RESPONSE: Final = """{
   "adjustments": [],
@@ -482,55 +488,110 @@ def assert_binance_asset_movements_result(
         location: Location,
         got_fiat: bool,
 ) -> None:
-    assert len(movements) == 6 if got_fiat else 4
-    assert movements[0].location == location
-    assert movements[0].category == AssetMovementCategory.DEPOSIT
-    assert movements[0].timestamp == 1508198532
-    assert isinstance(movements[0].asset, Asset)
-    assert movements[0].asset == A_ETH
-    assert movements[0].amount == FVal('0.04670582')
-    assert movements[0].fee == ZERO
+    for movement in movements:
+        movement.event_identifier = 'x'  # reset event_identifier since its different depending on location.  # noqa: E501
 
-    assert movements[1].location == location
-    assert movements[1].category == AssetMovementCategory.DEPOSIT
-    assert movements[1].timestamp == 1508398632
-    assert isinstance(movements[1].asset, Asset)
-    assert movements[1].asset == A_XMR
-    assert movements[1].amount == FVal('1000')
-    assert movements[1].fee == ZERO
+    location_label = 'binance'
+    assert movements[:6] == [AssetMovement(
+            event_identifier='x',
+            timestamp=TimestampMS(1508198532000),
+            location=location,
+            location_label=location_label,
+            event_type=HistoryEventType.DEPOSIT,
+            asset=A_ETH,
+            amount=FVal('0.04670582'),
+            extra_data={
+                'address': '0x6915f16F8791d0A1CC2BF47c13a6B2A92000504B',
+                'transaction_id': '0xef33b22bdb2b28b1f75ccd201a4a4m6e7g83jy5fc5d5a9d1340961598cfcb0a1',  # noqa: E501
+            },
+        ), AssetMovement(
+            event_identifier='x',
+            timestamp=TimestampMS(1508398632000),
+            location=location,
+            location_label=location_label,
+            event_type=HistoryEventType.DEPOSIT,
+            asset=A_XMR,
+            amount=FVal('1000'),
+            extra_data={
+                'address': '463tWEBn5XZJSxLU34r6g7h8jtxuNcDbjLSjkn3XAXHCbLrTTErJrBWYgHJQyrCwkNgYvV38',  # noqa: E501
+                'transaction_id': 'c3c6219639c8ae3f9cf010cdc24fw7f7yt8j1e063f9b4bd1a05cb44c4b6e2509',  # noqa: E501
+            },
+        ), AssetMovement(
+            event_identifier='x',
+            timestamp=TimestampMS(1508198532000),
+            location=location,
+            location_label=location_label,
+            event_type=HistoryEventType.WITHDRAWAL,
+            asset=A_ETH,
+            amount=FVal('0.99'),
+            extra_data={
+                'address': '0x6915f16F8791d0A1CC2BF47c13a6B2A92000504B',
+                'transaction_id': '0xdf33b22bdb2b28b1f75ccd201a4a4m6e7g83jy5fc5d5a9d1340961598cfcb0a1',  # noqa: E501
+            },
+        ), AssetMovement(
+            event_identifier='x',
+            timestamp=TimestampMS(1508198532000),
+            location=location,
+            location_label=location_label,
+            event_type=HistoryEventType.WITHDRAWAL,
+            asset=A_ETH,
+            amount=FVal('0.01'),
+            is_fee=True,
+        ), AssetMovement(
+            event_identifier='x',
+            timestamp=TimestampMS(1508198532000),
+            location=location,
+            location_label=location_label,
+            event_type=HistoryEventType.WITHDRAWAL,
+            asset=A_XMR,
+            amount=FVal('999.9999'),
+            extra_data={
+                'address': '463tWEBn5XZJSxLU34r6g7h8jtxuNcDbjLSjkn3XAXHCbLrTTErJrBWYgHJQyrCwkNgYvyV3z8zctJLPCZy24jvb3NiTcTJ',  # noqa: E501
+                'transaction_id': 'b3c6219639c8ae3f9cf010cdc24fw7f7yt8j1e063f9b4bd1a05cb44c4b6e2509',  # noqa: E501
+            },
+        ), AssetMovement(
+            event_identifier='x',
+            timestamp=TimestampMS(1508198532000),
+            location=location,
+            location_label=location_label,
+            event_type=HistoryEventType.WITHDRAWAL,
+            asset=A_XMR,
+            amount=FVal('0.0001'),
+            is_fee=True,
+        ),
+    ]
 
-    assert movements[2].location == location
-    assert movements[2].category == AssetMovementCategory.WITHDRAWAL
-    assert movements[2].timestamp == 1508198532
-    assert isinstance(movements[2].asset, Asset)
-    assert movements[2].asset == A_ETH
-    assert movements[2].amount == FVal('0.99')
-    assert movements[2].fee == FVal('0.01')
+    if got_fiat is False:
+        return
 
-    assert movements[3].location == location
-    assert movements[3].category == AssetMovementCategory.WITHDRAWAL
-    assert movements[3].timestamp == 1508198532
-    assert isinstance(movements[3].asset, Asset)
-    assert movements[3].asset == A_XMR
-    assert movements[3].amount == FVal('999.9999')
-    assert movements[3].fee == FVal('0.0001')
-
-    if got_fiat:
-        assert movements[4].location == location
-        assert movements[4].category == AssetMovementCategory.DEPOSIT
-        assert movements[4].timestamp == 1626144956
-        assert isinstance(movements[4].asset, Asset)
-        assert movements[4].asset == A_EUR
-        assert movements[4].amount == FVal('10')
-        assert movements[4].fee == FVal('0')
-
-        assert movements[5].location == location
-        assert movements[5].category == AssetMovementCategory.WITHDRAWAL
-        assert movements[5].timestamp == 1636144956
-        assert isinstance(movements[5].asset, Asset)
-        assert movements[5].asset == A_EUR
-        assert movements[5].amount == FVal('10')
-        assert movements[5].fee == FVal('0.02')
+    assert movements[6:] == [AssetMovement(
+        event_identifier='x',
+        timestamp=TimestampMS(1626144956000),
+        location=location,
+        location_label=location_label,
+        event_type=HistoryEventType.DEPOSIT,
+        asset=A_EUR,
+        amount=FVal('10.00'),
+        extra_data={'transaction_id': '7d76d611-0568-4f43-afb6-24cac7767365'},
+    ), AssetMovement(
+        event_identifier='x',
+        timestamp=TimestampMS(1636144956000),
+        location=location,
+        location_label=location_label,
+        event_type=HistoryEventType.WITHDRAWAL,
+        asset=A_EUR,
+        amount=FVal('10.00'),
+        extra_data={'transaction_id': '8e76d611-0568-4f43-afb6-24cac7767365'},
+    ), AssetMovement(
+        event_identifier='x',
+        timestamp=TimestampMS(1636144956000),
+        location=location,
+        location_label=location_label,
+        event_type=HistoryEventType.WITHDRAWAL,
+        asset=A_EUR,
+        amount=FVal('0.02'),
+        is_fee=True,
+    )]
 
 
 def assert_poloniex_balances_result(balances: dict[str, Any]) -> None:
@@ -566,7 +627,7 @@ def mock_binance_balance_response(url, **kwargs):  # pylint: disable=unused-argu
     return MockResponse(200, BINANCE_BALANCES_RESPONSE)
 
 
-def patch_binance_balances_query(binance: 'Binance'):
+def patch_binance_balances_query(binance: 'Binance') -> _patch:
     def mock_binance_asset_return(url, *args, **kwargs):  # pylint: disable=unused-argument
         if 'futures' in url:
             response = '{"crossCollaterals":[]}'
@@ -582,16 +643,14 @@ def patch_binance_balances_query(binance: 'Binance'):
             response = BINANCE_BALANCES_RESPONSE
         return MockResponse(200, response)
 
-    binance_patch = patch.object(binance.session, 'request', side_effect=mock_binance_asset_return)
-    return binance_patch
+    return patch.object(binance.session, 'request', side_effect=mock_binance_asset_return)
 
 
-def patch_poloniex_balances_query(poloniex: 'Poloniex'):
+def patch_poloniex_balances_query(poloniex: 'Poloniex') -> _patch:
     def mock_poloniex_asset_return(url, *args, **kwargs):  # pylint: disable=unused-argument
         return MockResponse(200, POLONIEX_BALANCES_RESPONSE)
 
-    poloniex_patch = patch.object(poloniex.session, 'get', side_effect=mock_poloniex_asset_return)
-    return poloniex_patch
+    return patch.object(poloniex.session, 'get', side_effect=mock_poloniex_asset_return)
 
 # # -- Test Exchange Objects creation --
 
@@ -601,14 +660,29 @@ def create_test_coinbase(
         msg_aggregator: MessagesAggregator,
         name: str = 'coinbase',
 ) -> Coinbase:
-    mock = Coinbase(
+    return Coinbase(
         name=name,
         api_key=make_api_key(),
         secret=make_api_secret(),
         database=database,
         msg_aggregator=msg_aggregator,
     )
-    return mock
+
+
+def create_test_coinbaseprime(
+        database: DBHandler,
+        msg_aggregator: MessagesAggregator,
+        passphrase: str,
+        name: str = 'coinbaseprime',
+) -> Coinbaseprime:
+    return Coinbaseprime(
+        name=name,
+        api_key=make_api_key(),
+        secret=make_api_secret(),
+        passphrase=passphrase,
+        database=database,
+        msg_aggregator=msg_aggregator,
+    )
 
 
 def create_test_binance(
@@ -674,6 +748,7 @@ def create_test_bitmex(
         msg_aggregator=msg_aggregator,
     )
     bitmex.first_connection_made = True
+    bitmex.asset_to_decimals = {'XBt': 8, 'USDt': 6}
     return bitmex
 
 
@@ -695,22 +770,6 @@ def create_test_bitstamp(
         database=database,
         msg_aggregator=msg_aggregator,
     )
-
-
-def create_test_coinbasepro(
-        database: DBHandler,
-        msg_aggregator: MessagesAggregator,
-        passphrase: str,
-) -> Coinbasepro:
-    coinbasepro = Coinbasepro(
-        name='coinbasepro',
-        api_key=make_api_key(),
-        secret=make_api_secret(),
-        database=database,
-        msg_aggregator=msg_aggregator,
-        passphrase=passphrase,
-    )
-    return coinbasepro
 
 
 # This function is dynamically used in rotkehlchen_api_server_with_exchanges
@@ -750,6 +809,19 @@ def create_test_bybit(
 ) -> Bybit:
     return Bybit(
         name='bybit',
+        api_key=make_api_key(),
+        secret=make_api_secret(),
+        database=database,
+        msg_aggregator=msg_aggregator,
+    )
+
+
+def create_test_htx(
+        database: DBHandler,
+        msg_aggregator: MessagesAggregator,
+) -> Htx:
+    return Htx(
+        name='htx',
         api_key=make_api_key(),
         secret=make_api_secret(),
         database=database,
@@ -884,6 +956,150 @@ def create_test_woo(
     )
 
 
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.BINANCE, Location.BINANCEUS],
+) -> Binance | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.BITPANDA],
+) -> Bitpanda | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.BITCOINDE],
+) -> Bitcoinde | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.BITFINEX],
+) -> Bitfinex | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.BITMEX],
+) -> Bitmex | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.BITSTAMP],
+) -> Bitstamp | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.BYBIT],
+) -> Bybit | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.COINBASE],
+) -> Coinbase | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.COINBASEPRIME],
+) -> Coinbaseprime | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.GEMINI],
+) -> Gemini | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.HTX],
+) -> Htx | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.ICONOMI],
+) -> Iconomi | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.INDEPENDENTRESERVE],
+) -> Independentreserve | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.KRAKEN],
+) -> 'Kraken | None':
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.OKX],
+) -> Okx | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.POLONIEX],
+) -> Poloniex | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.WOO],
+) -> Woo | None:
+    ...
+
+
+@overload
+def try_get_first_exchange(
+        exchange_manager: ExchangeManager,
+        location: Literal[Location.KUCOIN],
+) -> 'Kucoin | None':
+    ...
+
+
 def try_get_first_exchange(
         exchange_manager: ExchangeManager,
         location: Location,
@@ -994,6 +1210,29 @@ TRANSACTIONS_RESPONSE = """{
     "idem": "zzzz",
     "details": {"title": "Sent Ethereum", "subtitle": "To Ethereum address"}
 },{
+  "amount": {
+    "amount": "-10.482180",
+    "currency": "USDC"
+  },
+  "created_at": "2024-12-02T14:46:23Z",
+  "id": "5a1a32dc-bfda-5cbf-b625-1a197e699829",
+  "native_amount": {
+    "amount": "-9.98",
+    "currency": "EUR"
+  },
+  "resource": "transaction",
+  "resource_path": "/v2/accounts/40e03599-5601-534c-95c2-0db5f5c5e652/transactions/5a1a32dc-bfda-5cbf-b625-1a197e699829",
+  "status": "completed",
+  "trade": {
+    "fee": {
+      "amount": "0.099839",
+      "currency": "USDC"
+    },
+    "id": "id9",
+    "payment_method_name": "billetera de USDC"
+  },
+  "type": "trade"
+}, {
   "id": "id2",
   "type": "send",
   "status": "completed",
@@ -1121,6 +1360,36 @@ TRANSACTIONS_RESPONSE = """{
   },
   "hide_native_amount": false
 },{
+  "id": "id6",
+  "type": "send",
+  "status": "completed",
+  "amount": {
+    "amount": "-0.00100000",
+    "currency": "BTC"
+  },
+  "native_amount": {
+    "amount": "-0.01",
+    "currency": "USD"
+  },
+  "description": null,
+  "created_at": "2021-03-11T13:13:35-07:00",
+  "updated_at": "2021-03-26T15:55:43-07:00",
+  "resource": "transaction",
+  "resource_path": "/v2/accounts/2bbf394c-193b-5b2a-9155-3b4732659ede/transactions/57ffb4ae-0c59-5430-bcd3-3f98f797a66c",
+  "network": {
+    "status": "off_blockchain",
+    "name": "bitcoin"
+  },
+  "to": {
+    "id": "a6b4c2df-a62c-5d68-822a-dd4e2102e703",
+    "resource": "user",
+    "resource_path": "/v2/users/a6b4c2df-a62c-5d68-822a-dd4e2102e703"
+  },
+  "details": {
+    "title": "Send bitcoin",
+    "subtitle": "to User 2"
+  }
+},{
 "amount": {"amount": "0.05772716", "currency": "ETH"},
  "buy": {"id": "testid-1", "resource": "buy", "resource_path": "/v2/accounts/accountid-1/buys/testid-1"},
  "created_at": "2019-08-24T23:01:35Z",
@@ -1149,8 +1418,18 @@ TRANSACTIONS_RESPONSE = """{
  "resource_path": "/v2/accounts/accountid-1/transactions/txid-2",
  "status": "completed",
  "type": "sell",
- "updated_at": "2021-12-08T01:18:26Z"}
-]}"""  # noqa: E501
+ "updated_at": "2021-12-08T01:18:26Z"
+},{
+ "amount": {"amount": "0.025412", "currency": "SOL"},
+ "created_at": "2021-01-24T18:23:53Z",
+ "updated_at": "2021-01-24T18:23:53Z",
+ "id": "id6",
+ "native_amount": {"amount": "0.31", "currency": "EUR"},
+ "resource": "transaction",
+ "resource_path": "/v2/accounts/accountid-1/transactions/id6",
+ "status": "completed",
+ "type": "staking_reward"
+}]}"""  # noqa: E501
 
 
 def mock_normal_coinbase_query(url, **kwargs):  # pylint: disable=unused-argument
@@ -1177,7 +1456,7 @@ def kraken_to_world_pair(pair: str) -> tuple[AssetWithOracles, AssetWithOracles]
     """Turns a pair from kraken to our base/quote asset tuple
 
     Can throw:
-        - UknownAsset if one of the assets of the pair are not known
+        - UnknownAsset if one of the assets of the pair are not known
         - DeserializationError if one of the assets is not a sting
         - UnprocessableTradePair if the pair can't be processed and
           split into its base/quote assets

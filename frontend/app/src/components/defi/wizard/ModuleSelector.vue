@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import {
-  Module,
-  SUPPORTED_MODULES,
-  type SupportedModule,
-} from '@/types/modules';
+import { Module, SUPPORTED_MODULES, type SupportedModule } from '@/types/modules';
 import { Section } from '@/types/status';
-import type { DataTableColumn } from '@rotki/ui-library-compat';
+import { useNonFungibleBalancesStore } from '@/store/balances/non-fungible';
+import { useSettingsStore } from '@/store/settings';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useQueriedAddressesStore } from '@/store/session/queried-addresses';
+import { useStatusUpdater } from '@/composables/status';
+import QueriedAddressDialog from '@/components/defi/QueriedAddressDialog.vue';
+import RowActions from '@/components/helper/RowActions.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import type { CamelCase } from '@/types/common';
+import type { DataTableColumn } from '@rotki/ui-library';
+
+type ModuleEntry = SupportedModule & { enabled: boolean };
 
 const { t } = useI18n();
 
@@ -23,25 +30,30 @@ const { update: updateSettings } = useSettingsStore();
 const balancesStore = useNonFungibleBalancesStore();
 const { resetStatus } = useStatusUpdater(Section.NON_FUNGIBLE_BALANCES);
 
-const headers = computed<DataTableColumn[]>(() => [
+const headers = computed<DataTableColumn<ModuleEntry>[]>(() => [
   {
-    label: t('common.name'),
-    key: 'name',
     class: 'w-full',
+    key: 'name',
+    label: t('common.name'),
   },
   {
-    label: t('module_selector.table.select_accounts'),
     key: 'selectedAccounts',
+    label: t('module_selector.table.select_accounts'),
   },
   {
-    label: t('module_selector.table.enabled'),
-    key: 'enabled',
     align: 'end',
     cellClass: 'flex justify-end align-center',
+    key: 'enabled',
+    label: t('module_selector.table.enabled'),
+  },
+  {
+    align: 'center',
+    key: 'actions',
+    label: '',
   },
 ]);
 
-const modules = computed<(SupportedModule & { enabled: boolean })[]>(() => {
+const modules = computed<ModuleEntry[]>(() => {
   const active = get(activeModules);
   const filter = get(search).toLowerCase();
   const filteredModules = filter
@@ -56,11 +68,7 @@ const modules = computed<(SupportedModule & { enabled: boolean })[]>(() => {
 const { start: fetch } = useTimeoutFn(() => resetStatus(), 800, {
   immediate: false,
 });
-const { start: clearNfBalances } = useTimeoutFn(
-  () => balancesStore.$reset(),
-  800,
-  { immediate: false },
-);
+const { start: clearNfBalances } = useTimeoutFn(() => balancesStore.$reset(), 800, { immediate: false });
 
 async function update(activeModules: Module[]) {
   set(loading, true);
@@ -73,15 +81,13 @@ async function switchModule(module: Module, enabled: boolean) {
   let modules: Module[];
   if (enabled)
     modules = [...active, module];
-  else
-    modules = active.filter(m => m !== module);
+  else modules = active.filter(m => m !== module);
 
   await update(modules);
   if (module === Module.NFTS) {
     if (enabled)
       fetch();
-    else
-      clearNfBalances();
+    else clearNfBalances();
   }
 }
 
@@ -108,7 +114,9 @@ function selected(identifier: Module) {
   if (!addresses || addresses.length === 0)
     return t('module_selector.all_accounts');
 
-  return addresses.length.toString();
+  return t('module_selector.some_accounts', {
+    number: addresses.length,
+  });
 }
 
 onMounted(async () => {
@@ -117,12 +125,24 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <RuiCard>
     <div class="flex flex-col md:flex-row md:justify-between gap-4 mb-4">
+      <RuiTextField
+        v-model="search"
+        variant="outlined"
+        color="primary"
+        class="min-w-[20rem] flex-1"
+        :label="t('module_selector.filter')"
+        clearable
+        hide-details
+        dense
+        prepend-icon="lu-search"
+      />
       <div class="flex items-center gap-2">
         <RuiButton
           color="primary"
           :loading="loading"
+          class="!py-2"
           data-cy="modules_enable_all"
           @click="enableAll()"
         >
@@ -132,24 +152,14 @@ onMounted(async () => {
         <RuiButton
           color="primary"
           variant="outlined"
+          :loading="loading"
+          class="!py-2"
           data-cy="modules_disable_all"
           @click="disableAll()"
         >
           {{ t('module_selector.actions.disable_all') }}
         </RuiButton>
       </div>
-
-      <RuiTextField
-        v-model="search"
-        variant="outlined"
-        color="primary"
-        class="md:min-w-[20rem]"
-        :label="t('module_selector.filter')"
-        clearable
-        hide-details
-        dense
-        prepend-icon="search-line"
-      />
     </div>
 
     <RuiDataTable
@@ -179,21 +189,15 @@ onMounted(async () => {
       </template>
 
       <template #item.selectedAccounts="{ row }">
-        <div class="flex items-center text-no-wrap">
-          <RowActions
-            no-delete
-            class="px-4"
-            :edit-disabled="!row.enabled"
-            :edit-tooltip="t('module_selector.select_accounts_hint')"
-            @edit-click="manageModule = row.identifier"
-          />
-
-          <RuiBadge
-            color="primary"
-            :text="selected(row.identifier)"
-            placement="center"
-          />
-        </div>
+        <RuiChip
+          color="primary"
+          placement="center"
+          size="sm"
+          variant="outlined"
+          class="!h-5 !bg-rui-primary-lighter/[0.2] font-medium"
+        >
+          {{ selected(row.identifier) }}
+        </RuiChip>
       </template>
 
       <template #item.enabled="{ row }">
@@ -201,10 +205,19 @@ onMounted(async () => {
           color="primary"
           :data-cy="`${row.identifier}-module-switch`"
           :disabled="loading"
-          :value="row.enabled"
+          :model-value="row.enabled"
           hide-details
           class="py-2"
-          @input="switchModule(row.identifier, $event)"
+          @update:model-value="switchModule(row.identifier, $event)"
+        />
+      </template>
+      <template #item.actions="{ row }">
+        <RowActions
+          no-delete
+          class="px-4"
+          :edit-disabled="!row.enabled"
+          :edit-tooltip="t('module_selector.select_accounts_hint')"
+          @edit-click="manageModule = row.identifier"
         />
       </template>
     </RuiDataTable>
@@ -214,5 +227,5 @@ onMounted(async () => {
       :module="manageModule"
       @close="manageModule = undefined"
     />
-  </div>
+  </RuiCard>
 </template>

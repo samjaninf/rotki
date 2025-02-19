@@ -1,10 +1,7 @@
 <script setup lang="ts">
-withDefaults(
-  defineProps<{ hideHeader?: boolean; child?: boolean; title?: string[] }>(),
-  {
-    title: undefined,
-  },
-);
+withDefaults(defineProps<{ hideHeader?: boolean; child?: boolean; title?: string[] }>(), {
+  title: undefined,
+});
 </script>
 
 <template>
@@ -16,19 +13,29 @@ withDefaults(
       >
         <div
           v-if="title"
-          class="text-body-1 text-rui-text"
+          class="text-sm text-rui-text flex items-center font-medium"
         >
           <slot name="title">
             <template v-for="(item, index) in title">
               <span
-                v-if="index < title.length - 1"
-                :key="index.toString()"
-                class="text-rui-text-secondary"
+                v-if="title && index < title.length - 1"
+                :key="index"
+                class="text-rui-text-secondary flex items-center"
               >
-                {{ item }} /
+                {{ item }}
+                <RuiIcon
+                  name="lu-chevron-right"
+                  size="16"
+                  class="mx-2"
+                />
               </span>
               <template v-else>
-                {{ item }}
+                <span
+                  :key="index"
+                  class="bg-rui-grey-200 dark:bg-rui-grey-900 text-rui-text-secondary rounded-md px-2 py-1"
+                >
+                  {{ item }}
+                </span>
               </template>
             </template>
           </slot>

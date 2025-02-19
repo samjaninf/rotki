@@ -25,13 +25,6 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-SUBGRAPH_REMOTE_ERROR_MSG = (
-    'Failed to request the {location} subgraph due to {error_msg}. '
-    'All {location} balances and historical queries are not functioning until this is fixed. '
-    "Probably will get fixed with time. If not report it to rotki's support channel"
-)
-
-
 class TokenDetails(NamedTuple):
     address: ChecksumEvmAddress
     name: str
@@ -76,13 +69,12 @@ def decode_result(userdb: 'DBHandler', data: tuple) -> LiquidityPool:
             user_balance=Balance(amount=token.amount),
         ))
 
-    pool = LiquidityPool(
+    return LiquidityPool(
         address=pool_token.address,
         assets=assets,
         total_supply=None,
         user_balance=Balance(amount=pool_token.amount),
     )
-    return pool
 
 
 def update_asset_price_in_lp_balances(

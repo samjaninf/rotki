@@ -1,6 +1,5 @@
 import pytest
 
-from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.base.modules.aerodrome.decoder import ROUTER
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
@@ -49,15 +48,16 @@ WETH_BASE = Asset(evm_address_to_identifier(
 ))
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_AERODROME]])
 @pytest.mark.parametrize('base_accounts', [['0x514c4BA193c698100DdC998F17F24bDF59c7b6fB']])
-def test_add_liquidity(base_transaction_decoder, base_accounts):
+def test_add_liquidity(base_transaction_decoder, base_accounts, load_global_caches):
     evmhash = deserialize_evm_tx_hash('0xb71a1339c700a110d61655387d422bb982252a3b55de7f571ced3b9f00d9beee')  # noqa: E501
     user_address = base_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=base_transaction_decoder.evm_inquirer,
-        database=base_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1706708913000)
     gas_amount, deposited_wsteth, deposited_weth, received_amount = '0.000071386738065118', '2.595314266724358628', '2.99450075155017638', '2.787544746858080184'  # noqa: E501
@@ -71,10 +71,10 @@ def test_add_liquidity(base_transaction_decoder, base_accounts):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=14,
@@ -83,7 +83,7 @@ def test_add_liquidity(base_transaction_decoder, base_accounts):
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.APPROVE,
             asset=WSTETH_TOKEN,
-            balance=Balance(ZERO),
+            amount=ZERO,
             location_label=user_address,
             address=ROUTER,
             notes=f'Revoke wstETH spending approval of {user_address} by {ROUTER}',
@@ -93,9 +93,9 @@ def test_add_liquidity(base_transaction_decoder, base_accounts):
             timestamp=timestamp,
             location=Location.BASE,
             event_type=HistoryEventType.DEPOSIT,
-            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+            event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
             asset=WSTETH_TOKEN,
-            balance=Balance(FVal(deposited_wsteth)),
+            amount=FVal(deposited_wsteth),
             location_label=user_address,
             counterparty=CPT_AERODROME,
             address=WSTETH_POOL_ADDRESS,
@@ -107,9 +107,9 @@ def test_add_liquidity(base_transaction_decoder, base_accounts):
             timestamp=timestamp,
             location=Location.BASE,
             event_type=HistoryEventType.DEPOSIT,
-            event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+            event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
             asset=WETH_BASE,
-            balance=Balance(FVal(deposited_weth)),
+            amount=FVal(deposited_weth),
             location_label=user_address,
             counterparty=CPT_AERODROME,
             address=WSTETH_POOL_ADDRESS,
@@ -123,7 +123,7 @@ def test_add_liquidity(base_transaction_decoder, base_accounts):
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
             asset=pool_token,
-            balance=Balance(FVal(received_amount)),
+            amount=FVal(received_amount),
             location_label=user_address,
             counterparty=CPT_AERODROME,
             address=ZERO_ADDRESS,
@@ -135,15 +135,16 @@ def test_add_liquidity(base_transaction_decoder, base_accounts):
     assert EvmToken(pool_token.identifier).protocol == AERODROME_POOL_PROTOCOL
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_AERODROME]])
 @pytest.mark.parametrize('base_accounts', [['0x514c4BA193c698100DdC998F17F24bDF59c7b6fB']])
-def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder):
+def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder, load_global_caches):
     evmhash = deserialize_evm_tx_hash('0x9a0cd1ab0b8e5dbf2718b1c87dad239f7f3a9ed8ff2e07643922b190f80ae898 ')  # noqa: E501
     user_address = base_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=base_transaction_decoder.evm_inquirer,
-        database=base_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     pool_token = Asset('eip155:8453/erc20:0xA6385c73961dd9C58db2EF0c4EB98cE4B60651e8')
     timestamp = TimestampMS(1706708947000)
@@ -157,10 +158,10 @@ def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=1,
@@ -169,7 +170,7 @@ def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder):
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.APPROVE,
             asset=pool_token,
-            balance=Balance(ZERO),
+            amount=ZERO,
             location_label=user_address,
             address=WSTETH_GAUGE_ADDRESS,
             notes=f'Revoke vAMM-WETH/wstETH spending approval of {user_address} by {WSTETH_GAUGE_ADDRESS}',  # noqa: E501
@@ -181,7 +182,7 @@ def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder):
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             asset=pool_token,
-            balance=Balance(FVal(deposited_amount)),
+            amount=FVal(deposited_amount),
             location_label=user_address,
             counterparty=CPT_AERODROME,
             address=WSTETH_GAUGE_ADDRESS,
@@ -193,15 +194,16 @@ def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder):
     assert EvmToken(pool_token.identifier).protocol == AERODROME_POOL_PROTOCOL
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
+@pytest.mark.parametrize('load_global_caches', [[CPT_AERODROME]])
 @pytest.mark.parametrize('base_accounts', [['0x61D90de4fa8cfbBD7A7650Ae01A39fD1B1863503']])
-def test_remove_liquidity(base_accounts, base_transaction_decoder):
+def test_remove_liquidity(base_accounts, base_transaction_decoder, load_global_caches):
     evmhash = deserialize_evm_tx_hash('0x847ed0b6bd3f1b030cc84eee74c2c238dd93e0b689c87d44bce7f3591173ef0d')  # noqa: E501
     user_address = base_accounts[0]
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=base_transaction_decoder.evm_inquirer,
-        database=base_transaction_decoder.database,
         tx_hash=evmhash,
+        load_global_caches=load_global_caches,
     )
     timestamp = TimestampMS(1706789989000)
     gas_amount, lp_amount, aero_amount, usdbc_amount = '0.000088467182445046', '0.000053130643452706', '190.426331639958037231', '15.035115'  # noqa: E501
@@ -220,10 +222,10 @@ def test_remove_liquidity(base_accounts, base_transaction_decoder):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
-            balance=Balance(FVal(gas_amount)),
+            amount=FVal(gas_amount),
             location_label=user_address,
             counterparty=CPT_GAS,
-            notes=f'Burned {gas_amount} ETH for gas',
+            notes=f'Burn {gas_amount} ETH for gas',
         ), EvmEvent(
             tx_hash=evmhash,
             sequence_index=2,
@@ -232,7 +234,7 @@ def test_remove_liquidity(base_accounts, base_transaction_decoder):
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.APPROVE,
             asset=pool_token,
-            balance=Balance(ZERO),
+            amount=ZERO,
             location_label=user_address,
             address=ROUTER,
             notes=f'Revoke vAMM-AERO/USDbC spending approval of {user_address} by {ROUTER}',
@@ -244,7 +246,7 @@ def test_remove_liquidity(base_accounts, base_transaction_decoder):
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.RETURN_WRAPPED,
             asset=pool_token,
-            balance=Balance(FVal(lp_amount)),
+            amount=FVal(lp_amount),
             location_label=user_address,
             counterparty=CPT_AERODROME,
             address=pool_address,
@@ -256,9 +258,9 @@ def test_remove_liquidity(base_accounts, base_transaction_decoder):
             timestamp=timestamp,
             location=Location.BASE,
             event_type=HistoryEventType.WITHDRAWAL,
-            event_subtype=HistoryEventSubType.REMOVE_ASSET,
+            event_subtype=HistoryEventSubType.REDEEM_WRAPPED,
             asset=A_AERO,
-            balance=Balance(FVal(aero_amount)),
+            amount=FVal(aero_amount),
             location_label=user_address,
             counterparty=CPT_AERODROME,
             address=pool_address,
@@ -270,9 +272,9 @@ def test_remove_liquidity(base_accounts, base_transaction_decoder):
             timestamp=timestamp,
             location=Location.BASE,
             event_type=HistoryEventType.WITHDRAWAL,
-            event_subtype=HistoryEventSubType.REMOVE_ASSET,
+            event_subtype=HistoryEventSubType.REDEEM_WRAPPED,
             asset=Asset('eip155:8453/erc20:0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA'),
-            balance=Balance(FVal(usdbc_amount)),
+            amount=FVal(usdbc_amount),
             location_label=user_address,
             counterparty=CPT_AERODROME,
             address=pool_address,

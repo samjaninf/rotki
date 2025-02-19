@@ -1,50 +1,46 @@
-import { CURRENCY_USD } from '@/types/currencies';
+import { startPromise } from '@shared/utils';
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
+import { uniqueStrings } from '@/utils/data';
+import { isTaskCancelled } from '@/utils';
+import { useStatisticsStore } from '@/store/statistics';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useBalancePricesStore } from '@/store/balances/prices';
+import { useExchangeBalancesStore } from '@/store/balances/exchanges';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useManualBalancesStore } from '@/store/balances/manual';
+import { useBalancesApi } from '@/composables/api/balances';
+import { useStatusUpdater } from '@/composables/status';
+import { useBlockchains } from '@/composables/blockchain';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
 import type { AssetPrices } from '@/types/prices';
 import type { MaybeRef } from '@vueuse/core';
 import type { AllBalancePayload } from '@/types/blockchain/accounts';
 
 export const useBalances = createSharedComposable(() => {
-  const { updatePrices: updateManualPrices, fetchManualBalances } = useManualBalancesStore();
+  const { fetchManualBalances, updatePrices: updateManualPrices } = useManualBalancesStore();
   const { updatePrices: updateChainPrices } = useBlockchainStore();
-  const { updatePrices: updateExchangePrices, fetchConnectedExchangeBalances } = useExchangeBalancesStore();
+  const { fetchConnectedExchangeBalances, updatePrices: updateExchangePrices } = useExchangeBalancesStore();
   const { refreshAccounts } = useBlockchains();
   const { assets } = useAggregatedBalances();
   const { queryBalancesAsync } = useBalancesApi();
   const priceStore = useBalancePricesStore();
   const { prices } = storeToRefs(priceStore);
-  const { assetPrice, fetchPrices, fetchExchangeRates, exchangeRate } = priceStore;
+  const { assetPrice, fetchExchangeRates, fetchPrices } = priceStore;
   const { notify } = useNotificationsStore();
-  const { isTaskRunning, awaitTask } = useTaskStore();
+  const { awaitTask, isTaskRunning } = useTaskStore();
   const { t } = useI18n();
-  const { currencySymbol, currency } = storeToRefs(useGeneralSettingsStore());
   const { fetchNetValue } = useStatisticsStore();
 
   const adjustPrices = (prices: MaybeRef<AssetPrices>): void => {
     const pricesConvertedToUsd = { ...get(prices) };
-
-    const mainCurrency = get(currencySymbol);
-    if (mainCurrency !== CURRENCY_USD) {
-      const rate = get(exchangeRate(mainCurrency)) ?? One;
-
-      for (const asset in pricesConvertedToUsd) {
-        const price = pricesConvertedToUsd[asset];
-
-        if (price.isCurrentCurrency)
-          price.usdPrice = price.value.dividedBy(rate);
-      }
-    }
-
     updateChainPrices(pricesConvertedToUsd);
     updateManualPrices(pricesConvertedToUsd);
     updateExchangePrices(pricesConvertedToUsd);
   };
 
-  const refreshPrices = async (
-    ignoreCache = false,
-    selectedAssets: string[] | null = null,
-  ): Promise<void> => {
+  const refreshPrices = async (ignoreCache = false, selectedAssets: string[] | null = null): Promise<void> => {
     const unique = selectedAssets ? selectedAssets.filter(uniqueStrings) : null;
     const { setStatus } = useStatusUpdater(Section.PRICES);
     setStatus(Status.LOADING);
@@ -59,11 +55,8 @@ export const useBalances = createSharedComposable(() => {
     setStatus(Status.LOADED);
   };
 
-  const pendingAssets: Ref<string[]> = ref([]);
-  const noPriceAssets = useArrayFilter(
-    assets(),
-    asset => !get(assetPrice(asset)),
-  );
+  const pendingAssets = ref<string[]>([]);
+  const noPriceAssets = useArrayFilter(assets(), asset => !get(assetPrice(asset)));
 
   watchDebounced(
     noPriceAssets,
@@ -84,7 +77,7 @@ export const useBalances = createSharedComposable(() => {
     { debounce: 800, maxWait: 2000 },
   );
 
-  const fetchBalances = async (payload: Partial<AllBalancePayload> = {}) => {
+  const fetchBalances = async (payload: Partial<AllBalancePayload> = {}): Promise<void> => {
     const taskType = TaskType.QUERY_BALANCES;
     if (get(isTaskRunning(taskType)))
       return;
@@ -98,11 +91,11 @@ export const useBalances = createSharedComposable(() => {
     catch (error: any) {
       if (!isTaskCancelled(error)) {
         notify({
-          title: t('actions.balances.all_balances.error.title'),
+          display: true,
           message: t('actions.balances.all_balances.error.message', {
             message: error.message,
           }),
-          display: true,
+          title: t('actions.balances.all_balances.error.title'),
         });
       }
     }
@@ -111,14 +104,10 @@ export const useBalances = createSharedComposable(() => {
   const fetch = async (): Promise<void> => {
     await fetchExchangeRates();
     startPromise(fetchBalances());
-    await Promise.allSettled([
-      fetchManualBalances(),
-      refreshAccounts(),
-      fetchConnectedExchangeBalances(),
-    ]);
+    await Promise.allSettled([fetchManualBalances(), refreshAccounts(), fetchConnectedExchangeBalances()]);
   };
 
-  const autoRefresh = async () => {
+  const autoRefresh = async (): Promise<void> => {
     await Promise.allSettled([
       fetchManualBalances(),
       refreshAccounts(undefined, true),
@@ -129,16 +118,11 @@ export const useBalances = createSharedComposable(() => {
     await refreshPrices(true);
   };
 
-  // TODO: This is temporary fix for double conversion issue. Future solutions should try to eliminate this part.
-  watch(currency, async () => {
-    await refreshPrices(true);
-  });
-
   return {
-    autoRefresh,
-    refreshPrices,
-    fetchBalances,
     adjustPrices,
+    autoRefresh,
     fetch,
+    fetchBalances,
+    refreshPrices,
   };
 });

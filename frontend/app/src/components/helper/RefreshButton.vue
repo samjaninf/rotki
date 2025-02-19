@@ -31,9 +31,9 @@ const emit = defineEmits<{
         color="primary"
         @click="emit('refresh')"
       >
-        <RuiIcon name="refresh-line" />
+        <RuiIcon name="lu-refresh-ccw" />
       </RuiButton>
     </template>
-    <span>{{ tooltip }}</span>
+    {{ tooltip }}
   </RuiTooltip>
 </template>

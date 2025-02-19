@@ -1,58 +1,70 @@
-import type { BigNumber } from '@rotki/common';
-import type { TooltipDisplayOption } from '@rotki/common/lib/settings/graphs';
-import type { TooltipModel } from 'chart.js';
+import { Chart, type TooltipModel, registerables } from 'chart.js';
+import zoomPlugin from 'chartjs-plugin-zoom';
+import { useDarkMode } from '@/composables/dark-mode';
+import type { BigNumber, TooltipDisplayOption } from '@rotki/common';
+import type { ComputedRef, Ref } from 'vue';
 
-export function useGraph(canvasId: string) {
+export function initGraph(): void {
+  Chart.defaults.font.family = 'Roboto';
+  Chart.register(...registerables);
+  Chart.register(zoomPlugin);
+}
+
+interface UseGraphReturn {
+  getCanvasCtx: () => CanvasRenderingContext2D;
+  baseColor: ComputedRef<string>;
+  gradient: ComputedRef<CanvasGradient>;
+  secondaryColor: ComputedRef<string>;
+  backgroundColor: ComputedRef<string>;
+  fontColor: ComputedRef<string>;
+  gridColor: ComputedRef<string>;
+  thirdColor: ComputedRef<string>;
+}
+
+export function useGraph(canvasId: string): UseGraphReturn {
   const getCanvasCtx = (): CanvasRenderingContext2D => {
     const canvas = document.getElementById(canvasId);
-    assert(
-      canvas && canvas instanceof HTMLCanvasElement,
-      'Canvas could not be found',
-    );
+    assert(canvas && canvas instanceof HTMLCanvasElement, 'Canvas could not be found');
     const context = canvas.getContext('2d');
     assert(context, 'Context could not be found');
     return context;
   };
 
-  const { theme, dark } = useTheme();
+  const { isDark } = useRotkiTheme();
+
+  const { usedTheme } = useDarkMode();
 
   const white = '#ffffff';
   const secondaryBlack = '#3f1300';
 
-  const baseColor = computed(() => {
-    const activeTheme = get(theme);
-    const graphColor = activeTheme.currentTheme.graph;
-    return (graphColor || '#96DFD2') as string;
-  });
-
-  const fadeColor = computed(() => {
-    const activeTheme = get(theme);
-    const graphFade = activeTheme.currentTheme.graphFade;
-    return (graphFade || white) as string;
-  });
+  const baseColor = computed(() => get(usedTheme).graph);
+  const fadeColor = computed(() => (get(isDark) ? '#1e1e1e' : white));
 
   const gradient = computed(() => {
     const context = getCanvasCtx();
-    const areaGradient = context.createLinearGradient(0, 0, 0, 150);
+    const areaGradient = context.createLinearGradient(0, 0, 0, context.canvas.height * 0.5 || 300);
     areaGradient.addColorStop(0, get(baseColor));
     areaGradient.addColorStop(1, `${get(fadeColor)}00`);
     return areaGradient;
   });
 
-  const secondaryColor = computed(() => (get(dark) ? white : secondaryBlack));
-  const backgroundColor = computed(() => (!get(dark) ? white : secondaryBlack));
+  const secondaryColor = computed(() => (get(isDark) ? white : secondaryBlack));
+  const backgroundColor = computed(() => (!get(isDark) ? white : secondaryBlack));
 
-  const fontColor = computed(() => (get(dark) ? white : 'rgba(0,0,0,.6)'));
-  const gridColor = computed(() => (get(dark) ? '#555' : '#ddd'));
+  const thirdColor = computed(() => get(usedTheme).primary);
+
+  const fontColor = computed(() => (get(isDark) ? white : 'rgba(0,0,0,.8)'));
+  const gridColor = computed(() => (get(isDark) ? '#555' : '#ddd'));
 
   return {
-    getCanvasCtx,
-    baseColor,
-    gradient,
-    secondaryColor,
     backgroundColor,
+    baseColor,
     fontColor,
+    getCanvasCtx,
+    gradient,
     gridColor,
+    secondaryColor,
+    thirdColor,
   };
 }
 
@@ -62,14 +74,20 @@ export interface TooltipContent {
   readonly currentBalance?: boolean;
 }
 
-export function useTooltip(id: string) {
+interface UseTooltipReturn {
+  tooltipDisplayOption: Ref<TooltipDisplayOption>;
+  tooltipContent: Ref<TooltipContent>;
+  calculateTooltipPosition: (element: HTMLElement, tooltipModel: TooltipModel<'line'>) => Partial<TooltipDisplayOption>;
+}
+
+export function useTooltip(id: string): UseTooltipReturn {
   const getDefaultTooltipDisplayOption = (): TooltipDisplayOption => ({
-    visible: false,
+    id,
     left: 0,
     top: 0,
+    visible: false,
     xAlign: 'left',
     yAlign: 'center',
-    id,
   });
 
   const getDefaultTooltipContent = (): TooltipContent => ({
@@ -77,9 +95,7 @@ export function useTooltip(id: string) {
     value: bigNumberify(0),
   });
 
-  const tooltipDisplayOption = ref<TooltipDisplayOption>(
-    getDefaultTooltipDisplayOption(),
-  );
+  const tooltipDisplayOption = ref<TooltipDisplayOption>(getDefaultTooltipDisplayOption());
   const tooltipContent = ref<TooltipContent>(getDefaultTooltipContent());
 
   const calculateTooltipPosition = (
@@ -103,17 +119,17 @@ export function useTooltip(id: string) {
       y += tooltipModel.height - elemHeight;
 
     return {
-      xAlign,
-      yAlign,
       left: x,
       top: y,
       visible: true,
+      xAlign,
+      yAlign,
     };
   };
 
   return {
-    tooltipDisplayOption,
-    tooltipContent,
     calculateTooltipPosition,
+    tooltipContent,
+    tooltipDisplayOption,
   };
 }

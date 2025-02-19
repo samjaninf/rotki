@@ -1,8 +1,5 @@
 <script setup lang="ts">
-import {
-  PrioritizedListData,
-  type PrioritizedListItemData,
-} from '@/types/settings/prioritized-list-data';
+import { PrioritizedListData, type PrioritizedListItemData } from '@/types/settings/prioritized-list-data';
 import {
   BLOCKCHAIN_ACCOUNT_PRIO_LIST_ITEM,
   ENS_NAMES_PRIO_LIST_ITEM,
@@ -12,6 +9,12 @@ import {
   PRIVATE_ADDRESSBOOK_PRIO_LIST_ITEM,
   type PrioritizedListId,
 } from '@/types/settings/prioritized-list-id';
+import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import ActionStatusIndicator from '@/components/error/ActionStatusIndicator.vue';
+import PrioritizedList from '@/components/helper/PrioritizedList.vue';
+import EnableEnsNamesSetting from '@/components/settings/frontend/EnableEnsNamesSetting.vue';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
 
 const currentAddressNamePriorities = ref<PrioritizedListId[]>([]);
 const { addressNamePriority } = storeToRefs(useGeneralSettingsStore());
@@ -35,35 +38,43 @@ function availableCurrentAddressNamePriorities(): PrioritizedListData<Prioritize
     HARDCODED_MAPPINGS_PRIO_LIST_ITEM,
     PRIVATE_ADDRESSBOOK_PRIO_LIST_ITEM,
   ];
-
   return new PrioritizedListData(itemData);
 }
 
 onMounted(() => {
   resetCurrentAddressNamePriorities();
 });
-const { t } = useI18n();
 </script>
 
 <template>
-  <div>
-    <div class="text-subtitle-1 mb-3">
-      {{ t('address_book.hint.priority.title') }}
-    </div>
-    <SettingsOption
-      #default="{ error, success, updateImmediate }"
-      setting="addressNamePriority"
-      @finished="finishEditing()"
+  <SettingsOption
+    #default="{ error, success, updateImmediate }"
+    setting="addressNamePriority"
+    @finished="finishEditing()"
+  >
+    <RuiCard
+      rounded="md"
+      no-padding
+      class="overflow-hidden h-auto"
     >
-      <PrioritizedList
-        :value="currentAddressNamePriorities"
-        :all-items="availableCurrentAddressNamePriorities()"
-        :item-data-name="t('address_name_priority_setting.data_name')"
-        :disable-add="true"
-        :disable-delete="true"
-        :status="{ error, success }"
-        @input="updateImmediate($event)"
-      />
-    </SettingsOption>
-  </div>
+      <div class="pl-8 pt-2 border-b border-default">
+        <EnableEnsNamesSetting />
+      </div>
+      <div class="flex flex-col gap-2">
+        <PrioritizedList
+          variant="flat"
+          :model-value="currentAddressNamePriorities"
+          :all-items="availableCurrentAddressNamePriorities()"
+          :disable-add="true"
+          :disable-delete="true"
+          @update:model-value="updateImmediate($event)"
+        />
+      </div>
+    </RuiCard>
+
+    <ActionStatusIndicator
+      class="mx-[1px] mt-4"
+      :status="{ error, success }"
+    />
+  </SettingsOption>
 </template>

@@ -24,8 +24,12 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChecksumEvmAddress, EVMTxHash, Timestamp
-from rotkehlchen.user_messages import MessagesAggregator
-from rotkehlchen.utils.misc import address_to_bytes32, hexstr_to_int, shift_num_right_by, ts_now
+from rotkehlchen.utils.misc import (
+    address_to_bytes32_hexstr,
+    hexstr_to_int,
+    shift_num_right_by,
+    ts_now,
+)
 
 from .cache import collateral_type_to_join_contract, collateral_type_to_underlying_asset
 from .constants import MAKERDAO_REQUERY_PERIOD, WAD
@@ -33,6 +37,7 @@ from .constants import MAKERDAO_REQUERY_PERIOD, WAD
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -143,7 +148,7 @@ class MakerdaoVaults(HasDSProxy):
             ethereum_inquirer: 'EthereumInquirer',
             database: 'DBHandler',
             premium: Premium | None,
-            msg_aggregator: MessagesAggregator,
+            msg_aggregator: 'MessagesAggregator',
     ) -> None:
 
         super().__init__(
@@ -181,8 +186,7 @@ class MakerdaoVaults(HasDSProxy):
 
         result = self.makerdao_jug.call(self.ethereum, 'ilks', arguments=[ilk])
         # result[0] is the duty variable of the ilks in the contract
-        stability_fee = FVal(result[0] / RAY) ** (YEAR_IN_SECONDS) - 1
-        return stability_fee
+        return FVal(result[0] / RAY) ** (YEAR_IN_SECONDS) - 1
 
     def _query_vault_data(
             self,
@@ -276,7 +280,7 @@ class MakerdaoVaults(HasDSProxy):
         argument_filters = {
             'sig': '0x76088703',  # frob
             'arg1': '0x' + vault.ilk.hex(),  # ilk
-            'arg2': address_to_bytes32(urn),  # urn
+            'arg2': address_to_bytes32_hexstr(urn),  # urn
             # arg3 can be urn for the 1st deposit, and proxy/owner for the next ones
             # so don't filter for it
         }
@@ -303,7 +307,7 @@ class MakerdaoVaults(HasDSProxy):
             # Vault the usr in the first deposit will be the old address. To
             # detect the first deposit in these cases we need to check for
             # arg1 being the urn so we skip: 'usr': proxy,
-            'arg1': address_to_bytes32(urn),
+            'arg1': address_to_bytes32_hexstr(urn),
         }
         try:
             events = self.ethereum.get_logs(
@@ -409,7 +413,7 @@ class MakerdaoVaults(HasDSProxy):
         # Get the dai generation events
         argument_filters = {
             'sig': '0xbb35783b',  # move
-            'arg1': address_to_bytes32(urn),
+            'arg1': address_to_bytes32_hexstr(urn),
             # For CDPs that were created by migrating from SAI the first DAI generation
             # during vault creation will have the old owner as arg2. So we can't
             # filter for it here. Still seems like the urn as arg1 is sufficient
@@ -445,7 +449,7 @@ class MakerdaoVaults(HasDSProxy):
         argument_filters = {
             'sig': '0x3b4da69f',  # join
             'usr': proxy,
-            'arg1': address_to_bytes32(urn),
+            'arg1': address_to_bytes32_hexstr(urn),
         }
         events = self.makerdao_dai_join.get_logs_since_deployment(
             node_inquirer=self.ethereum,

@@ -46,7 +46,7 @@ def test_get_transaction_receipt(
     eth_transactions.query_chain(filter_query)
     dbevmtx = DBEvmTx(database)
     with database.conn.read_ctx() as cursor:
-        results, _ = dbevmtx.get_evm_transactions_and_limit_info(
+        results = dbevmtx.get_evm_transactions(
             cursor=cursor,
             filter_=filter_query,
             has_premium=True,
@@ -55,7 +55,7 @@ def test_get_transaction_receipt(
     assert results[0] == transactions[0]
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE,)])
 @pytest.mark.parametrize('ethereum_accounts', [[ETH_ADDRESS1, ETH_ADDRESS2, ETH_ADDRESS3]])
 def test_get_or_create_transaction(ethereum_accounts, eth_transactions, database):

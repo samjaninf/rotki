@@ -1,53 +1,37 @@
-import {
-  AssetEntry,
-  type Balance,
-  type BigNumber,
-  NumericString,
-} from '@rotki/common';
-import { forEach } from 'lodash-es';
+import { AssetEntry, type Balance, type BigNumber, NumericString } from '@rotki/common';
+import { forEach } from 'es-toolkit/compat';
 import { z } from 'zod';
-import {
-  type PriceOracle,
-  PriceOracleEnum,
-} from '@/types/settings/price-oracle';
+import { type PriceOracle, PriceOracleEnum } from '@/types/settings/price-oracle';
 
-export const AssetPriceInput = z.tuple([
-  NumericString,
-  z.number(),
-  z.boolean(),
-]);
+export const AssetPriceInput = z.tuple([NumericString, z.number()]);
 
 export const AssetPrice = z.object({
-  value: NumericString,
-  usdPrice: NumericString.nullish(),
   isManualPrice: z.boolean(),
-  isCurrentCurrency: z.boolean(),
+  usdPrice: NumericString.nullish(),
+  value: NumericString,
 });
 
 export const AssetPrices = z.record(AssetPrice);
 
 export type AssetPrices = z.infer<typeof AssetPrices>;
 
-export const AssetPriceResponse = z
-  .object({
-    assets: z.record(AssetPriceInput),
-    targetAsset: z.string(),
-    oracles: z.record(PriceOracleEnum, z.number()),
-  })
-  .transform((response) => {
-    const mappedAssets: AssetPrices = {};
-    const assets = response.assets;
-    forEach(assets, (val, asset) => {
-      const [value, oracle, isCurrentCurrency] = val;
-      mappedAssets[asset] = {
-        value,
-        isManualPrice: oracle === response.oracles.manualcurrent,
-        isCurrentCurrency,
-      };
-    });
-
-    return mappedAssets;
+export const AssetPriceResponse = z.object({
+  assets: z.record(AssetPriceInput),
+  oracles: z.record(PriceOracleEnum, z.number()),
+  targetAsset: z.string(),
+}).transform((response) => {
+  const mappedAssets: AssetPrices = {};
+  const assets = response.assets;
+  forEach(assets, (val, asset) => {
+    const [value, oracle] = val;
+    mappedAssets[asset] = {
+      isManualPrice: oracle === response.oracles.manualcurrent,
+      value,
+    };
   });
+
+  return mappedAssets;
+});
 
 export type AssetPriceResponse = z.infer<typeof AssetPriceResponse>;
 
@@ -85,6 +69,7 @@ export interface HistoricPricePayload extends AssetPair {
 export interface HistoricPricesPayload {
   readonly assetsTimestamp: string[][];
   readonly targetAsset: string;
+  readonly onlyCachePeriod?: number;
 }
 
 export interface AssetPriceInfo extends Balance {
@@ -96,6 +81,11 @@ export const ManualPrice = AssetPair.extend({
 });
 
 export type ManualPrice = z.infer<typeof ManualPrice>;
+
+export type ManualPriceWithUsd = ManualPrice & {
+  id: number;
+  usdPrice: BigNumber;
+};
 
 export const ManualPrices = z.array(ManualPrice);
 
@@ -121,17 +111,13 @@ export const HistoricalPriceFormPayload = ManualPriceFormPayload.extend({
   timestamp: z.number(),
 });
 
-export type HistoricalPriceFormPayload = z.infer<
-  typeof HistoricalPriceFormPayload
->;
+export type HistoricalPriceFormPayload = z.infer<typeof HistoricalPriceFormPayload>;
 
 export const HistoricalPriceDeletePayload = AssetPair.extend({
   timestamp: z.number(),
 });
 
-export type HistoricalPriceDeletePayload = z.infer<
-  typeof HistoricalPriceDeletePayload
->;
+export type HistoricalPriceDeletePayload = z.infer<typeof HistoricalPriceDeletePayload>;
 
 export interface ManualPricePayload {
   readonly fromAsset: string | null;
@@ -139,10 +125,10 @@ export interface ManualPricePayload {
 }
 
 export const PriceInformation = z.object({
-  usdPrice: NumericString,
   manuallyInput: z.boolean(),
   priceAsset: z.string().min(1),
   priceInAsset: NumericString,
+  usdPrice: NumericString,
 });
 
 export type PriceInformation = z.infer<typeof PriceInformation>;

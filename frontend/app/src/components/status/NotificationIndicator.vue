@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+
 defineProps<{
   visible: boolean;
 }>();
@@ -18,7 +22,7 @@ const { t } = useI18n();
 <template>
   <RuiBadge
     :text="count.toString()"
-    :value="count > 0"
+    :model-value="count > 0"
     color="primary"
     placement="top"
     offset-y="14"
@@ -33,7 +37,7 @@ const { t } = useI18n();
         :class="{
           [$style.visible]: visible,
         }"
-        name="notification-3-line"
+        name="lu-bell"
       />
       <div
         v-else

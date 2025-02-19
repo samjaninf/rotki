@@ -11,7 +11,7 @@ import utc from 'dayjs/plugin/utc';
 import { DateFormat } from '@/types/date-format';
 import { timezones } from '@/data/timezones';
 
-export function guessTimezone() {
+export function guessTimezone(): string {
   const guessedTimezone = dayjs.tz.guess();
   const offset = dayjs().utcOffset();
   const timezone = timezones.find(tz => tz === guessedTimezone);
@@ -23,8 +23,8 @@ export function guessTimezone() {
 
 export function getDateInputISOFormat(format: DateFormat): string {
   return {
-    [DateFormat.DateMonthYearHourMinuteSecondTimezone]: 'DD/MM/YYYY',
     [DateFormat.DateMonthYearHourMinuteSecond]: 'DD/MM/YYYY',
+    [DateFormat.DateMonthYearHourMinuteSecondTimezone]: 'DD/MM/YYYY',
     [DateFormat.MonthDateYearHourMinuteSecond]: 'MM/DD/YYYY',
     [DateFormat.YearMonthDateHourMinuteSecond]: 'YYYY/MM/DD',
   }[format];
@@ -142,6 +142,16 @@ export function isValidDate(date: string, dateFormat: string): boolean {
     return false;
 
   return dayjs(date, dateFormat, true).isValid();
+}
+
+export function getDayNames(locale = 'en'): string[] {
+  const format = new Intl.DateTimeFormat(locale, { timeZone: 'UTC', weekday: 'short' });
+  const days = [];
+  for (let day = 1; day <= 7; day++) {
+    const date = new Date(Date.UTC(2022, 0, day + 2)); // +2 because 2022-01-02 is a Sunday
+    days.push(format.format(date));
+  }
+  return days;
 }
 
 export function setupDayjs(): void {

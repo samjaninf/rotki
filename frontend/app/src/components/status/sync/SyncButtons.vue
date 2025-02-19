@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import {
-  SYNC_DOWNLOAD,
-  SYNC_UPLOAD,
-  type SyncAction,
-} from '@/types/session/sync';
+import { SYNC_DOWNLOAD, SYNC_UPLOAD, type SyncAction } from '@/types/session/sync';
+import { useSync } from '@/composables/session/sync';
+import { usePremium } from '@/composables/premium';
 
 defineProps<{ pending: boolean }>();
 
@@ -13,7 +11,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const { premium } = storeToRefs(usePremiumStore());
+const premium = usePremium();
 const UPLOAD: SyncAction = SYNC_UPLOAD;
 const DOWNLOAD: SyncAction = SYNC_DOWNLOAD;
 
@@ -39,7 +37,7 @@ const { uploadStatus } = useSync();
           @click="action(UPLOAD)"
         >
           <template #prepend>
-            <RuiIcon name="upload-cloud-line" />
+            <RuiIcon name="lu-cloud-upload-fill" />
           </template>
           {{ t('common.actions.push') }}
         </RuiButton>
@@ -60,7 +58,7 @@ const { uploadStatus } = useSync();
           @click="action(DOWNLOAD)"
         >
           <template #prepend>
-            <RuiIcon name="download-cloud-line" />
+            <RuiIcon name="lu-cloud-download-fill" />
           </template>
           {{ t('common.actions.pull') }}
         </RuiButton>

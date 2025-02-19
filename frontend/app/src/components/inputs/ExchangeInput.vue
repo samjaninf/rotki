@@ -1,40 +1,32 @@
 <script lang="ts" setup>
-const props = withDefaults(
-  defineProps<{
-    value?: string | null;
-    dense?: boolean;
-    showWithKeyOnly?: boolean;
-  }>(),
-  {
-    value: null,
-    showWithKeyOnly: false,
-  },
-);
+import { useLocationStore } from '@/store/locations';
+import ExchangeDisplay from '@/components/display/ExchangeDisplay.vue';
 
-const emit = defineEmits<{
-  (e: 'input', value: string): void;
-}>();
+defineOptions({
+  inheritAttrs: false,
+});
 
-const vModel = useSimpleVModel(props, emit);
+const model = defineModel<string | undefined>({ required: true });
+
+withDefaults(defineProps<{
+  dense?: boolean;
+  showWithKeyOnly?: boolean;
+}>(), {
+  showWithKeyOnly: false,
+});
 
 const { allExchanges, exchangesWithKey } = storeToRefs(useLocationStore());
-
-const rootAttrs = useAttrs();
 </script>
 
 <template>
   <RuiAutoComplete
-    v-model="vModel"
+    v-model="model"
     variant="outlined"
-    v-bind="rootAttrs"
+    v-bind="$attrs"
     :options="showWithKeyOnly ? exchangesWithKey : allExchanges"
     :dense="dense"
     :item-height="52"
     auto-select-first
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
   >
     <template #selection="{ item }">
       <ExchangeDisplay

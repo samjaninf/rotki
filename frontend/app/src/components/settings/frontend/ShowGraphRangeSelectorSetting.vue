@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const showGraphRangeSelector = ref<boolean>(true);
-const { showGraphRangeSelector: enabled } = storeToRefs(
-  useFrontendSettingsStore(),
-);
+const { showGraphRangeSelector: enabled } = storeToRefs(useFrontendSettingsStore());
 
 onMounted(() => {
   set(showGraphRangeSelector, get(enabled));
@@ -19,12 +20,11 @@ const { t } = useI18n();
   >
     <RuiSwitch
       v-model="showGraphRangeSelector"
-      class="general-settings__fields__zero-base mb-4 mt-2"
-      :label="t('frontend_settings.label.show_graph_range_selector')"
+      :label="t('frontend_settings.graph_basis.range_selector.label')"
       :success-messages="success"
       :error-messages="error"
       color="primary"
-      @input="update($event)"
+      @update:model-value="update($event)"
     />
   </SettingsOption>
 </template>

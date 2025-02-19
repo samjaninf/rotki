@@ -1,18 +1,24 @@
 <script setup lang="ts">
+import { useAreaVisibilityStore } from '@/store/session/visibility';
+import { useDarkMode } from '@/composables/dark-mode';
+import { useInterop } from '@/composables/electron-interop';
+import AppHost from '@/components/app/AppHost.vue';
+import FrontendUpdateNotifier from '@/components/status/FrontendUpdateNotifier.vue';
+import AppMessages from '@/components/app/AppMessages.vue';
+import About from '@/components/About.vue';
+
 const { showAbout } = storeToRefs(useAreaVisibilityStore());
 const { isPackaged } = useInterop();
 const { updateDarkMode } = useDarkMode();
 updateDarkMode(false);
-
-const css = useCssModule();
 </script>
 
 <template>
   <AppHost>
     <FrontendUpdateNotifier v-if="!isPackaged" />
     <AppMessages>
-      <div :class="css.overlay">
-        <div :class="css.overlay__scroll">
+      <div :class="$style.overlay">
+        <div :class="$style.overlay__scroll">
           <RouterView />
         </div>
       </div>

@@ -1,80 +1,21 @@
-import useVuelidate, { type GlobalConfig, type Validation, type ValidationArgs,
-} from '@vuelidate/core';
 import type { MaybeRef } from '@vueuse/core';
+import type { ModelRef } from 'vue';
 
-/**
- * Create a common composable for form
- * @template T - T is type of data that return from the submit function.
- */
-export function useForm<T = void>() {
-  const openDialog: Ref<boolean> = ref(false);
-  const valid: Ref<boolean> = ref(true);
-  let v$: Ref<Validation> | undefined;
-  const submitFunc: Ref<() => Promise<T> | void> = ref(() => {});
-  const postSubmitFunc: Ref<(result: T | void) => void> = ref(() => {});
-  const submitting: Ref<boolean> = ref(false);
+export function useFormStateWatcher(
+  states: Record<string, MaybeRef<any>>,
+  stateUpdated: ModelRef<boolean>,
+): void {
+  setTimeout(() => {
+    watch(
+      () => states,
+      () => {
+        set(stateUpdated, true);
+      },
+      { deep: true, once: true },
+    );
+  }, 500);
 
-  const setValidation = (
-    validationsArgs: ValidationArgs,
-    states: Record<string, MaybeRef<any>>,
-    config?: GlobalConfig,
-  ): Ref<Validation> => {
-    v$ = useVuelidate(validationsArgs, states, config);
-
-    watch(v$, ({ $invalid, $dirty }) => {
-      if ($dirty)
-        set(valid, !$invalid);
-    });
-
-    return v$;
-  };
-
-  const setSubmitFunc = (func: () => Promise<T> | void) => {
-    set(submitFunc, func);
-  };
-
-  const setPostSubmitFunc = (func: (result: T) => void) => {
-    set(postSubmitFunc, func);
-  };
-
-  const setOpenDialog = (dialog: boolean) => {
-    set(openDialog, dialog);
-  };
-
-  const closeDialog = () => {
-    setOpenDialog(false);
-    set(valid, true);
-  };
-
-  const trySubmit = async (): Promise<T | void> => {
-    set(submitting, true);
-    try {
-      const result = await checkBeforeSubmission<T>(get(submitFunc), v$, valid);
-
-      if (result) {
-        closeDialog();
-        get(postSubmitFunc)(result);
-      }
-      return result;
-    }
-    catch (error: any) {
-      logger.log(error);
-    }
-    finally {
-      set(submitting, false);
-    }
-  };
-
-  return {
-    submitting,
-    openDialog,
-    valid,
-    v$,
-    setOpenDialog,
-    closeDialog,
-    setSubmitFunc,
-    setPostSubmitFunc,
-    setValidation,
-    trySubmit,
-  };
+  onUnmounted(() => {
+    set(stateUpdated, false);
+  });
 }

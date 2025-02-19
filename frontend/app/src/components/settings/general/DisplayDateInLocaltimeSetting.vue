@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import SettingsOption from '@/components/settings/controls/SettingsOption.vue';
+
 const displayDateInLocaltime = ref<boolean>(true);
-const { displayDateInLocaltime: enabled } = storeToRefs(
-  useGeneralSettingsStore(),
-);
+const { displayDateInLocaltime: enabled } = storeToRefs(useGeneralSettingsStore());
 
 onMounted(() => {
   set(displayDateInLocaltime, get(enabled));
@@ -13,20 +14,17 @@ const { t } = useI18n();
 
 <template>
   <SettingsOption
-    #default="{ error, success, update }"
+    #default="{ error, success, updateImmediate }"
     setting="displayDateInLocaltime"
-    :error-message="
-      t('general_settings.validation.display_date_in_localtime.error')
-    "
+    :error-message="t('general_settings.display_date_in_localtime.validation.error')"
   >
     <RuiSwitch
       v-model="displayDateInLocaltime"
-      class="general-settings__fields__display-date-in-localtime"
       color="primary"
-      :label="t('general_settings.labels.display_date_in_localtime')"
+      :label="t('general_settings.display_date_in_localtime.label')"
       :success-messages="success"
       :error-messages="error"
-      @input="update($event)"
+      @update:model-value="updateImmediate($event)"
     />
   </SettingsOption>
 </template>

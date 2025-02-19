@@ -1,12 +1,18 @@
-import {
-  type YearnVaultAsset,
-  type YearnVaultBalance,
-  YearnVaultsBalances,
-} from '@/types/defi/yearn';
+import { type YearnVaultAsset, type YearnVaultBalance, YearnVaultsBalances } from '@/types/defi/yearn';
 import { Module } from '@/types/modules';
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
 import { ProtocolVersion } from '@/types/defi';
+import { isTaskCancelled } from '@/utils';
+import { getProtocolAddresses } from '@/utils/addresses';
+import { balanceSum } from '@/utils/calculation';
+import { zeroBalance } from '@/utils/bignumbers';
+import { useTaskStore } from '@/store/tasks';
+import { useNotificationsStore } from '@/store/notifications';
+import { useYearnApi } from '@/composables/api/defi/yearn';
+import { useStatusUpdater } from '@/composables/status';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useModules } from '@/composables/session/modules';
 import type { TaskMeta } from '@/types/task';
 
 export const useYearnStore = defineStore('defi/yearn', () => {
@@ -20,15 +26,13 @@ export const useYearnStore = defineStore('defi/yearn', () => {
   const { t } = useI18n();
   const { fetchYearnVaultsBalances } = useYearnApi();
 
-  const { setStatus, fetchDisabled } = useStatusUpdater(Section.DEFI_YEARN_VAULTS_BALANCES);
+  const { fetchDisabled, setStatus } = useStatusUpdater(Section.DEFI_YEARN_VAULTS_BALANCES);
 
   const yearnVaultsAssets = (
     addresses: string[],
     version: ProtocolVersion = ProtocolVersion.V1,
-  ) => computed<YearnVaultAsset[]>(() => {
-    const vaultBalances = get(
-      version === ProtocolVersion.V1 ? vaultsBalances : vaultsV2Balances,
-    );
+  ): ComputedRef<YearnVaultAsset[]> => computed<YearnVaultAsset[]>(() => {
+    const vaultBalances = get(version === ProtocolVersion.V1 ? vaultsBalances : vaultsV2Balances);
     const balances: Record<string, YearnVaultBalance[]> = {};
     const allAddresses = addresses.length === 0;
     for (const address in vaultBalances) {
@@ -50,37 +54,33 @@ export const useYearnStore = defineStore('defi/yearn', () => {
 
         if (!balances[vaultName])
           balances[vaultName] = [balance];
-        else
-          balances[vaultName].push(balance);
+        else balances[vaultName].push(balance);
       }
     }
 
     const vaultAssets: YearnVaultAsset[] = [];
     for (const key in balances) {
       const allBalances = balances[key];
-      const { underlyingToken, vaultToken, roi } = allBalances[0];
+      const { roi, underlyingToken, vaultToken } = allBalances[0];
 
       const underlyingValue = zeroBalance();
       const vaultValue = zeroBalance();
       const values = { underlyingValue, vaultValue };
       const summary = allBalances.reduce(
         (sum, current) => ({
+          underlyingValue: balanceSum(sum.underlyingValue, current.underlyingValue),
           vaultValue: balanceSum(sum.vaultValue, current.vaultValue),
-          underlyingValue: balanceSum(
-            sum.underlyingValue,
-            current.underlyingValue,
-          ),
         }),
         values,
       );
       vaultAssets.push({
-        vault: key,
-        version,
+        roi,
         underlyingToken,
         underlyingValue: summary.underlyingValue,
+        vault: key,
         vaultToken,
         vaultValue: summary.vaultValue,
-        roi,
+        version,
       });
     }
     return vaultAssets;
@@ -102,9 +102,7 @@ export const useYearnStore = defineStore('defi/yearn', () => {
     if (!isModuleActive)
       return;
 
-    const section = isV1
-      ? Section.DEFI_YEARN_VAULTS_BALANCES
-      : Section.DEFI_YEARN_VAULTS_V2_BALANCES;
+    const section = isV1 ? Section.DEFI_YEARN_VAULTS_BALANCES : Section.DEFI_YEARN_VAULTS_V2_BALANCES;
 
     if (fetchDisabled(refresh, { section }))
       return;
@@ -112,37 +110,30 @@ export const useYearnStore = defineStore('defi/yearn', () => {
     const newStatus = refresh ? Status.REFRESHING : Status.LOADING;
     setStatus(newStatus, { section });
     try {
-      const taskType = isV1
-        ? TaskType.DEFI_YEARN_VAULT_BALANCES
-        : TaskType.DEFI_YEARN_VAULT_V2_BALANCES;
+      const taskType = isV1 ? TaskType.DEFI_YEARN_VAULT_BALANCES : TaskType.DEFI_YEARN_VAULT_V2_BALANCES;
       const { taskId } = await fetchYearnVaultsBalances(version);
-      const { result } = await awaitTask<YearnVaultsBalances, TaskMeta>(
-        taskId,
-        taskType,
-        {
-          title: t('actions.defi.yearn_vaults.task.title', {
-            version,
-          }),
-        },
-      );
+      const { result } = await awaitTask<YearnVaultsBalances, TaskMeta>(taskId, taskType, {
+        title: t('actions.defi.yearn_vaults.task.title', {
+          version,
+        }),
+      });
 
       const balances = YearnVaultsBalances.parse(result);
       if (isV1)
         set(vaultsBalances, balances);
-      else
-        set(vaultsV2Balances, balances);
+      else set(vaultsV2Balances, balances);
     }
     catch (error: any) {
       if (!isTaskCancelled(error)) {
         notify({
-          title: t('actions.defi.yearn_vaults.error.title', {
-            version,
-          }),
+          display: true,
           message: t('actions.defi.yearn_vaults.error.description', {
             error: error.message,
             version,
           }),
-          display: true,
+          title: t('actions.defi.yearn_vaults.error.title', {
+            version,
+          }),
         });
       }
     }
@@ -164,22 +155,18 @@ export const useYearnStore = defineStore('defi/yearn', () => {
     }
   };
 
-  const addressesV1 = computed<string[]>(() =>
-    getProtocolAddresses(get(vaultsBalances), []),
-  );
+  const addressesV1 = computed<string[]>(() => getProtocolAddresses(get(vaultsBalances), []));
 
-  const addressesV2 = computed<string[]>(() =>
-    getProtocolAddresses(get(vaultsV2Balances), []),
-  );
+  const addressesV2 = computed<string[]>(() => getProtocolAddresses(get(vaultsV2Balances), []));
 
   return {
-    vaultsBalances,
-    vaultsV2Balances,
     addressesV1,
     addressesV2,
-    yearnVaultsAssets,
     fetchBalances,
     reset,
+    vaultsBalances,
+    vaultsV2Balances,
+    yearnVaultsAssets,
   };
 });
 

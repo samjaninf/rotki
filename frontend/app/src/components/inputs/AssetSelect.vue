@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { CanceledError } from 'axios';
-import { getValidSelectorFromEvmAddress } from '@/utils/assets';
+import { uniqueObjects } from '@/utils/data';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { useAssetInfoApi } from '@/composables/api/assets/info';
+import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
+import NftDetails from '@/components/helper/NftDetails.vue';
 import type { AssetInfoWithId } from '@/types/asset';
 import type { NftAsset } from '@/types/nfts';
+
+defineOptions({
+  inheritAttrs: false,
+});
+
+const modelValue = defineModel<string | undefined>({ required: true });
 
 const props = withDefaults(
   defineProps<{
@@ -12,11 +22,9 @@ const props = withDefaults(
     successMessages?: string;
     errorMessages?: string[];
     label?: string;
-    value?: string;
     disabled?: boolean;
     outlined?: boolean;
     clearable?: boolean;
-    persistentHint?: boolean;
     required?: boolean;
     showIgnored?: boolean;
     hideDetails?: boolean;
@@ -24,38 +32,35 @@ const props = withDefaults(
     asset?: AssetInfoWithId | NftAsset;
   }>(),
   {
-    items: () => [],
-    excludes: () => [],
-    hint: '',
-    successMessages: '',
-    errorMessages: () => [],
-    label: 'Asset',
-    value: '',
-    disabled: false,
-    outlined: false,
+    asset: undefined,
     clearable: false,
-    persistentHint: false,
+    disabled: false,
+    errorMessages: () => [],
+    excludes: () => [],
+    hideDetails: false,
+    hint: '',
+    includeNfts: false,
+    items: () => [],
+    label: 'Asset',
+    outlined: false,
     required: false,
     showIgnored: false,
-    hideDetails: false,
-    includeNfts: false,
-    asset: undefined,
+    successMessages: '',
   },
 );
 
-const emit = defineEmits<{ (e: 'input', value: string): void; (e: 'update:asset', value?: AssetInfoWithId | NftAsset): void }>();
+const emit = defineEmits<{ (e: 'update:asset', value?: AssetInfoWithId | NftAsset): void }>();
 
-const { items, showIgnored, excludes, errorMessages, value, includeNfts }
-  = toRefs(props);
+const { errorMessages, excludes, includeNfts, items, showIgnored } = toRefs(props);
 const { isAssetIgnored } = useIgnoredAssetsStore();
 
 const search = ref<string>('');
-const assets: Ref<(AssetInfoWithId | NftAsset)[]> = ref([]);
+const assets = ref<(AssetInfoWithId | NftAsset)[]>([]);
 const error = ref('');
 const loading = ref(false);
 let pending: AbortController | null = null;
 
-const { assetSearch, assetMapping } = useAssetInfoApi();
+const { assetMapping, assetSearch } = useAssetInfoApi();
 const { t } = useI18n();
 
 const errors = computed(() => {
@@ -76,10 +81,7 @@ const visibleAssets = computed<AssetInfoWithId[]>(() => {
   const filtered = knownAssets.filter(({ identifier }: AssetInfoWithId) => {
     const unIgnored = includeIgnored || !get(isAssetIgnored(identifier));
 
-    const included
-      = itemsVal && itemsVal.length > 0
-        ? itemsVal.includes(identifier)
-        : true;
+    const included = itemsVal && itemsVal.length > 0 ? itemsVal.includes(identifier) : true;
 
     const excluded
       = excludesVal && excludesVal.length > 0
@@ -92,16 +94,19 @@ const visibleAssets = computed<AssetInfoWithId[]>(() => {
   return uniqueObjects<AssetInfoWithId>(filtered, item => item.identifier);
 });
 
-function blur() {
-  useTimeoutFn(() => {
-    set(search, '');
-  }, 200);
-}
-
 async function searchAssets(keyword: string, signal: AbortSignal): Promise<void> {
   set(loading, true);
   try {
-    set(assets, await assetSearch(keyword, 50, get(includeNfts), signal));
+    const fetchedAssets = await assetSearch({
+      limit: 50,
+      searchNfts: get(includeNfts),
+      signal,
+      value: keyword,
+    });
+    if (get(modelValue))
+      await retainSelectedValueInOptions(fetchedAssets);
+    else set(assets, fetchedAssets);
+
     pending = null;
     set(loading, false);
   }
@@ -117,8 +122,8 @@ function getVisibleAsset(identifier: string) {
   return get(visibleAssets)?.find(asset => asset.identifier === identifier);
 }
 
-function input(value: string) {
-  emit('input', value || '');
+function onUpdateModelValue(value: string) {
+  set(modelValue, value);
   emit('update:asset', getVisibleAsset(value));
 }
 
@@ -148,15 +153,13 @@ watchDebounced(
   },
 );
 
-async function checkValue() {
-  const val = get(value);
-  if (!val)
-    return;
-
+async function retainSelectedValueInOptions(newAssets: (AssetInfoWithId | NftAsset)[]) {
   try {
+    const val = get(modelValue);
+    assert(val);
     const mapping = await assetMapping([val]);
     set(assets, [
-      ...get(assets),
+      ...newAssets,
       {
         identifier: val,
         ...mapping.assets[transformCase(val, true)],
@@ -169,27 +172,36 @@ async function checkValue() {
   }
 }
 
+async function checkValue() {
+  if (!get(modelValue))
+    return;
+
+  await retainSelectedValueInOptions(get(assets));
+}
+
 onMounted(async () => {
   await checkValue();
 });
 
-watch(value, async () => {
+watch(modelValue, async () => {
   await checkValue();
 });
 
 watch(visibleAssets, () => {
-  const identifier = get(value);
+  const identifier = get(modelValue);
   if (identifier && !getVisibleAsset(identifier))
-    input('');
+    onUpdateModelValue('');
 });
 </script>
 
 <template>
   <RuiAutoComplete
-    :value="value"
+    v-model="modelValue"
+    v-model:search-input="search"
     :disabled="disabled"
     :options="visibleAssets"
     class="asset-select w-full [&_.group]:py-1.5"
+    menu-class="!min-w-full"
     :hint="hint"
     :label="label"
     :clearable="clearable"
@@ -198,20 +210,14 @@ watch(visibleAssets, () => {
     :error-messages="errors"
     key-attr="identifier"
     text-attr="identifier"
-    :search-input.sync="search"
     :hide-details="hideDetails"
     :hide-no-data="loading || !search || !!error"
     auto-select-first
     :loading="loading"
     :variant="outlined ? 'outlined' : 'default'"
-    :item-height="60"
+    :item-height="50"
+    v-bind="$attrs"
     no-filter
-    v-on="
-      // eslint-disable-next-line vue/no-deprecated-dollar-listeners-api
-      $listeners
-    "
-    @input="input($event)"
-    @blur="blur()"
   >
     <template #selection="{ item }">
       <template v-if="item && item.identifier">
@@ -223,7 +229,7 @@ watch(visibleAssets, () => {
         />
         <AssetDetailsBase
           v-else
-          class="py-0"
+          class="py-0 pl-1"
           :asset="item"
         />
       </template>
@@ -237,9 +243,7 @@ watch(visibleAssets, () => {
       />
       <AssetDetailsBase
         v-else
-        :id="`asset-${getValidSelectorFromEvmAddress(
-          item.identifier.toLocaleLowerCase(),
-        )}`"
+        :id="`asset-${getValidSelectorFromEvmAddress(item.identifier.toLocaleLowerCase())}`"
         class="py-0 -my-1"
         :asset="item"
       />
@@ -252,7 +256,7 @@ watch(visibleAssets, () => {
         {{ t('asset_select.no_results') }}
       </div>
     </template>
-    <template #prepend>
+    <template #selection.prepend>
       <slot name="prepend" />
     </template>
   </RuiAutoComplete>

@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { isEqual, keyBy } from 'lodash-es';
-import type { SupportedAsset } from '@rotki/common/lib/data';
-import type { Collection } from '@/types/collection';
-import type { Nullable } from '@/types';
-import type {
-  AssetRequestPayload,
-  IgnoredAssetsHandlingType,
-} from '@/types/asset';
-import type { Filters, Matcher } from '@/composables/filters/assets';
+import { isEqual, keyBy } from 'es-toolkit';
+import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { useConfirmStore } from '@/store/confirm';
+import { useMessageStore } from '@/store/message';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useAssetManagementApi } from '@/composables/api/assets/management';
+import { useCommonTableProps } from '@/composables/use-common-table-props';
+import { type Filters, type Matcher, useAssetFilter } from '@/composables/filters/assets';
+import ManagedAssetFormDialog from '@/components/asset-manager/managed/ManagedAssetFormDialog.vue';
+import ManagedAssetTable from '@/components/asset-manager/managed/ManagedAssetTable.vue';
+import MergeDialog from '@/components/asset-manager/MergeDialog.vue';
+import RestoreAssetDbButton from '@/components/asset-manager/RestoreAssetDbButton.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import { type AssetRequestPayload, EVM_TOKEN, type IgnoredAssetsHandlingType } from '@/types/asset';
+import type { Nullable, SupportedAsset } from '@rotki/common';
 
 const props = withDefaults(
   defineProps<{
@@ -27,14 +34,18 @@ const ignoredFilter = ref<{
   onlyShowWhitelisted: boolean;
   ignoredAssetsHandling: IgnoredAssetsHandlingType;
 }>({
+  ignoredAssetsHandling: 'exclude',
   onlyShowOwned: false,
   onlyShowWhitelisted: false,
-  ignoredAssetsHandling: 'exclude',
 });
 
+const modelValue = ref<SupportedAsset>();
+const editMode = ref<boolean>(false);
+
+const { expanded, selected } = useCommonTableProps<SupportedAsset>();
+
 const extraParams = computed(() => {
-  const { ignoredAssetsHandling, onlyShowOwned, onlyShowWhitelisted }
-    = get(ignoredFilter);
+  const { ignoredAssetsHandling, onlyShowOwned, onlyShowWhitelisted } = get(ignoredFilter);
   return {
     ignoredAssetsHandling,
     showUserOwnedAssetsOnly: onlyShowOwned.toString(),
@@ -44,12 +55,10 @@ const extraParams = computed(() => {
 
 const router = useRouter();
 const route = useRoute();
-const { queryAllAssets, deleteAsset } = useAssetManagementApi();
+const { deleteAsset, queryAllAssets } = useAssetManagementApi();
 const { setMessage } = useMessageStore();
 const { show } = useConfirmStore();
 const { ignoredAssets } = storeToRefs(useIgnoredAssetsStore());
-
-const { setOpenDialog, setPostSubmitFunc } = useManagedAssetForm();
 
 const { deleteCacheKey } = useAssetCacheStore();
 
@@ -58,54 +67,55 @@ async function confirmDelete(toDeleteAsset: SupportedAsset) {
 }
 
 const {
-  filters,
-  matchers,
-  expanded,
-  selected,
-  state: assets,
-  isLoading: loading,
-  editableItem,
   fetchData,
-  setFilter,
+  filters,
+  isLoading: loading,
+  matchers,
+  pagination,
   setPage,
   sort,
-  pagination,
+  state: assets,
 } = usePaginationFilters<
   SupportedAsset,
   AssetRequestPayload,
-  SupportedAsset,
-  Collection<SupportedAsset>,
   Filters,
   Matcher
->(null, mainPage, useAssetFilter, queryAllAssets, {
-  onUpdateFilters(query) {
-    set(ignoredFilter, {
-      onlyShowOwned: query.showUserOwnedAssetsOnly === 'true',
-      onlyShowWhitelisted: query.showWhitelistedAssetsOnly === 'true',
-      ignoredAssetsHandling: query.ignoredAssetsHandling || 'exclude',
-    });
+>(queryAllAssets, {
+  defaultSortBy: {
+    column: 'symbol',
+    direction: 'asc',
   },
   extraParams,
-  defaultSortBy: {
-    key: 'symbol',
-    ascending: [true],
+  filterSchema: useAssetFilter,
+  history: get(mainPage) ? 'router' : false,
+  onUpdateFilters(query) {
+    set(ignoredFilter, {
+      ignoredAssetsHandling: query.ignoredAssetsHandling || 'exclude',
+      onlyShowOwned: query.showUserOwnedAssetsOnly === 'true',
+      onlyShowWhitelisted: query.showWhitelistedAssetsOnly === 'true',
+    });
   },
 });
 
-const dialogTitle = computed<string>(() =>
-  get(editableItem)
-    ? t('asset_management.edit_title')
-    : t('asset_management.add_title'),
-);
-
 function add() {
-  set(editableItem, null);
-  setOpenDialog(true);
+  set(modelValue, {
+    active: true,
+    address: '',
+    assetType: EVM_TOKEN,
+    customAssetType: '',
+    decimals: null,
+    ended: null,
+    forked: null,
+    identifier: '',
+    protocol: '',
+    underlyingTokens: null,
+  });
+  set(editMode, false);
 }
 
 function edit(editAsset: SupportedAsset) {
-  set(editableItem, editAsset);
-  setOpenDialog(true);
+  set(modelValue, editAsset);
+  set(editMode, true);
 }
 
 async function editAsset(assetId: Nullable<string>) {
@@ -140,9 +150,7 @@ async function deleteAssetHandler(identifier: string) {
   }
 }
 
-setPostSubmitFunc(fetchData);
-
-const assetsMap = computed(() => keyBy(get(assets).data, 'identifier'));
+const assetsMap = computed(() => keyBy(get(assets).data, item => item.identifier));
 
 const selectedRows = computed({
   get() {
@@ -159,10 +167,10 @@ const selectedRows = computed({
 function showDeleteConfirmation(item: SupportedAsset) {
   show(
     {
-      title: t('asset_management.confirm_delete.title'),
       message: t('asset_management.confirm_delete.message', {
         asset: item?.symbol ?? '',
       }),
+      title: t('asset_management.confirm_delete.title'),
     },
     async () => await confirmDelete(item),
   );
@@ -176,8 +184,7 @@ onMounted(async () => {
   if (idToEdit || query.add) {
     if (idToEdit)
       await editAsset(get(identifier));
-    else
-      add();
+    else add();
 
     await router.replace({ query: {} });
   }
@@ -194,12 +201,7 @@ watch(ignoredFilter, (oldValue, newValue) => {
 </script>
 
 <template>
-  <TablePageLayout
-    :title="[
-      t('navigation_menu.manage_assets'),
-      t('navigation_menu.manage_assets_sub.assets'),
-    ]"
-  >
+  <TablePageLayout :title="[t('navigation_menu.manage_assets'), t('navigation_menu.manage_assets_sub.assets')]">
     <template #buttons>
       <RuiButton
         color="primary"
@@ -208,7 +210,7 @@ watch(ignoredFilter, (oldValue, newValue) => {
         @click="fetchData()"
       >
         <template #prepend>
-          <RuiIcon name="refresh-line" />
+          <RuiIcon name="lu-refresh-ccw" />
         </template>
         {{ t('common.refresh') }}
       </RuiButton>
@@ -219,22 +221,20 @@ watch(ignoredFilter, (oldValue, newValue) => {
         @click="add()"
       >
         <template #prepend>
-          <RuiIcon name="add-line" />
+          <RuiIcon name="lu-plus" />
         </template>
         {{ t('managed_asset_content.add_asset') }}
       </RuiButton>
-      <RuiMenu
-        :popper="{ placement: 'bottom-end' }"
-      >
-        <template #activator="{ on }">
+      <RuiMenu :popper="{ placement: 'bottom-end' }">
+        <template #activator="{ attrs }">
           <RuiButton
             variant="text"
             icon
             size="sm"
             class="!p-2"
-            v-on="on"
+            v-bind="attrs"
           >
-            <RuiIcon name="more-2-fill" />
+            <RuiIcon name="lu-ellipsis-vertical" />
           </RuiButton>
         </template>
         <div class="py-2">
@@ -251,7 +251,7 @@ watch(ignoredFilter, (oldValue, newValue) => {
                 @click="mergeTool = true"
               >
                 <template #prepend>
-                  <RuiIcon name="git-merge-line" />
+                  <RuiIcon name="lu-combine" />
                 </template>
                 {{ t('asset_management.merge_assets') }}
               </RuiButton>
@@ -266,27 +266,27 @@ watch(ignoredFilter, (oldValue, newValue) => {
       <MergeDialog v-model="mergeTool" />
 
       <ManagedAssetTable
+        v-model:filters="filters"
+        v-model:ignored-filter="ignoredFilter"
+        v-model:expanded="expanded"
+        v-model:selected="selectedRows"
+        v-model:pagination="pagination"
+        v-model:sort="sort"
         :collection="assets"
         :loading="loading"
         :change="!loading"
-        :filters="filters"
         :matchers="matchers"
         :ignored-assets="ignoredAssets"
-        :ignored-filter.sync="ignoredFilter"
-        :expanded.sync="expanded"
-        :selected.sync="selectedRows"
-        :pagination.sync="pagination"
-        :sort.sync="sort"
         @refresh="fetchData()"
         @edit="edit($event)"
         @delete-asset="showDeleteConfirmation($event)"
-        @update:filters="setFilter($event)"
         @update:page="setPage($event)"
       />
 
       <ManagedAssetFormDialog
-        :title="dialogTitle"
-        :editable-item="editableItem"
+        v-model="modelValue"
+        :edit-mode="editMode"
+        @refresh="fetchData()"
       />
     </RuiCard>
   </TablePageLayout>

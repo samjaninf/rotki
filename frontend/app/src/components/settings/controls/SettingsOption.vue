@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { SettingLocation, useClearableMessages, useSettings } from '@/composables/settings';
+import SettingsItem from '@/components/settings/controls/SettingsItem.vue';
 import type { MaybeRef } from '@vueuse/core';
 import type { FrontendSettingsPayload } from '@/types/settings/frontend-settings';
 import type { SettingsUpdate } from '@/types/user';
@@ -8,10 +10,7 @@ type TransformMessageCallback<T = any> = (value: any) => T;
 
 const props = withDefaults(
   defineProps<{
-    setting:
-      | keyof SettingsUpdate
-      | keyof FrontendSettingsPayload
-      | keyof SessionSettings;
+    setting: keyof SettingsUpdate | keyof FrontendSettingsPayload | keyof SessionSettings;
     frontendSetting?: boolean;
     sessionSetting?: boolean;
     transform?: TransformMessageCallback | null;
@@ -19,26 +18,18 @@ const props = withDefaults(
     errorMessage?: string | TransformMessageCallback<string>;
   }>(),
   {
+    errorMessage: '',
     frontendSetting: false,
     sessionSetting: false,
-    transform: null,
     successMessage: '',
-    errorMessage: '',
+    transform: null,
   },
 );
 
 const emit = defineEmits(['updated', 'finished']);
 
-const {
-  setting,
-  frontendSetting,
-  sessionSetting,
-  successMessage,
-  errorMessage,
-  transform,
-} = toRefs(props);
-const { error, success, clearAll, wait, stop, setSuccess, setError }
-  = useClearableMessages();
+const { errorMessage, frontendSetting, sessionSetting, setting, successMessage, transform } = toRefs(props);
+const { clearAll, error, setError, setSuccess, stop, success, wait } = useClearableMessages();
 const { updateSetting } = useSettings();
 
 const loading = ref(false);
@@ -66,8 +57,8 @@ async function updateImmediate(newValue: any) {
       : SettingLocation.GENERAL;
 
   const result = await updateSetting(settingKey, settingValue, location, {
-    success: getMessage(successMessage, newValue),
     error: getMessage(errorMessage, newValue),
+    success: getMessage(successMessage, newValue),
   });
 
   set(loading, false);
@@ -75,10 +66,10 @@ async function updateImmediate(newValue: any) {
 
   if ('success' in result) {
     emit('updated');
-    setSuccess(result.success);
+    setSuccess(result.success, true);
   }
   else {
-    setError(result.error);
+    setError(result.error, true);
   }
   emit('finished');
 }
@@ -92,7 +83,19 @@ function update(newValue: any) {
 </script>
 
 <template>
-  <div>
+  <SettingsItem>
+    <template
+      v-if="$slots.title"
+      #title
+    >
+      <slot name="title" />
+    </template>
+    <template
+      v-if="$slots.subtitle"
+      #subtitle
+    >
+      <slot name="subtitle" />
+    </template>
     <slot
       :error="error"
       :success="success"
@@ -100,5 +103,5 @@ function update(newValue: any) {
       :update-immediate="updateImmediate"
       :loading="loading"
     />
-  </div>
+  </SettingsItem>
 </template>

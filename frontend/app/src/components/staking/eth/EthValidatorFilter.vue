@@ -1,27 +1,21 @@
 <script setup lang="ts">
-import type {
-  EthStakingCombinedFilter,
-  EthStakingFilter,
-  EthStakingFilterType,
-} from '@rotki/common/lib/staking/eth2';
+import EthValidatorCombinedFilter from '@/components/staking/eth/EthValidatorCombinedFilter.vue';
+import Eth2ValidatorFilter from '@/components/helper/filter/Eth2ValidatorFilter.vue';
+import type { EthStakingCombinedFilter, EthStakingFilter, EthStakingFilterType } from '@rotki/common';
 
-const props = defineProps<{
-  value: EthStakingFilter;
-  filter: EthStakingCombinedFilter | undefined;
-}>();
-
-const emit = defineEmits<{
-  (e: 'input', value: EthStakingFilter): void;
-  (e: 'update:filter', value?: EthStakingCombinedFilter): void;
-}>();
+const filterModel = defineModel<EthStakingCombinedFilter | undefined>('filter', { required: true });
+const model = defineModel<EthStakingFilter>({ required: true });
 
 const filterType = ref<EthStakingFilterType>('validator');
-const filterModel = useVModel(props, 'filter', emit);
 
-watch(filterType, type =>
-  emit('input', type === 'validator' ? { validators: [] } : { accounts: [] }));
+watch(filterType, type => set(model, type === 'validator' ? { validators: [] } : { accounts: [] }));
 
 const { t } = useI18n();
+
+const disableStatus = computed<boolean>(() => {
+  const modelFilter = get(model);
+  return 'validators' in modelFilter && modelFilter.validators.length > 0;
+});
 </script>
 
 <template>
@@ -38,31 +32,31 @@ const { t } = useI18n();
           variant="outlined"
           color="primary"
         >
-          <template #default>
-            <RuiButton
-              value="validator"
-              class="!py-2"
-            >
-              {{ t('eth2_page.toggle.key') }}
-            </RuiButton>
-            <RuiButton
-              value="address"
-              class="!py-2"
-            >
-              {{ t('eth2_page.toggle.withdrawal') }}
-            </RuiButton>
-          </template>
+          <RuiButton
+            model-value="validator"
+            class="!py-2"
+          >
+            {{ t('eth2_page.toggle.key') }}
+          </RuiButton>
+          <RuiButton
+            model-value="address"
+            class="!py-2"
+          >
+            {{ t('eth2_page.toggle.withdrawal') }}
+          </RuiButton>
         </RuiButtonGroup>
       </template>
       <span>{{ t('eth2_page.toggle.hint') }}</span>
     </RuiTooltip>
     <div class="grid sm:grid-cols-2 flex-1 gap-4">
       <Eth2ValidatorFilter
-        :value="value"
+        v-model="model"
         :filter-type="filterType"
-        @input="emit('input', $event)"
       />
-      <EthValidatorCombinedFilter :filter.sync="filterModel" />
+      <EthValidatorCombinedFilter
+        v-model:filter="filterModel"
+        :disable-status="disableStatus"
+      />
     </div>
   </div>
 </template>

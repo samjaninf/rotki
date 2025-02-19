@@ -1,16 +1,24 @@
 import contextlib
 from contextlib import ExitStack
 from http import HTTPStatus
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 import requests
 
 from rotkehlchen.accounting.structures.balance import BalanceType
-from rotkehlchen.api.server import APIServer
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
-from rotkehlchen.constants.assets import A_BTC, A_ETH, A_ETH2, A_EUR
+from rotkehlchen.chain.ethereum.modules.ens.constants import CPT_ENS
+from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.constants.assets import A_BTC, A_ETH, A_ETH2, A_EUR, A_USDC
+from rotkehlchen.constants.misc import ONE
+from rotkehlchen.db.evmtx import DBEvmTx
+from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -19,21 +27,42 @@ from rotkehlchen.tests.utils.api import (
 )
 from rotkehlchen.tests.utils.balances import get_asset_balance_total
 from rotkehlchen.tests.utils.constants import A_RDN
-from rotkehlchen.tests.utils.factories import UNIT_BTC_ADDRESS1, UNIT_BTC_ADDRESS2
+from rotkehlchen.tests.utils.factories import (
+    UNIT_BTC_ADDRESS1,
+    UNIT_BTC_ADDRESS2,
+    make_evm_address,
+    make_evm_tx_hash,
+)
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.tests.utils.rotkehlchen import setup_balances
-from rotkehlchen.types import Location
+from rotkehlchen.types import (
+    AssetAmount,
+    BTCAddress,
+    ChainID,
+    ChecksumEvmAddress,
+    EvmTransaction,
+    Fee,
+    Location,
+    Price,
+    Timestamp,
+    TimestampMS,
+    TradeType,
+    deserialize_evm_tx_hash,
+)
 from rotkehlchen.utils.misc import ts_now
+
+if TYPE_CHECKING:
+    from rotkehlchen.api.server import APIServer
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [2])
 @pytest.mark.parametrize('btc_accounts', [[UNIT_BTC_ADDRESS1, UNIT_BTC_ADDRESS2]])
 @pytest.mark.parametrize('added_exchanges', [(Location.BINANCE, Location.POLONIEX)])
 def test_query_statistics_netvalue(
-        rotkehlchen_api_server_with_exchanges,
-        ethereum_accounts,
-        btc_accounts,
-):
+        rotkehlchen_api_server_with_exchanges: 'APIServer',
+        ethereum_accounts: list[ChecksumEvmAddress],
+        btc_accounts: list[BTCAddress],
+) -> None:
     """Test that using the statistics netvalue over time endpoint works"""
     # Disable caching of query results
     rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
@@ -70,11 +99,11 @@ def test_query_statistics_netvalue(
 @pytest.mark.parametrize('added_exchanges', [(Location.BINANCE, Location.POLONIEX)])
 @pytest.mark.parametrize('start_with_valid_premium', [True, False])
 def test_query_statistics_asset_balance(
-        rotkehlchen_api_server_with_exchanges,
-        ethereum_accounts,
-        btc_accounts,
-        start_with_valid_premium,
-):
+        rotkehlchen_api_server_with_exchanges: 'APIServer',
+        ethereum_accounts: list[ChecksumEvmAddress],
+        btc_accounts: list[BTCAddress],
+        start_with_valid_premium: bool,
+) -> None:
     """Test that using the statistics asset balance over time endpoint works"""
     start_time = ts_now()
     # Disable caching of query results
@@ -159,8 +188,8 @@ def test_query_statistics_asset_balance(
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-def test_query_statistics_asset_balance_errors(rotkehlchen_api_server: APIServer):
-    """Test that errors at the statistics asset balance over time endpoint are hanled properly"""
+def test_query_statistics_asset_balance_errors(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that errors at the statistics asset balance over time endpoint are handled properly"""
     start_time = ts_now()
 
     # Check that no asset given is an error
@@ -180,11 +209,11 @@ def test_query_statistics_asset_balance_errors(rotkehlchen_api_server: APIServer
         api_url_for(
             rotkehlchen_api_server,
             'statisticsassetbalanceresource',
-        ), json={'from_timestamp': 0, 'to_timestamp': start_time, 'asset': 'NOTAREALASSSETLOL'},
+        ), json={'from_timestamp': 0, 'to_timestamp': start_time, 'asset': 'NOTAREALASSETLOL'},
     )
     assert_error_response(
         response=response,
-        contained_in_msg='Unknown asset NOTAREALASSSETLOL provided',
+        contained_in_msg='Unknown asset NOTAREALASSETLOL provided',
         status_code=HTTPStatus.BAD_REQUEST,
     )
 
@@ -221,18 +250,18 @@ def test_query_statistics_asset_balance_errors(rotkehlchen_api_server: APIServer
 @pytest.mark.parametrize('start_with_valid_premium', [True, False])
 @pytest.mark.parametrize('db_settings', [{'treat_eth2_as_eth': True}, {'treat_eth2_as_eth': False}])  # noqa: E501
 def test_query_statistics_value_distribution(
-        rotkehlchen_api_server_with_exchanges,
-        ethereum_accounts,
-        btc_accounts,
-        start_with_valid_premium,
-        db_settings,
-):
+        rotkehlchen_api_server_with_exchanges: 'APIServer',
+        ethereum_accounts: list[ChecksumEvmAddress],
+        btc_accounts: list[BTCAddress],
+        start_with_valid_premium: bool,
+        db_settings: dict[str, bool],
+) -> None:
     """Test that using the statistics value distribution endpoint works"""
     start_time = ts_now()
     # Disable caching of query results
     rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
     rotki.chains_aggregator.cache_ttl_secs = 0
-    token_balances = {A_RDN: ['111000', '4000000']}
+    token_balances = {A_RDN.resolve_to_evm_token(): ['111000', '4000000']}
     setup = setup_balances(
         rotki=rotki,
         ethereum_accounts=ethereum_accounts,
@@ -268,7 +297,7 @@ def test_query_statistics_value_distribution(
         )
     assert_proper_response(response)
 
-    def assert_okay_by_location(response):
+    def assert_okay_by_location(response: requests.Response) -> None:
         """Helper function to run next query and its assertion twice"""
         if start_with_valid_premium:
             result = assert_proper_sync_response_with_result(response)
@@ -360,7 +389,7 @@ def test_query_statistics_value_distribution(
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-def test_query_statistics_value_distribution_errors(rotkehlchen_api_server):
+def test_query_statistics_value_distribution_errors(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that the statistics value distribution endpoint handles errors properly"""
     # Test omitting the distribution_by argument
     response = requests.get(
@@ -390,12 +419,15 @@ def test_query_statistics_value_distribution_errors(rotkehlchen_api_server):
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True, False])
-def test_query_statistics_renderer(rotkehlchen_api_server, start_with_valid_premium):
+def test_query_statistics_renderer(
+        rotkehlchen_api_server: 'APIServer',
+        start_with_valid_premium: bool,
+    ) -> None:
     """Test that the statistics renderer endpoint works when properly queried"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
 
     if start_with_valid_premium:
-        def mock_premium_get(url, *_args, **_kwargs):
+        def mock_premium_get(url: str, *_args: Any, **_kwargs: Any) -> MockResponse:
             if 'last_data_metadata' in url:
                 response = (
                     '{"upload_ts": 0, "last_modify_ts": 0, "data_hash": "0x0", "data_size": 0}'
@@ -403,7 +435,9 @@ def test_query_statistics_renderer(rotkehlchen_api_server, start_with_valid_prem
             else:
                 response = '{"data": "codegoeshere"}'
             return MockResponse(200, response)
-        premium_patch = patch.object(rotki.premium.session, 'get', mock_premium_get)
+
+        assert rotki.premium is not None
+        premium_patch: Any = patch.object(rotki.premium.session, 'get', mock_premium_get)
     else:
         premium_patch = contextlib.nullcontext()
 
@@ -423,3 +457,250 @@ def test_query_statistics_renderer(rotkehlchen_api_server, start_with_valid_prem
             contained_in_msg='logged in user testuser does not have a premium subscription',
             status_code=HTTPStatus.FORBIDDEN,
         )
+
+
+@pytest.mark.parametrize('ethereum_accounts', [['0x01471dB828Cfb96Dcf215c57a7a6493702031EC1']])
+@pytest.mark.parametrize('base_accounts', [['0x01471dB828Cfb96Dcf215c57a7a6493702031EC1']])
+def test_query_wrap(
+        rotkehlchen_api_server: 'APIServer',
+        ethereum_accounts: list[ChecksumEvmAddress],
+) -> None:
+    """Test that information returned by the yearly wrap endpoint is correct.
+    It adds:
+    - transactions
+    - evm events (for fees)
+    - gnosis payments
+    - trades
+
+    Some of them are outside the queried range to confirm that the range is correct.
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    db = rotki.data.db
+
+    response = requests.post(  # Test that there is no failure for no data
+        url=api_url_for(rotkehlchen_api_server, 'statswrapresource'),
+        json={'from_timestamp': 1704067200, 'to_timestamp': 1735689599},
+    )
+    result = assert_proper_sync_response_with_result(response)
+
+    with db.conn.write_ctx() as write_cursor:
+        db.add_trades(
+            write_cursor=write_cursor,
+            trades=[
+                Trade(
+                    timestamp=Timestamp(1718562595),
+                    location=Location.KRAKEN,
+                    base_asset=A_ETH,
+                    quote_asset=A_BTC,
+                    trade_type=TradeType.BUY,
+                    amount=AssetAmount(ONE),
+                    rate=Price(ONE),
+                    fee=Fee(FVal('0.1')),
+                    fee_currency=A_BTC,
+                    link='',
+                    notes='',
+                ), Trade(
+                    timestamp=Timestamp(1734373795),
+                    location=Location.COINBASE,
+                    base_asset=A_ETH,
+                    quote_asset=A_BTC,
+                    trade_type=TradeType.BUY,
+                    amount=AssetAmount(FVal(2)),
+                    rate=Price(ONE),
+                    fee=Fee(FVal('0.1')),
+                    fee_currency=A_BTC,
+                    link='',
+                    notes='',
+                ), Trade(
+                    timestamp=Timestamp(1734373795),
+                    location=Location.EXTERNAL,
+                    base_asset=A_ETH,
+                    quote_asset=A_BTC,
+                    trade_type=TradeType.BUY,
+                    amount=AssetAmount(FVal(2)),
+                    rate=Price(ONE),
+                    fee=Fee(FVal('0.1')),
+                    fee_currency=A_BTC,
+                    link='',
+                    notes='',
+                ), Trade(
+                    timestamp=Timestamp(1702751395),  # last year
+                    location=Location.BYBIT,
+                    base_asset=A_ETH,
+                    quote_asset=A_BTC,
+                    trade_type=TradeType.BUY,
+                    amount=AssetAmount(FVal(2)),
+                    rate=Price(ONE),
+                    fee=Fee(FVal('0.1')),
+                    fee_currency=A_BTC,
+                    link='',
+                    notes='',
+                ),
+            ],
+        )
+
+        db.add_to_ignored_assets(write_cursor=write_cursor, asset=A_USDC)
+        tx_hash1, tx_hash2, tx_hash3 = make_evm_tx_hash(), make_evm_tx_hash(), make_evm_tx_hash()
+        tx_hash_to_chain = {
+            make_evm_tx_hash(): Location.ETHEREUM,
+            make_evm_tx_hash(): Location.BASE,
+            make_evm_tx_hash(): Location.ARBITRUM_ONE,
+        }
+        events_db = DBHistoryEvents(db)
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[
+                EvmEvent(
+                    tx_hash=tx_hash,
+                    sequence_index=1,
+                    timestamp=TimestampMS(1734373795000),
+                    location=chain,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.FEE,
+                    asset=A_ETH,
+                    amount=FVal(0.1),
+                    counterparty=CPT_GAS,
+                    location_label=ethereum_accounts[0],
+                )
+            for tx_hash, chain in tx_hash_to_chain.items()] + [
+                EvmEvent(  # event happening last year
+                    tx_hash=tx_hash1,
+                    sequence_index=1,
+                    timestamp=TimestampMS(1702751395000),
+                    location=Location.BASE,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.FEE,
+                    asset=A_ETH,
+                    amount=FVal(5),
+                    counterparty=CPT_GAS,
+                    location_label=ethereum_accounts[0],
+                ),
+                EvmEvent(  # event to test counterparties
+                    tx_hash=tx_hash2,
+                    sequence_index=1,
+                    timestamp=TimestampMS(1734373795000),
+                    location=Location.ETHEREUM,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.FEE,
+                    asset=A_ETH,
+                    amount=FVal(0.1),
+                    counterparty=CPT_ENS,
+                    location_label=ethereum_accounts[0],
+                ),
+                EvmEvent(  # second event with the same tx hash - should not be counted separately
+                    tx_hash=tx_hash2,
+                    sequence_index=2,
+                    timestamp=TimestampMS(1734373795000),
+                    location=Location.ETHEREUM,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.FEE,
+                    asset=A_ETH,
+                    amount=FVal(0.1),
+                    location_label=ethereum_accounts[0],
+                ),
+                EvmEvent(  # event with ignored asset
+                    tx_hash=tx_hash3,
+                    sequence_index=1,
+                    timestamp=TimestampMS(1734373795000),
+                    location=Location.GNOSIS,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.NONE,
+                    asset=A_USDC,
+                    amount=FVal(5),
+                    location_label=ethereum_accounts[0],
+                ),
+            ],
+        )
+
+        dbevmtx = DBEvmTx(db)
+        dbevmtx.add_evm_transactions(
+            write_cursor=write_cursor,
+            evm_transactions=[EvmTransaction(
+                tx_hash=tx_hash,
+                chain_id=ChainID(chain.to_chain_id()),
+                timestamp=Timestamp(1718562595),
+                block_number=3,
+                from_address=make_evm_address(),
+                to_address=make_evm_address(),
+                value=4000000,
+                gas=5000000,
+                gas_price=2000000000,
+                gas_used=25000000,
+                input_data=b'',
+                nonce=1,
+            ) for tx_hash, chain in tx_hash_to_chain.items()],
+            relevant_address=ethereum_accounts[0],
+        )
+
+        dbevmtx.add_evm_transactions(
+            write_cursor=write_cursor,
+            evm_transactions=[EvmTransaction(
+                tx_hash=tx_hash1,
+                chain_id=chain,
+                timestamp=Timestamp(1702751395),  # timestamp outside the range
+                block_number=3,
+                from_address=make_evm_address(),
+                to_address=make_evm_address(),
+                value=4000000,
+                gas=5000000,
+                gas_price=2000000000,
+                gas_used=25000000,
+                input_data=b'',
+                nonce=1,
+            ) for chain in (ChainID.ETHEREUM,)],
+            relevant_address=ethereum_accounts[0],
+        )
+
+        dbevmtx.add_evm_transactions(
+            write_cursor=write_cursor,
+            evm_transactions=[EvmTransaction(
+                tx_hash=tx_hash3,  # tx corresponding to the event with an ignored asset
+                chain_id=ChainID.GNOSIS,
+                timestamp=Timestamp(1718562595),
+                block_number=3,
+                from_address=make_evm_address(),
+                to_address=make_evm_address(),
+                value=4000000,
+                gas=5000000,
+                gas_price=2000000000,
+                gas_used=25000000,
+                input_data=b'',
+                nonce=1,
+            )],
+            relevant_address=ethereum_accounts[0],
+        )
+
+        write_cursor.execute(
+            'INSERT OR REPLACE INTO gnosispay_data(tx_hash, timestamp, merchant_name, '
+            'merchant_city, country, mcc, transaction_symbol, transaction_amount, '
+            'billing_symbol, billing_amount, reversal_symbol, reversal_amount) '
+            'VALUES(?, ?, ?, ?, ? ,?, ?, ?, ?, ?, ?, ?)',
+            (
+                deserialize_evm_tx_hash('0xb3be0391a753de5ef54b6b43c716240e1cb2a4a0a1120420f5ce168fdd08f17c'),
+                1726712020, 'Acme Inc.',
+                'Sevilla', 'ES', 6666,
+                'EUR', '42.24',
+                None, None,
+                'EUR', '2.35',
+            ),
+        )
+
+    response = requests.post(
+        url=api_url_for(rotkehlchen_api_server, 'statswrapresource'),
+        json={'from_timestamp': 1704067200, 'to_timestamp': 1735689599},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert result['trades_by_exchange'] == {'external': 1, 'kraken': 1, 'coinbase': 1}
+    assert FVal(result['eth_on_gas']).is_close('0.3')
+    assert FVal(result['eth_on_gas_per_address'][ethereum_accounts[0]]).is_close('0.3')
+    assert result['transactions_per_chain'] == {
+        'ARBITRUM_ONE': 1,
+        'ETHEREUM': 1,
+        'BASE': 1,
+    }
+    assert result['top_days_by_number_of_transactions'] == [
+        {'timestamp': 1734307200, 'amount': '4'},
+    ]
+    assert result['gnosis_max_payments_by_currency'] == [{'symbol': 'EUR', 'amount': '42.24'}]
+    assert result['transactions_per_protocol'] == [{'protocol': 'ens', 'transactions': 1}]
+    assert result['score'] == 1684

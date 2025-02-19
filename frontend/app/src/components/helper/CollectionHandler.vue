@@ -1,8 +1,10 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="T extends object">
+import { getCollectionData, setupEntryLimit } from '@/utils/collection';
+import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import type { Collection } from '@/types/collection';
 
 const props = defineProps<{
-  collection: Collection<any>;
+  collection: Collection<T>;
 }>();
 
 const emit = defineEmits<{
@@ -15,7 +17,7 @@ function setPage(page: number) {
 
 const { collection } = toRefs(props);
 
-const { data, limit, found, total, entriesFoundTotal, totalUsdValue } = getCollectionData(collection);
+const { data, entriesFoundTotal, found, limit, total, totalUsdValue } = getCollectionData(collection);
 
 const { itemsPerPage } = storeToRefs(useFrontendSettingsStore());
 watch([data, found, itemsPerPage], ([data, found, itemsPerPage]) => {
@@ -25,12 +27,7 @@ watch([data, found, itemsPerPage], ([data, found, itemsPerPage]) => {
   }
 });
 
-const { showUpgradeRow, itemLength } = setupEntryLimit(
-  limit,
-  found,
-  total,
-  entriesFoundTotal,
-);
+const { itemLength, showUpgradeRow } = setupEntryLimit(limit, found, total, entriesFoundTotal);
 </script>
 
 <template>

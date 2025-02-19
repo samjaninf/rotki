@@ -3,7 +3,7 @@ import hmac
 import logging
 import urllib
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
@@ -14,18 +14,18 @@ from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import AssetWithOracles
 from rotkehlchen.assets.converters import asset_from_woo
 from rotkehlchen.constants import ZERO
+from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import (
-    AssetMovement,
-    AssetMovementCategory,
-    MarginPosition,
-    Trade,
-    TradeType,
-)
+from rotkehlchen.exchanges.data_structures import MarginPosition, Trade, TradeType
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.history.deserialization import deserialize_price
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    create_asset_movement_with_fee,
+)
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -41,7 +41,7 @@ from rotkehlchen.utils.mixins.lockable import protect_with_lock
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.history.events.structures.base import HistoryEvent
+    from rotkehlchen.history.events.structures.base import HistoryBaseEntry
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -79,9 +79,9 @@ class Woo(ExchangeInterface):
             api_key=api_key,
             secret=secret,
             database=database,
+            msg_aggregator=msg_aggregator,
         )
         self.base_uri = 'https://api.woo.org'
-        self.msg_aggregator = msg_aggregator
         # NB: x-api-signature & x-api-timestamp change per request
         # x-api-key is constant
         self.session.headers.update({
@@ -129,8 +129,9 @@ class Woo(ExchangeInterface):
                 )
                 continue
             except UnknownAsset as e:
-                self.msg_aggregator.add_warning(
-                    f'Found unknown Woo asset {e.identifier}. Ignoring it in the balance query.',
+                self.send_unknown_asset_message(
+                    asset_identifier=e.identifier,
+                    details='balance query',
                 )
                 continue
             except RemoteError as e:
@@ -196,11 +197,11 @@ class Woo(ExchangeInterface):
         )
         return trades, (start_ts, end_ts)
 
-    def query_online_deposits_withdrawals(
+    def query_online_history_events(
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> list[AssetMovement]:
+    ) -> Sequence['HistoryBaseEntry']:
         """Return deposits/withdrawals history on Woo in a range of time."""
         movements: list[AssetMovement] = self._api_query_paginated(
             endpoint='v1/asset/history',
@@ -266,7 +267,7 @@ class Woo(ExchangeInterface):
             raise RemoteError(f'{error_prefix} connection error: {e}.') from e
         except JSONDecodeError as e:
             raise RemoteError(
-                f'{error_prefix} returned invalid JSON response: {response.text}.',
+                f'{error_prefix} failed to decode JSON response.',
             ) from e
 
         if response.status_code != HTTPStatus.OK:
@@ -334,12 +335,24 @@ class Woo(ExchangeInterface):
             for entry in entries:
                 try:
                     result = deserialization_method(entry)
-                except (DeserializationError, UnknownAsset, KeyError) as e:
+                except (DeserializationError, KeyError) as e:
                     msg = f'Missing key {e}' if isinstance(e, KeyError) else str(e)
                     log.error(f'Woo {endpoint} {msg}: {entry}')
                     self.msg_aggregator.add_error(msg)
                     continue
-                results.append(result)
+                except UnknownAsset as e:
+                    self.send_unknown_asset_message(
+                        asset_identifier=e.identifier,
+                        details=f'{endpoint} query',
+                    )
+                    continue
+
+                # TODO: use only extend here after trades are also converted to history events
+                # and have their fee in a separate event.
+                if isinstance(result, list):
+                    results.extend(result)  # AssetMovements - fee in separate event
+                else:
+                    results.append(result)  # Trades - no separate event for fee
 
             if len(entries) < API_MAX_LIMIT:
                 break
@@ -368,7 +381,7 @@ class Woo(ExchangeInterface):
 
         return results
 
-    def _deserialize_asset_movement(self, movement: dict[str, Any]) -> AssetMovement:
+    def _deserialize_asset_movement(self, movement: dict[str, Any]) -> list[AssetMovement]:
         """
         Deserialize a Woo asset movement returned from the API to AssetMovement
 
@@ -377,24 +390,28 @@ class Woo(ExchangeInterface):
         - UnknownAsset
         - KeyError
         """
+        event_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL]
         asset = asset_from_woo(movement['token'])
         if movement['token_side'] == 'DEPOSIT':
             address = movement['source_address']
-            category = AssetMovementCategory.DEPOSIT
+            event_type = HistoryEventType.DEPOSIT
         else:
             address = movement['target_address']
-            category = AssetMovementCategory.WITHDRAWAL
-        return AssetMovement(
-            location=Location.WOO,
-            category=category,
-            timestamp=deserialize_timestamp_from_floatstr(movement['created_time']),
-            address=address,
-            transaction_id=movement['tx_id'],
+            event_type = HistoryEventType.WITHDRAWAL
+        return create_asset_movement_with_fee(
+            location=self.location,
+            location_label=self.name,
+            event_type=event_type,
+            timestamp=ts_sec_to_ms(deserialize_timestamp_from_floatstr(movement['created_time'])),
             asset=asset,
             amount=deserialize_asset_amount(movement['amount']),
             fee_asset=asset_from_woo(movement['fee_token']) if movement['fee_token'] != '' else asset,  # noqa: E501
             fee=deserialize_fee(movement['fee_amount']),
-            link=str(movement['id']),
+            unique_id=str(movement['id']),
+            extra_data=maybe_set_transaction_extra_data(
+                address=address,
+                transaction_id=movement['tx_id'],
+            ),
         )
 
     def query_online_margin_history(
@@ -402,11 +419,4 @@ class Woo(ExchangeInterface):
             start_ts: Timestamp,  # pylint: disable=unused-argument
             end_ts: Timestamp,
     ) -> list[MarginPosition]:
-        return []  # noop for woo
-
-    def query_online_income_loss_expense(
-            self,
-            start_ts: Timestamp,  # pylint: disable=unused-argument
-            end_ts: Timestamp,
-    ) -> list['HistoryEvent']:
         return []  # noop for woo

@@ -2,17 +2,13 @@
 import useVuelidate from '@vuelidate/core';
 import { helpers, required } from '@vuelidate/validators';
 import { toMessages } from '@/utils/validation';
+import { useAssets } from '@/composables/assets';
+import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import type { AssetInfoWithId } from '@/types/asset';
 
-type Errors = Partial<
-  Record<'targetIdentifier' | 'sourceIdentifier', string[]>
->;
+type Errors = Partial<Record<'targetIdentifier' | 'sourceIdentifier', string[]>>;
 
-const props = defineProps<{ value: boolean }>();
-
-const emit = defineEmits<{ (e: 'input', value: boolean): void }>();
-
-const display = useSimpleVModel(props, emit);
+const display = defineModel<boolean>({ required: true });
 
 const done = ref(false);
 const errorMessages = ref<Errors>({});
@@ -26,16 +22,10 @@ const { t } = useI18n();
 
 const rules = {
   sourceIdentifier: {
-    required: helpers.withMessage(
-      t('merge_dialog.source.non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('merge_dialog.source.non_empty'), required),
   },
   targetIdentifier: {
-    required: helpers.withMessage(
-      t('merge_dialog.target.non_empty').toString(),
-      required,
-    ),
+    required: helpers.withMessage(t('merge_dialog.target.non_empty'), required),
   },
 };
 
@@ -92,9 +82,16 @@ async function merge() {
 }
 
 function input(value: boolean) {
-  emit('input', value);
+  set(display, value);
   setTimeout(() => reset(), 100);
 }
+
+const excluded = computed(() => {
+  const source = get(sourceIdentifier);
+  if (!source)
+    return [];
+  return [source];
+});
 </script>
 
 <template>
@@ -102,75 +99,73 @@ function input(value: boolean) {
     v-model="display"
     max-width="500"
   >
-    <AppBridge>
-      <RuiCard>
-        <template #header>
-          {{ t('merge_dialog.title') }}
-        </template>
-        <template #subheader>
-          {{ t('merge_dialog.subtitle') }}
-        </template>
-        <div class="mb-4 text-body-2 text-rui-text-secondary">
-          {{ t('merge_dialog.hint') }}
+    <RuiCard>
+      <template #header>
+        {{ t('merge_dialog.title') }}
+      </template>
+      <template #subheader>
+        {{ t('merge_dialog.subtitle') }}
+      </template>
+      <div class="mb-4 text-body-2 text-rui-text-secondary">
+        {{ t('merge_dialog.hint') }}
+      </div>
+
+      <form>
+        <!-- We use `v-text-field` here instead `asset-select` -->
+        <!-- because the source can be filled with unknown identifier -->
+        <RuiTextField
+          v-model="sourceIdentifier"
+          :label="t('merge_dialog.source.label')"
+          :error-messages="toMessages(v$.sourceIdentifier)"
+          variant="outlined"
+          color="primary"
+          :disabled="pending"
+          :hint="t('merge_dialog.source_hint')"
+          @focus="clearErrors()"
+          @blur="v$.sourceIdentifier.$touch()"
+        />
+        <div class="my-4 flex justify-center">
+          <RuiIcon name="lu-arrow-down" />
         </div>
+        <AssetSelect
+          v-model="targetIdentifier"
+          v-model:asset="target"
+          outlined
+          :error-messages="toMessages(v$.targetIdentifier)"
+          :label="t('merge_dialog.target.label')"
+          :disabled="pending"
+          :excludes="excluded"
+          :hint="target ? t('merge_dialog.target_hint', { identifier: target.identifier }) : ''"
+          @focus="clearErrors()"
+          @blur="v$.targetIdentifier.$touch()"
+        />
+      </form>
 
-        <form>
-          <!-- We use `v-text-field` here instead `asset-select` -->
-          <!-- because the source can be filled with unknown identifier -->
-          <RuiTextField
-            v-model="sourceIdentifier"
-            :label="t('merge_dialog.source.label')"
-            :error-messages="toMessages(v$.sourceIdentifier)"
-            variant="outlined"
-            color="primary"
-            :disabled="pending"
-            :hint="t('merge_dialog.source_hint')"
-            @focus="clearErrors()"
-            @blur="v$.sourceIdentifier.$touch()"
-          />
-          <div class="my-4 flex justify-center">
-            <RuiIcon name="arrow-down-line" />
-          </div>
-          <AssetSelect
-            v-model="targetIdentifier"
-            outlined
-            :error-messages="toMessages(v$.targetIdentifier)"
-            :label="t('merge_dialog.target.label')"
-            :disabled="pending"
-            :asset.sync="target"
-            :excludes="sourceIdentifier ? [sourceIdentifier] : []"
-            :hint="target ? t('merge_dialog.target_hint', { identifier: target.identifier }) : ''"
-            persistent-hint
-            @focus="clearErrors()"
-            @blur="v$.targetIdentifier.$touch()"
-          />
-        </form>
-
-        <RuiAlert
-          v-if="done"
-          type="success"
+      <RuiAlert
+        v-if="done"
+        class="mt-4"
+        type="success"
+      >
+        {{ t('merge_dialog.done') }}
+      </RuiAlert>
+      <template #footer>
+        <div class="grow" />
+        <RuiButton
+          variant="text"
+          color="primary"
+          @click="input(false)"
         >
-          {{ t('merge_dialog.done') }}
-        </RuiAlert>
-        <template #footer>
-          <div class="grow" />
-          <RuiButton
-            variant="text"
-            color="primary"
-            @click="input(false)"
-          >
-            {{ t('common.actions.close') }}
-          </RuiButton>
-          <RuiButton
-            color="primary"
-            :disabled="v$.$invalid || pending"
-            :loading="pending"
-            @click="merge()"
-          >
-            {{ t('merge_dialog.merge') }}
-          </RuiButton>
-        </template>
-      </RuiCard>
-    </AppBridge>
+          {{ t('common.actions.close') }}
+        </RuiButton>
+        <RuiButton
+          color="primary"
+          :disabled="v$.$invalid || pending"
+          :loading="pending"
+          @click="merge()"
+        >
+          {{ t('merge_dialog.merge') }}
+        </RuiButton>
+      </template>
+    </RuiCard>
   </RuiDialog>
 </template>

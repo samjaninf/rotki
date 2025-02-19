@@ -13,6 +13,7 @@ from rotkehlchen.assets.asset import (
     UnderlyingToken,
 )
 from rotkehlchen.assets.types import AssetType
+from rotkehlchen.constants.resolver import tokenid_to_collectible_id
 from rotkehlchen.fval import FVal
 from rotkehlchen.types import ChainID, EvmTokenKind, Location, Timestamp, TradeType
 
@@ -62,16 +63,6 @@ def rlk_jsondumps(data: dict | list) -> str:
     return json.dumps(data, cls=RKLEncoder)
 
 
-def pretty_json_dumps(data: dict) -> str:
-    return json.dumps(
-        data,
-        sort_keys=True,
-        indent=4,
-        separators=(',', ': '),
-        cls=RKLEncoder,
-    )
-
-
 def deserialize_asset_with_oracles_from_db(
         asset_type: AssetType,
         asset_data: list[Any],
@@ -103,6 +94,7 @@ def deserialize_asset_with_oracles_from_db(
             cryptocompare=asset_data[10],
             protocol=asset_data[11],
             underlying_tokens=underlying_tokens,
+            collectible_id=tokenid_to_collectible_id(identifier=identifier),
         )
     if asset_type == AssetType.FIAT:
         return FiatAsset.initialize(
@@ -134,7 +126,7 @@ def deserialize_generic_asset_from_db(
     """
     From a db tuple containing information about any asset deserialize to the correct Asset class
     according to type in the database. Is a wrapper around deserialize_asset_with_oracles_from_db
-    And extends it by allowing the deserialization of CustomAsset objets.
+    And extends it by allowing the deserialization of CustomAsset objects.
     May raise:
     - DeserializationError
     - WrongAssetType

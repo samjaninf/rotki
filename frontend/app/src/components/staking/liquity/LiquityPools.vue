@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { Section } from '@/types/status';
-import type { LiquityPoolDetailEntry } from '@rotki/common/lib/liquity';
+import { useStatusStore } from '@/store/status';
+import BalanceDisplay from '@/components/display/BalanceDisplay.vue';
+import type { LiquityPoolDetailEntry } from '@rotki/common';
 
 withDefaults(
   defineProps<{

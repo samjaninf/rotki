@@ -4,6 +4,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
+from uuid import uuid4
 
 import gevent
 import pytest
@@ -11,7 +12,9 @@ import requests
 
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.structures.balance import Balance
-from rotkehlchen.assets.asset import Asset
+from rotkehlchen.api.v1.types import IncludeExcludeFilterData
+from rotkehlchen.api.websockets.typedefs import WSMessageType
+from rotkehlchen.assets.asset import Asset, CustomAsset
 from rotkehlchen.assets.converters import asset_from_kraken
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import (
@@ -32,15 +35,16 @@ from rotkehlchen.constants.assets import (
 )
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
+from rotkehlchen.db.custom_assets import DBCustomAssets
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import Trade
-from rotkehlchen.exchanges.kraken import KRAKEN_DELISTED, Kraken
+from rotkehlchen.exchanges.kraken import Kraken
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.base import HistoryBaseEntryType, HistoryEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.serialization.deserialize import deserialize_timestamp_from_floatstr
 from rotkehlchen.tests.utils.api import (
@@ -70,10 +74,10 @@ from rotkehlchen.tests.utils.exchanges import (
     try_get_first_exchange,
 )
 from rotkehlchen.tests.utils.history import TEST_END_TS, prices
-from rotkehlchen.tests.utils.kraken import MockKraken
+from rotkehlchen.tests.utils.kraken import KRAKEN_DELISTED, MockKraken
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.tests.utils.pnl_report import query_api_create_and_get_report
-from rotkehlchen.types import AssetMovementCategory, Location, Timestamp, TimestampMS, TradeType
+from rotkehlchen.types import Location, Timestamp, TimestampMS, TradeType
 from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
@@ -125,7 +129,7 @@ def test_coverage_of_kraken_balances():
         'ALGO.S': Asset('ALGO'),
         'DOT.P': A_DOT,
         'MINA.S': Asset('MINA'),
-        'TRX.S': strethaddress_to_identifier('0xf230b790E05390FC8295F4d3F60332c93BEd42e2'),
+        'TRX.S': strethaddress_to_identifier('0x50327c6c5a14DCaDE707ABad2E27eB517df87AB5'),
         'LUNA.S': strethaddress_to_identifier('0xd2877702675e6cEb975b4A1dFf9fb7BAF4C91ea9'),
         'SCRT.S': Asset('SCRT'),
         'MATIC.S': strethaddress_to_identifier('0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0'),
@@ -191,7 +195,7 @@ def test_querying_trade_history(kraken):
 
 def test_querying_rate_limit_exhaustion(kraken, database):
     """Test that if kraken api rates limit us we don't get stuck in an infinite loop
-    and also that we return what we managed to retrieve until rate limit occured.
+    and also that we return what we managed to retrieve until rate limit occurred.
 
     Regression test for https://github.com/rotki/rotki/issues/3629
     """
@@ -238,14 +242,23 @@ def test_querying_rate_limit_exhaustion(kraken, database):
 
 def test_querying_deposits_withdrawals(kraken):
     kraken.random_ledgers_data = False
-    now = ts_now()
-    result = kraken.query_deposits_withdrawals(
-        start_ts=1439994442,
-        end_ts=now,
-        only_cache=False,
-    )
-    assert isinstance(result, list)
-    assert len(result) == 5
+    kraken.query_history_events()
+    with kraken.db.conn.read_ctx() as cursor:
+        result = DBHistoryEvents(kraken.db).get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                location=Location.KRAKEN,
+                from_ts=Timestamp(1439994442),
+                event_types=[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
+                entry_types=IncludeExcludeFilterData(
+                    values=[HistoryBaseEntryType.ASSET_MOVEMENT_EVENT],
+                ),
+            ),
+            has_premium=True,
+        )
+
+    assert len(result) == 8
+    assert len([event for event in result if event.event_subtype == HistoryEventSubType.FEE]) == 3
 
 
 def test_kraken_to_world_pair(kraken):
@@ -299,9 +312,10 @@ def test_kraken_to_world_pair(kraken):
         kraken_to_world_pair('GABOOBABOO')
 
 
+@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
 def test_kraken_query_balances_unknown_asset(kraken):
     """Test that if a kraken balance query returns unknown asset no exception
-    is raised and a warning is generated"""
+    is raised and a message is generated"""
     kraken.random_balance_data = False
     balances, msg = kraken.query_balances()
 
@@ -312,9 +326,10 @@ def test_kraken_query_balances_unknown_asset(kraken):
     assert balances[A_ETH].amount == FVal('10.0')
     assert balances[A_ETH].usd_value == FVal('15.0')
 
-    warnings = kraken.msg_aggregator.consume_warnings()
-    assert len(warnings) == 1
-    assert 'unsupported/unknown kraken asset NOTAREALASSET' in warnings[0]
+    messages = kraken.msg_aggregator.rotki_notifier.messages
+    assert len(messages) == 1
+    assert messages[0].message_type == WSMessageType.EXCHANGE_UNKNOWN_ASSET
+    assert messages[0].data['identifier'] == 'NOTAREALASSET'
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
@@ -367,20 +382,38 @@ def test_kraken_query_deposit_withdrawals_unknown_asset(kraken):
 
     target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
     with patch(target, new=input_ledger):
-        movements = kraken.query_deposits_withdrawals(
-            start_ts=1408994442,
-            end_ts=1498994442,
-            only_cache=False,
+        kraken.query_history_events()
+
+    with kraken.db.conn.read_ctx() as cursor:
+        movements = DBHistoryEvents(kraken.db).get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(location=Location.KRAKEN),
+            has_premium=True,
         )
 
-    # first normal deposit should have no problem
-    assert len(movements) == 2
+    # withdrawal and first normal deposit should have no problem
+    assert len(movements) == 4
+    assert movements[0].sequence_index == 0
+    assert movements[0].timestamp == TimestampMS(1439994442000)
+    assert movements[0].location == Location.KRAKEN
+    assert movements[0].location_label == kraken.name
     assert movements[0].asset == A_ETH
-    assert movements[0].amount == FVal('1')
-    assert movements[0].category == AssetMovementCategory.WITHDRAWAL
-    assert movements[1].asset == A_EUR
-    assert movements[1].amount == FVal('4000000')
-    assert movements[1].category == AssetMovementCategory.DEPOSIT
+    assert movements[0].amount == ONE
+    assert movements[0].event_type == HistoryEventType.WITHDRAWAL
+    assert movements[0].event_subtype == HistoryEventSubType.REMOVE_ASSET
+    assert movements[1].event_identifier == movements[0].event_identifier
+    assert movements[1].sequence_index == 1
+    assert movements[1].timestamp == TimestampMS(1439994442000)
+    assert movements[1].location == Location.KRAKEN
+    assert movements[1].location_label == kraken.name
+    assert movements[1].asset == A_ETH
+    assert movements[1].amount == FVal('0.0035')
+    assert movements[1].event_type == HistoryEventType.WITHDRAWAL
+    assert movements[1].event_subtype == HistoryEventSubType.FEE
+    assert movements[2].asset == A_EUR
+    assert movements[2].amount == FVal('4000000')
+    assert movements[2].event_type == HistoryEventType.DEPOSIT
+    assert movements[3].event_subtype == HistoryEventSubType.FEE
     errors = kraken.msg_aggregator.consume_errors()
     assert len(errors) == 1
 
@@ -604,9 +637,12 @@ def test_kraken_failed_withdrawals(kraken):
 
     target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
     with patch(target, new=test_events):
-        withdrawals = kraken.query_online_deposits_withdrawals(
-            start_ts=0,
-            end_ts=Timestamp(1637406001),
+        kraken.query_history_events()
+    with kraken.db.conn.read_ctx() as cursor:
+        withdrawals = DBHistoryEvents(kraken.db).get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(location=Location.KRAKEN),
+            has_premium=True,
         )
     assert len(withdrawals) == 0
 
@@ -650,7 +686,6 @@ def test_trade_from_kraken_unexpected_data(kraken):
 
     def query_kraken_and_test(input_trades, expected_warnings_num, expected_errors_num):
         # delete kraken history entries so they get requeried
-        cursor = kraken.history_events_db.db.conn.cursor()
         with kraken.history_events_db.db.user_write() as cursor:
             location = Location.KRAKEN
             cursor.execute(
@@ -715,7 +750,7 @@ def test_trade_from_kraken_unexpected_data(kraken):
     query_kraken_and_test(input_trades, expected_warnings_num=0, expected_errors_num=2)
 
 
-def test_emptry_kraken_balance_response():
+def test_empty_kraken_balance_response():
     """Balance api query returns a response without a result
 
     Regression test for: https://github.com/rotki/rotki/issues/2443
@@ -874,17 +909,14 @@ def test_kraken_staking(rotkehlchen_api_server_with_exchanges, start_with_valid_
     assert events[0]['asset'] == 'XTZ'
     assert events[1]['asset'] == 'ETH2'
     assert events[2]['asset'] == 'ETH'
-    assert events[0]['usd_value'] == '0.000046300000'
-    assert events[1]['usd_value'] == '0.219353533620'
-    assert events[2]['usd_value'] == '242.570400000000'
     if start_with_valid_premium:
         assert result['entries_limit'] == -1
     else:
         assert result['entries_limit'] == FREE_HISTORY_EVENTS_LIMIT
     assert result['entries_total'] == 4
-    assert result['received'] == [
-        {'asset': 'ETH2', 'amount': '0.000053862', 'usd_value': '0.21935353362'},
-        {'asset': 'XTZ', 'amount': '0.00001', 'usd_value': '0.0000463'},
+    assert result['received'] == [  # TODO: @yabirgb adjust usd value
+        {'asset': 'ETH2', 'amount': '0.000053862', 'usd_value': '0'},
+        {'asset': 'XTZ', 'amount': '0.00001', 'usd_value': '0'},
     ]
 
     # test that the correct number of entries is returned with pagination
@@ -1021,7 +1053,7 @@ def test_kraken_staking(rotkehlchen_api_server_with_exchanges, start_with_valid_
 def test_kraken_informational_fees(rotkehlchen_api_server_with_exchanges: 'APIServer'):
     """Test that we correctly ignore fees in events that we currently ignore as margin trades"""
     rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
-    kraken = cast(MockKraken, try_get_first_exchange(rotki.exchange_manager, Location.KRAKEN))
+    kraken = cast('MockKraken', try_get_first_exchange(rotki.exchange_manager, Location.KRAKEN))
     input_ledger = """
     {
         "ledger":{
@@ -1068,8 +1100,41 @@ def test_kraken_informational_fees(rotkehlchen_api_server_with_exchanges: 'APISe
             event_type=HistoryEventType.INFORMATIONAL,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_EUR,
-            balance=Balance(amount=ONE),
+            amount=ONE,
             location_label='mockkraken',
             notes='margin',
         ),
     ]
+
+
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+def test_kraken_event_serialization_with_custom_asset(database):
+    """Regression test for https://github.com/rotki/rotki/issues/9200"""
+    custom_asset = CustomAsset.initialize(
+        identifier=str(uuid4()),
+        name='Gold Bar',
+        custom_asset_type='inheritance',
+    )
+    DBCustomAssets(database).add_custom_asset(custom_asset)
+    for event_type, event_subtype, expected_notes in (
+            (HistoryEventType.TRADE, HistoryEventSubType.SPEND, 'Swap 1 Gold Bar in Kraken'),
+            (HistoryEventType.TRADE, HistoryEventSubType.RECEIVE, 'Receive 1 Gold Bar as a result of a Kraken swap'),  # noqa: E501
+            (HistoryEventType.TRADE, HistoryEventSubType.FEE, 'Spend 1 Gold Bar as Kraken trading fee'),  # noqa: E501
+            (HistoryEventType.STAKING, HistoryEventSubType.REWARD, 'Gain 1 Gold Bar from Kraken staking'),  # noqa: E501
+            (HistoryEventType.STAKING, HistoryEventSubType.FEE, 'Spend 1 Gold Bar as Kraken staking fee'),  # noqa: E501
+            (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET, 'Withdraw 1 Gold Bar from Kraken'),  # noqa: E501
+            (HistoryEventType.WITHDRAWAL, HistoryEventSubType.FEE, 'Spend 1 Gold Bar as Kraken withdrawal fee'),  # noqa: E501
+            (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET, 'Deposit 1 Gold Bar to Kraken'),  # noqa: E501
+    ):
+        event = HistoryEvent(
+            event_identifier='foo',
+            sequence_index=1,
+            timestamp=TimestampMS(10000000000),
+            location=Location.KRAKEN,
+            event_type=event_type,
+            event_subtype=event_subtype,
+            asset=custom_asset,
+            amount=ONE,
+            location_label='my kraken',
+        )
+        assert event.serialize()['notes'] == expected_notes

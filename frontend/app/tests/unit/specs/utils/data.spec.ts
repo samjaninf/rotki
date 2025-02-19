@@ -1,4 +1,5 @@
-import { expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { nonEmptyProperties, toRem } from '@/utils/data';
 
 describe('utils/data', () => {
   it('returns a partial object without the null properties', () => {
@@ -58,6 +59,32 @@ describe('utils/data', () => {
         },
       }),
     ).toStrictEqual({ a: { number } });
+  });
+
+  it('also remove empty strings', () => {
+    expect(
+      nonEmptyProperties({
+        a: '',
+        b: 'test',
+        c: 123,
+        d: [],
+      }, {
+        removeEmptyString: true,
+      }),
+    ).toStrictEqual({ b: 'test', c: 123 });
+  });
+
+  it('alwaysPickKeys option works', () => {
+    expect(
+      nonEmptyProperties({
+        a: '',
+        b: 'test',
+        c: 123,
+        d: [],
+      }, {
+        alwaysPickKeys: ['a', 'd'],
+      }),
+    ).toStrictEqual({ a: '', b: 'test', c: 123, d: [] });
   });
 
   it('convert values to rems', () => {

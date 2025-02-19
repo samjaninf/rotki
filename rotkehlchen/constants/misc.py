@@ -2,11 +2,12 @@ from typing import Final
 
 from rotkehlchen.fval import FVal
 
-CURRENCYCONVERTER_API_KEY: Final = '0817a64a20421b4f0937'
+CURRENCYCONVERTER_API_KEY: Final = 'ecb823a26920906eafa3'
 
 ZERO: Final = FVal(0)
 ONE: Final = FVal(1)
 EXP18: Final = FVal(1e18)
+EXP18_INT: Final = int(1e18)
 # Tolerance used when querying claims in the database since we need to cast
 # to float and we can loose precision in SQL. With lower tolerance the ens
 # airdrop fails to get detected.

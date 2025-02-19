@@ -1,34 +1,40 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
+import { type BigNumber, Blockchain, HistoryEventEntryType } from '@rotki/common';
 import { DefiProtocol, Module, isDefiProtocol } from '@/types/modules';
 import { Section } from '@/types/status';
 import { ProtocolVersion } from '@/types/defi';
-import {
-  AaveEarnedDetails,
-  CompoundLendingDetails,
-} from '@/premium/premium';
+import { AaveEarnedDetails, CompoundLendingDetails } from '@/premium/premium';
+import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
+import { useDefiStore } from '@/store/defi';
+import { useAaveStore } from '@/store/defi/aave';
+import { useStatusStore } from '@/store/status';
+import { usePremium } from '@/composables/premium';
+import { useDefiLending } from '@/composables/defi/lending';
+import HistoryEventsView from '@/components/history/events/HistoryEventsView.vue';
+import PremiumCard from '@/components/display/PremiumCard.vue';
+import YearnAssetsTable from '@/components/defi/yearn/YearnAssetsTable.vue';
+import LendingAssetTable from '@/components/defi/display/LendingAssetTable.vue';
+import StatCard from '@/components/display/StatCard.vue';
+import DefiProtocolSelector from '@/components/defi/DefiProtocolSelector.vue';
+import BlockchainAccountSelector from '@/components/helper/BlockchainAccountSelector.vue';
+import DepositTotals from '@/components/defi/DepositTotals.vue';
+import ProgressScreen from '@/components/helper/ProgressScreen.vue';
+import ActiveModules from '@/components/defi/ActiveModules.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import type { AddressData, BlockchainAccount } from '@/types/blockchain/accounts';
-import type { BigNumber } from '@rotki/common';
 
 const section = Section.DEFI_LENDING;
 const historySection = Section.DEFI_LENDING_HISTORY;
 
-const modules: Module[] = [
-  Module.AAVE,
-  Module.COMPOUND,
-  Module.YEARN,
-  Module.YEARN_V2,
-  Module.MAKERDAO_DSR,
-];
+const modules: Module[] = [Module.AAVE, Module.COMPOUND, Module.YEARN, Module.YEARN_V2, Module.MAKERDAO_DSR];
 
 const chains = [Blockchain.ETH];
 
 const selectedAccounts = ref<BlockchainAccount<AddressData>[]>([]);
-const protocol = ref<DefiProtocol | null>(null);
+const protocol = ref<DefiProtocol>();
 const premium = usePremium();
 const route = useRoute();
-const { shouldShowLoadingScreen, isLoading } = useStatusStore();
+const { isLoading, shouldShowLoadingScreen } = useStatusStore();
 
 const defiStore = useDefiStore();
 const defiLending = useDefiLending();
@@ -58,16 +64,12 @@ const lendingBalances = computed(() => {
   return get(defiLending.aggregatedLendingBalances(protocols, addresses));
 });
 
-const totalEarnedInAave = computed(() =>
-  get(aaveStore.aaveTotalEarned(get(selectedAddresses))),
-);
+const totalEarnedInAave = computed(() => get(aaveStore.aaveTotalEarned(get(selectedAddresses))));
 
 const effectiveInterestRate = computed<BigNumber>(() => {
   const protocols = get(selectedProtocols);
   const addresses = get(selectedAddresses);
-  return bigNumberify(
-    get(defiLending.effectiveInterestRate(protocols, addresses)),
-  );
+  return bigNumberify(get(defiLending.effectiveInterestRate(protocols, addresses)));
 });
 
 const totalLendingDeposit = computed<BigNumber>(() => {
@@ -124,7 +126,7 @@ onMounted(async () => {
   await defiLending.fetchLending();
 });
 
-const transactionEventProtocols: ComputedRef<string[]> = computed(() => {
+const transactionEventProtocols = computed<string[]>(() => {
   const selectedProtocol = get(protocol);
 
   const mapping: { [key in DefiProtocol]?: string[] } = {
@@ -135,7 +137,7 @@ const transactionEventProtocols: ComputedRef<string[]> = computed(() => {
     [DefiProtocol.YEARN_VAULTS_V2]: ['yearn-v2'],
   };
 
-  if (selectedProtocol === null)
+  if (!selectedProtocol)
     return Object.values(mapping).flat();
 
   const mappedProtocol = mapping[selectedProtocol];
@@ -144,7 +146,7 @@ const transactionEventProtocols: ComputedRef<string[]> = computed(() => {
   return mappedProtocol;
 });
 
-const refreshTooltip: ComputedRef<string> = computed(() =>
+const refreshTooltip = computed<string>(() =>
   t('helpers.refresh_header.tooltip', {
     title: t('common.deposits').toLocaleLowerCase(),
   }),
@@ -153,11 +155,7 @@ const refreshTooltip: ComputedRef<string> = computed(() =>
 
 <template>
   <TablePageLayout
-    :title="[
-      t('navigation_menu.defi'),
-      t('common.deposits'),
-      t('navigation_menu.defi_sub.deposits_sub.protocols'),
-    ]"
+    :title="[t('navigation_menu.defi'), t('common.deposits'), t('navigation_menu.defi_sub.deposits_sub.protocols')]"
   >
     <template #buttons>
       <div class="flex items-center gap-4">
@@ -172,7 +170,7 @@ const refreshTooltip: ComputedRef<string> = computed(() =>
               @click="refresh()"
             >
               <template #prepend>
-                <RuiIcon name="refresh-line" />
+                <RuiIcon name="lu-refresh-ccw" />
               </template>
               {{ t('common.refresh') }}
             </RuiButton>
@@ -192,6 +190,13 @@ const refreshTooltip: ComputedRef<string> = computed(() =>
       v-else
       class="flex flex-col gap-4"
     >
+      <RuiAlert
+        type="warning"
+        :title="t('common.important_notice')"
+        class="mb-2"
+      >
+        {{ t('decentralized_overview.deprecated_warning') }}
+      </RuiAlert>
       <DepositTotals
         :loading="historyLoading"
         :effective-interest-rate="effectiveInterestRate"

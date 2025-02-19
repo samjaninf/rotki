@@ -1,11 +1,16 @@
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { type NoteFormat, NoteType } from '@/composables/history/events/notes';
+import { Blockchain } from '@rotki/common';
+import { describe, expect, it, vi } from 'vitest';
+import { type NoteFormat, NoteType, useHistoryEventNote } from '@/composables/history/events/notes';
+import { useSessionSettingsStore } from '@/store/settings/session';
 
 vi.mock('@/composables/assets/retrieval', () => ({
   useAssetInfoRetrieval: vi.fn().mockReturnValue({
     assetSymbol: vi.fn().mockImplementation((identifier) => {
       if (isEvmIdentifier(identifier))
         return 'USDC';
+
+      if (identifier === '0xdeadbeef')
+        return '';
 
       return identifier;
     }),
@@ -25,11 +30,7 @@ describe('composables::history/notes', () => {
     const expected: NoteFormat[] = [
       {
         type: NoteType.WORD,
-        word: 'Normal',
-      },
-      {
-        type: NoteType.WORD,
-        word: 'text',
+        word: 'Normal text',
       },
     ];
 
@@ -39,9 +40,7 @@ describe('composables::history/notes', () => {
   it('with amount and asset', () => {
     const notes = 'Receive 100 ETH';
 
-    const formatted = get(
-      formatNotes({ notes, amount: bigNumberify(100), assetId: 'ETH' }),
-    );
+    const formatted = get(formatNotes({ notes, amount: bigNumberify(100), assetId: 'ETH' }));
 
     const expected: NoteFormat[] = [
       {
@@ -52,6 +51,68 @@ describe('composables::history/notes', () => {
         type: NoteType.AMOUNT,
         amount: bigNumberify(100),
         asset: 'ETH',
+      },
+    ];
+
+    expect(formatted).toMatchObject(expected);
+  });
+
+  it('with amount and asset (but formatted amount with thousand separator in the notes)', () => {
+    const notes = 'Receive 15,123.233 ETH';
+    const formatted = get(formatNotes({ notes, amount: bigNumberify(15123.233), assetId: 'ETH' }));
+
+    const expected: NoteFormat[] = [
+      {
+        type: NoteType.WORD,
+        word: 'Receive',
+      },
+      {
+        type: NoteType.AMOUNT,
+        amount: bigNumberify(15123.233),
+        asset: 'ETH',
+      },
+    ];
+
+    expect(formatted).toMatchObject(expected);
+  });
+
+  it('with amount and asset (but different asset symbol)', () => {
+    const notes = 'Pay 100 EUR';
+
+    const formatted = get(formatNotes({ notes, amount: bigNumberify(100), assetId: 'EURe' }));
+
+    const expected: NoteFormat[] = [
+      {
+        type: NoteType.WORD,
+        word: 'Pay',
+      },
+      {
+        type: NoteType.AMOUNT,
+        amount: bigNumberify(100),
+      },
+      {
+        type: NoteType.WORD,
+        word: 'EUR',
+      },
+    ];
+
+    expect(formatted).toMatchObject(expected);
+  });
+
+  it('with amount and asset (multi-word)', () => {
+    const notes = 'Receive 100 Spectral Token';
+
+    const formatted = get(formatNotes({ notes, amount: bigNumberify(100), assetId: 'Spectral Token' }));
+
+    const expected: NoteFormat[] = [
+      {
+        type: NoteType.WORD,
+        word: 'Receive',
+      },
+      {
+        type: NoteType.AMOUNT,
+        amount: bigNumberify(100),
+        asset: 'Spectral Token',
       },
     ];
 
@@ -109,8 +170,7 @@ describe('composables::history/notes', () => {
   });
 
   describe('with TX Hash', () => {
-    const txHash
-      = '0xdb11f732bc83d29b52b20506cdd795196d3d0c5c42f9ad15b31bb4257c4990a5';
+    const txHash = '0xdb11f732bc83d29b52b20506cdd795196d3d0c5c42f9ad15b31bb4257c4990a5';
     const notes = `TxHash ${txHash}`;
 
     it('noTxHash = false', () => {
@@ -132,9 +192,7 @@ describe('composables::history/notes', () => {
     });
 
     it('multiple txHash', () => {
-      const formatted = get(
-        formatNotes({ notes: `TxHash ${txHash},${txHash}, ${txHash}` }),
-      );
+      const formatted = get(formatNotes({ notes: `TxHash ${txHash},${txHash}, ${txHash}` }));
 
       const expected: NoteFormat[] = [
         {
@@ -167,11 +225,7 @@ describe('composables::history/notes', () => {
       const expected: NoteFormat[] = [
         {
           type: NoteType.WORD,
-          word: 'TxHash',
-        },
-        {
-          type: NoteType.WORD,
-          word: txHash,
+          word: `TxHash ${txHash}`,
         },
       ];
 
@@ -284,11 +338,7 @@ describe('composables::history/notes', () => {
     const expected: NoteFormat[] = [
       {
         type: NoteType.WORD,
-        word: 'Sell',
-      },
-      {
-        type: NoteType.WORD,
-        word: 'USDC',
+        word: 'Sell USDC',
       },
     ];
 
@@ -298,21 +348,25 @@ describe('composables::history/notes', () => {
   it('scramble IBAN', () => {
     store.update({ scrambleData: false });
     const iban = 'DE88 5678 9012 1234 345 67';
-    const notes = `Send 8,325.00 EURe via bank transfer to Rotki Solutions GmbH (${iban}) with memo "for salaries and insurance`;
+    const notes = `Send 8,325.00 EURe via bank transfer to Rotki Solutions GmbH (${iban}) with memo "for salaries and insurance"`;
 
     const notesData = formatNotes({ notes, counterparty: 'monerium' });
     let formatted = get(notesData);
-    let notesToString = formatted.filter(item => item.type === NoteType.WORD).map(item => item.word).join('');
-    let included = notesToString.includes(iban.split(' ').join(''));
+    let notesToString = formatted
+      .filter(item => item.type === NoteType.WORD)
+      .map(item => item.word)
+      .join('');
 
-    expect(included).toBeTruthy();
+    expect(notesToString).toContain(iban);
 
     store.update({ scrambleData: true });
     formatted = get(notesData);
-    notesToString = formatted.filter(item => item.type === NoteType.WORD).map(item => item.word).join('');
-    included = notesToString.includes(iban.split(' ').join(''));
+    notesToString = formatted
+      .filter(item => item.type === NoteType.WORD)
+      .map(item => item.word)
+      .join('');
 
-    expect(included).toBeFalsy();
+    expect(notesToString).not.toContain(iban);
   });
 
   it('works with punctuation', () => {
@@ -340,18 +394,16 @@ describe('composables::history/notes', () => {
       },
       {
         type: NoteType.WORD,
-        word: '.',
-      },
-      {
-        type: NoteType.WORD,
-        word: 'Some',
-      },
-      {
-        type: NoteType.WORD,
-        word: 'sentence.',
+        word: '. Some sentence.',
       },
     ];
 
     expect(formatted).toMatchObject(expected);
+  });
+
+  it('should properly handle an asset resolving to empty string', () => {
+    const notes = 'Sell JUNO for USD. Amount out';
+    const formatted = get(formatNotes({ notes, assetId: '0xdeadbeef' }));
+    expect(formatted).toMatchObject([{ type: 'word', word: 'Sell JUNO for USD. Amount out' }]);
   });
 });

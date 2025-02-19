@@ -1,155 +1,75 @@
 <script setup lang="ts">
-import { ApiValidationError } from '@/types/api/errors';
+import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
+import { type Filters, type Matcher, useAddressBookFilter } from '@/composables/filters/address-book';
+import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import AddressBookFormDialog from '@/components/address-book-manager/AddressBookFormDialog.vue';
+import AddressBookTable from '@/components/address-book-manager/AddressBookTable.vue';
+import EthNamesHint from '@/components/EthNamesHint.vue';
+import TableFilter from '@/components/table-filter/TableFilter.vue';
+import ChainSelect from '@/components/accounts/blockchain/ChainSelect.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+import AddressBookManagementMore from '@/components/address-book-manager/AddressBookManagementMore.vue';
+import { useCommonTableProps } from '@/composables/use-common-table-props';
 import type {
   AddressBookEntry,
   AddressBookLocation,
   AddressBookPayload,
   AddressBookRequestPayload,
 } from '@/types/eth-names';
-import type { Collection } from '@/types/collection';
-import type { Filters, Matcher } from '@/composables/filters/address-book';
 
-const selectedChain: Ref<string | null> = ref(null);
-const enableForAllChains: Ref<boolean> = ref(false);
-
-const tab = ref<number>(0);
-const locations: AddressBookLocation[] = ['global', 'private'];
 const { t } = useI18n();
+
+const selectedChain = ref<string>();
+const tab = ref<number>(0);
+
+const locations: AddressBookLocation[] = ['global', 'private'];
 
 const location = computed<AddressBookLocation>(() => locations[get(tab)]);
 
-const emptyForm: () => AddressBookPayload = () => ({
-  location: get(location),
-  blockchain: get(selectedChain),
-  address: '',
-  name: '',
-});
+const { editableItem, openDialog } = useCommonTableProps<AddressBookPayload>();
 
-const { setSubmitFunc, setOpenDialog, closeDialog } = useAddressBookForm();
-
-const editMode = ref<boolean>(false);
-const formPayload = ref<AddressBookPayload>(emptyForm());
-const errorMessages = ref<{ address?: string[]; name?: string[] }>({});
-
-const { getAddressBook, addAddressBook, updateAddressBook } = useAddressesNamesStore();
-const { setMessage } = useMessageStore();
+const { getAddressBook } = useAddressesNamesStore();
 
 const {
-  filters,
-  matchers,
-  state,
-  isLoading,
   fetchData,
-  setFilter,
-  sort,
+  filters,
+  isLoading,
+  matchers,
   pagination,
+  sort,
+  state,
 } = usePaginationFilters<
   AddressBookEntry,
   AddressBookRequestPayload,
-  AddressBookEntry,
-  Collection<AddressBookEntry>,
   Filters,
   Matcher
->(
-  null,
-  true,
-  useAddressBookFilter,
-  filter => getAddressBook(get(location), filter),
-  {
-    extraParams: computed(() => ({
-      blockchain: get(selectedChain),
-    })),
-    defaultSortBy: {
-      key: 'name',
-      ascending: [true],
-    },
-  },
-);
-
-function openForm(item: AddressBookEntry | null = null) {
-  set(editMode, !!item);
-  if (item) {
-    set(formPayload, {
-      ...item,
-      location: get(location),
-    });
-    set(enableForAllChains, !item.blockchain);
-  }
-  else {
-    const newForm = emptyForm();
-    set(formPayload, {
-      ...newForm,
-    });
-  }
-  setOpenDialog(true);
-}
-
-const resetForm = function () {
-  closeDialog();
-  set(formPayload, emptyForm());
-  set(enableForAllChains, false);
-  set(errorMessages, {});
-};
-
-async function save() {
-  try {
-    const { blockchain, address, name, location } = get(formPayload);
-    const payload = {
-      address: address.trim(),
-      name: name.trim(),
-      blockchain: get(enableForAllChains) ? null : blockchain,
-    };
-    if (get(editMode))
-      await updateAddressBook(location, [payload]);
-    else
-      await addAddressBook(location, [payload]);
-
-    set(tab, location === 'global' ? 0 : 1);
-
-    closeDialog();
-    await fetchData();
-    return true;
-  }
-  catch (error: any) {
-    let errors = error.message;
-
-    if (error instanceof ApiValidationError)
-      errors = error.getValidationErrors(get(formPayload));
-
-    if (typeof errors === 'string') {
-      const values = { message: error.message };
-      const title = get(editMode)
-        ? t('address_book.actions.edit.error.title')
-        : t('address_book.actions.add.error.title');
-      const description = get(editMode)
-        ? t('address_book.actions.edit.error.description', values)
-        : t('address_book.actions.add.error.description', values);
-      setMessage({
-        title,
-        description,
-        success: false,
-      });
-    }
-    else {
-      set(errorMessages, errors);
-    }
-    return false;
-  }
-}
-
-setSubmitFunc(save);
-
-onMounted(async () => {
-  await fetchData();
+>(filter => getAddressBook(get(location), filter), {
+  defaultSortBy: [{
+    column: 'name',
+    direction: 'asc',
+  }],
+  extraParams: computed(() => ({
+    blockchain: get(selectedChain),
+  })),
+  filterSchema: useAddressBookFilter,
+  history: 'router',
 });
 
-watch(location, async () => {
-  await fetchData();
-});
+function add() {
+  set(editableItem, null);
+  set(openDialog, true);
+}
 
-watch(formPayload, ({ blockchain }, { blockchain: oldBlockchain }) => {
-  if (blockchain !== oldBlockchain)
-    set(errorMessages, {});
+function edit(item: AddressBookEntry) {
+  set(editableItem, {
+    ...item,
+    location: get(location),
+  });
+  set(openDialog, true);
+}
+
+watchImmediate(location, async () => {
+  await fetchData();
 });
 </script>
 
@@ -161,40 +81,42 @@ watch(formPayload, ({ blockchain }, { blockchain: oldBlockchain }) => {
     <template #buttons>
       <RuiButton
         color="primary"
-        @click="openForm()"
+        @click="add()"
       >
         <template #prepend>
-          <RuiIcon name="add-line" />
+          <RuiIcon name="lu-plus" />
         </template>
         {{ t('address_book.dialog.add_title') }}
       </RuiButton>
+      <AddressBookManagementMore
+        @refresh="fetchData()"
+      />
     </template>
 
     <RuiCard>
       <div class="flex flex-row flex-wrap items-center justify-end gap-2">
         <ChainSelect
-          :model-value="selectedChain"
+          v-model="selectedChain"
           hide-details
           class="flex-1 max-w-full md:max-w-[18rem]"
           clearable
           dense
           exclude-eth-staking
-          @update:model-value="selectedChain = $event"
         />
 
         <div class="w-[20rem] max-w-[30rem]">
           <TableFilter
+            v-model:matches="filters"
             :matchers="matchers"
-            :matches="filters"
-            @update:matches="setFilter($event)"
           />
         </div>
       </div>
 
-      <div class="flex flex-row items-end gap-2 mb-4">
+      <div class="flex flex-row items-center gap-2 mb-3">
         <RuiTabs
           v-model="tab"
           color="primary"
+          class="border border-default rounded bg-white dark:bg-rui-grey-900 flex max-w-min"
         >
           <RuiTab
             v-for="loc in locations"
@@ -214,13 +136,13 @@ watch(formPayload, ({ blockchain }, { blockchain: oldBlockchain }) => {
         >
           <template #default>
             <AddressBookTable
+              v-model:sort="sort"
+              v-model:pagination="pagination"
               :collection="state"
               :location="loc"
               :loading="isLoading"
-              :sort.sync="sort"
-              :pagination.sync="pagination"
               :blockchain="selectedChain"
-              @edit="openForm($event)"
+              @edit="edit($event)"
               @refresh="fetchData()"
             />
           </template>
@@ -229,11 +151,12 @@ watch(formPayload, ({ blockchain }, { blockchain: oldBlockchain }) => {
     </RuiCard>
 
     <AddressBookFormDialog
-      v-model="formPayload"
-      :enable-for-all-chains.sync="enableForAllChains"
-      :edit-mode="editMode"
-      :error-messages="errorMessages"
-      @reset="resetForm()"
+      v-model:open="openDialog"
+      :editable-item="editableItem"
+      :selected-chain="selectedChain"
+      :location="location"
+      @update-tab="tab = $event"
+      @refresh="fetchData()"
     />
   </TablePageLayout>
 </template>

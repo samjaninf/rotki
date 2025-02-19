@@ -1,22 +1,21 @@
 <script setup lang="ts">
+import { TWITTER_URL, externalLinks } from '@shared/external-links';
 import { IndexedDb } from '@/utils/indexed-db';
-import { TWITTER_URL, externalLinks } from '@/data/external-links';
+import { downloadFileByTextContent } from '@/utils/download';
+import { useNotificationsStore } from '@/store/notifications';
+import { useInterop } from '@/composables/electron-interop';
+import type { RuiIcons } from '@rotki/ui-library';
 
-const props = defineProps<{
-  visible: boolean;
-}>();
+const display = defineModel<boolean>({ required: true });
 
 const emit = defineEmits<{
-  (e: 'update:visible', visible: boolean): void;
   (e: 'about'): void;
 }>();
 
 const { t } = useI18n();
 
-const display = useVModel(props, 'visible', emit);
-
 interface Entry {
-  readonly icon: string;
+  readonly icon: RuiIcons;
   readonly title: string;
   readonly subtitle: string;
   readonly link: string;
@@ -24,34 +23,34 @@ interface Entry {
 
 const entries: Entry[] = [
   {
-    icon: 'book-open-line',
-    title: t('help_sidebar.user_guide.title').toString(),
-    subtitle: t('help_sidebar.user_guide.subtitle').toString(),
+    icon: 'lu-book-open',
     link: externalLinks.usageGuide,
+    subtitle: t('help_sidebar.user_guide.subtitle'),
+    title: t('help_sidebar.user_guide.title'),
   },
   {
-    icon: 'questionnaire-line',
-    title: t('help_sidebar.faq.title').toString(),
-    subtitle: t('help_sidebar.faq.subtitle').toString(),
+    icon: 'lu-message-circle-question',
     link: externalLinks.faq,
+    subtitle: t('help_sidebar.faq.subtitle'),
+    title: t('help_sidebar.faq.title'),
   },
   {
-    icon: 'discord-line',
-    title: t('help_sidebar.support.title').toString(),
-    subtitle: t('help_sidebar.support.subtitle').toString(),
+    icon: 'lu-discord',
     link: externalLinks.discord,
+    subtitle: t('help_sidebar.support.subtitle'),
+    title: t('help_sidebar.support.title'),
   },
   {
-    icon: 'github-line',
-    title: t('help_sidebar.github.title').toString(),
-    subtitle: t('help_sidebar.github.subtitle').toString(),
+    icon: 'lu-github',
     link: externalLinks.github,
+    subtitle: t('help_sidebar.github.subtitle'),
+    title: t('help_sidebar.github.title'),
   },
   {
-    icon: 'twitter-x-line',
-    title: t('help_sidebar.twitter.title').toString(),
-    subtitle: t('help_sidebar.twitter.subtitle').toString(),
+    icon: 'lu-x-twitter',
     link: TWITTER_URL,
+    subtitle: t('help_sidebar.twitter.subtitle'),
+    title: t('help_sidebar.twitter.title'),
   },
 ];
 
@@ -69,9 +68,9 @@ async function downloadBrowserLog() {
     if (data?.length === 0) {
       const { notify } = useNotificationsStore();
       notify({
-        title: t('help_sidebar.browser_log.error.empty.title').toString(),
-        message: t('help_sidebar.browser_log.error.empty.message').toString(),
         display: true,
+        message: t('help_sidebar.browser_log.error.empty.message'),
+        title: t('help_sidebar.browser_log.error.empty.title'),
       });
       return;
     }
@@ -79,21 +78,14 @@ async function downloadBrowserLog() {
     downloadFileByTextContent(messages, 'frontend_log.txt');
   });
 }
-
-const css = useCssModule();
 </script>
 
 <template>
-  <VNavigationDrawer
+  <RuiNavigationDrawer
     v-model="display"
-    :class="css.sidebar"
-    class="border-default"
     width="400px"
-    absolute
-    clipped
-    right
     temporary
-    hide-overlay
+    position="right"
   >
     <div class="flex justify-between items-center p-2 pl-4">
       <div class="text-h6">
@@ -104,7 +96,7 @@ const css = useCssModule();
         icon
         @click="display = false"
       >
-        <RuiIcon name="close-line" />
+        <RuiIcon name="lu-x" />
       </RuiButton>
     </div>
     <div class="py-0">
@@ -113,7 +105,7 @@ const css = useCssModule();
         :key="index"
         :href="interop.isPackaged ? undefined : item.link"
         target="_blank"
-        class="flex items-center gap-6 py-4 px-6 hover:!bg-rui-grey-100 hover:dark:!bg-rui-grey-800"
+        class="flex items-center gap-6 py-4 px-6 hover:!bg-rui-grey-100 hover:dark:!bg-rui-grey-800 cursor-pointer"
         :class="{ 'border-t border-default': index > 0 }"
         @click="interop.isPackaged ? interop.openUrl(item.link) : null"
       >
@@ -136,7 +128,7 @@ const css = useCssModule();
         >
           <RuiIcon
             class="text-rui-text-secondary"
-            name="information-line"
+            name="lu-info"
           />
 
           <div class="gap-1">
@@ -155,7 +147,7 @@ const css = useCssModule();
         >
           <RuiIcon
             class="text-rui-text-secondary"
-            name="file-download-line"
+            name="lu-file-down"
           />
 
           <div class="gap-1">
@@ -169,11 +161,5 @@ const css = useCssModule();
         </div>
       </template>
     </div>
-  </VNavigationDrawer>
+  </RuiNavigationDrawer>
 </template>
-
-<style module lang="scss">
-.sidebar {
-  @apply border-t pt-0 top-[3.5rem] md:top-[4rem] #{!important};
-}
-</style>

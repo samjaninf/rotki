@@ -1,3 +1,5 @@
+import type { Blockchain } from '@rotki/common';
+
 export interface ExternalTrade {
   readonly time: string;
   readonly base: string;
@@ -16,7 +18,20 @@ export interface ExternalTrade {
   readonly location?: string;
 }
 
-export interface FieldMessage { target: string; mustInclude: string; messageContains?: string }
+export interface FieldMessage {
+  target: string;
+  mustInclude: string;
+  messageContains?: string;
+}
+
+export interface FixtureBlockchainAccount {
+  readonly blockchain: Blockchain;
+  readonly inputMode: string;
+  readonly chainName: string;
+  readonly address: string;
+  readonly label: string;
+  readonly tags: string[];
+}
 
 declare global {
   namespace Cypress {
@@ -29,6 +44,7 @@ declare global {
       addExternalTrade: (trade: ExternalTrade) => Chainable;
       addEtherscanKey: (key: string) => Chainable;
       assertNoRunningTasks: () => Chainable;
+      scrollElemToTop: (target: string) => void;
     }
   }
 }

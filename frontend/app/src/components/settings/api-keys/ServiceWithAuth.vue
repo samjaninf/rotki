@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRefMap } from '@/composables/utils/useRefMap';
 import type { Auth, ExternalServicePayloadWithAuth } from '@/types/user';
 
 const props = withDefaults(
@@ -9,13 +10,15 @@ const props = withDefaults(
     tooltip?: string;
     hint?: string;
     status?: { message: string; success?: boolean };
+    hideActions?: boolean;
   }>(),
   {
     credential: null,
-    status: undefined,
-    loading: false,
-    tooltip: '',
+    hideActions: false,
     hint: '',
+    loading: false,
+    status: undefined,
+    tooltip: '',
   },
 );
 
@@ -65,8 +68,8 @@ function saveHandler() {
   if (get(editMode)) {
     emit('save', {
       name: props.name,
-      username: get(username),
       password: get(password),
+      username: get(username),
     });
     set(editMode, false);
     set(cancellable, true);
@@ -85,14 +88,23 @@ function cancel() {
   set(password, credentialVal.password);
 }
 
-watch(credential, () => {
-  updateStatus();
-}, {
-  immediate: true,
-  deep: true,
-});
+watch(
+  credential,
+  () => {
+    updateStatus();
+  },
+  {
+    deep: true,
+    immediate: true,
+  },
+);
 
-const slots = useSlots();
+const allFilled = computed(() => get(username) && get(password));
+defineExpose({
+  allFilled,
+  editMode,
+  saveHandler,
+});
 </script>
 
 <template>
@@ -112,7 +124,7 @@ const slots = useSlots();
         :success-messages="successMessages"
         :disabled="!editMode"
         :label="t('external_services.credential.username')"
-        prepend-icon="user-line"
+        prepend-icon="lu-user"
       />
 
       <RuiRevealableTextField
@@ -126,10 +138,11 @@ const slots = useSlots();
         :success-messages="successMessages.length > 0 ? [' '] : undefined"
         :disabled="!editMode"
         :label="t('external_services.credential.password')"
-        prepend-icon="key-line"
+        prepend-icon="lu-key"
       />
 
       <RuiTooltip
+        v-if="!hideActions"
         :open-delay="400"
         :popper="{ placement: 'top' }"
       >
@@ -143,16 +156,17 @@ const slots = useSlots();
             color="primary"
             @click="emit('delete-key', name)"
           >
-            <RuiIcon name="delete-bin-line" />
+            <RuiIcon name="lu-trash-2" />
           </RuiButton>
         </template>
         {{ tooltip }}
       </RuiTooltip>
     </div>
 
-    <slot v-if="slots.default" />
+    <slot v-if="$slots.default" />
 
     <div
+      v-if="!hideActions"
       class="pt-4 flex gap-2"
       data-cy="service-key__buttons"
     >

@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import images from './poap.json';
-import type { DataTableColumn } from '@rotki/ui-library-compat';
+import images from '@/components/defi/airdrops/poap.json';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import type { PoapDeliveryDetails } from '@/types/defi/airdrops';
+import type { DataTableColumn } from '@rotki/ui-library';
 
 defineProps<{ items: PoapDeliveryDetails[] }>();
 
@@ -28,22 +31,28 @@ type EventType = (typeof events)[number];
 
 const { t } = useI18n();
 
-const headers = computed<DataTableColumn[]>(() => [
+const headers = computed<DataTableColumn<PoapDeliveryDetails>[]>(() => [
   {
-    label: t('common.name'),
     key: 'name',
+    label: t('common.name'),
   },
   {
-    label: '',
-    key: 'link',
     align: 'end',
+    key: 'link',
+    label: '',
     width: '50px',
   },
 ]);
 
-function getImage(event: EventType): string {
-  const image = images[event];
-  return image ?? '';
+function isEventType(event: string): event is EventType {
+  return Array.prototype.includes.call(events, event);
+}
+
+function getImage(event: string): string {
+  if (isEventType(event))
+    return images[event];
+
+  return '';
 }
 </script>
 
@@ -86,7 +95,7 @@ function getImage(event: EventType): string {
           >
             <RuiIcon
               size="16"
-              name="external-link-line"
+              name="lu-external-link"
             />
           </RuiButton>
         </ExternalLink>

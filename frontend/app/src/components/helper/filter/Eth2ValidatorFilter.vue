@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common/lib/blockchain';
+import { Blockchain, type Eth2ValidatorEntry, type EthStakingFilter } from '@rotki/common';
+import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
+import { useBlockchainValidatorsStore } from '@/store/blockchain/validators';
+import ValidatorFilterInput from '@/components/helper/filter/ValidatorFilterInput.vue';
+import BlockchainAccountSelector from '@/components/helper/BlockchainAccountSelector.vue';
 import type { AddressData, BlockchainAccount } from '@/types/blockchain/accounts';
-import type {
-  Eth2ValidatorEntry,
-  EthStakingFilter,
-} from '@rotki/common/lib/staking/eth2';
 
 defineProps<{
-  value: EthStakingFilter;
+  modelValue: EthStakingFilter;
 }>();
 
 const emit = defineEmits<{
-  (e: 'input', value: EthStakingFilter): void;
+  (e: 'update:model-value', value: EthStakingFilter): void;
 }>();
 
 const { t } = useI18n();
@@ -19,10 +19,10 @@ const { t } = useI18n();
 const chain = Blockchain.ETH;
 const accounts = ref<BlockchainAccount<AddressData>[]>([]);
 
-const { ethStakingValidators } = storeToRefs(useBlockchainStore());
+const { ethStakingValidators } = storeToRefs(useBlockchainValidatorsStore());
 
 function updateValidators(validators: Eth2ValidatorEntry[]) {
-  emit('input', { validators });
+  emit('update:model-value', { validators });
 }
 
 function updateAccounts(accounts: BlockchainAccount<AddressData>[]) {
@@ -30,7 +30,7 @@ function updateAccounts(accounts: BlockchainAccount<AddressData>[]) {
     address: getAccountAddress(account),
     chain: account.chain,
   }));
-  emit('input', { accounts: accountList });
+  emit('update:model-value', { accounts: accountList });
 }
 
 watch(accounts, accounts => updateAccounts(accounts));
@@ -38,18 +38,18 @@ watch(accounts, accounts => updateAccounts(accounts));
 
 <template>
   <BlockchainAccountSelector
-    v-if="'accounts' in value"
+    v-if="'accounts' in modelValue"
     v-model="accounts"
-    no-padding
     dense
     outlined
     :chains="[chain]"
+    class="!bg-transparent"
     :label="t('eth2_validator_filter.label')"
   />
   <ValidatorFilterInput
     v-else
-    :value="value.validators"
-    :items="ethStakingValidators.map(({ data }) => data)"
-    @input="updateValidators($event)"
+    :model-value="modelValue.validators"
+    :items="ethStakingValidators"
+    @update:model-value="updateValidators($event)"
   />
 </template>

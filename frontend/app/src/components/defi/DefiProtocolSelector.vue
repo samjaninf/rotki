@@ -1,64 +1,55 @@
 <script setup lang="ts">
-import {
-  DefiProtocol,
-  SUPPORTED_MODULES,
-  isDefiProtocol,
-} from '@/types/modules';
+import { DefiProtocol, SUPPORTED_MODULES, type SupportedModule, isDefiProtocol } from '@/types/modules';
+import DefiIcon from '@/components/defi/DefiIcon.vue';
 
-const props = withDefaults(
-  defineProps<{
-    value?: DefiProtocol | null;
-    liabilities?: boolean;
-  }>(),
-  {
-    value: null,
-    liabilities: false,
-  },
-);
+type SupportedProtocol = Omit<SupportedModule, 'identifier'> & { identifier: DefiProtocol };
 
-const emit = defineEmits<{
-  (e: 'input', protocol: DefiProtocol | null): void;
-}>();
+defineOptions({
+  inheritAttrs: false,
+});
 
-const dual = [DefiProtocol.AAVE, DefiProtocol.COMPOUND];
-const borrowing = [DefiProtocol.MAKERDAO_VAULTS, DefiProtocol.LIQUITY];
-const lending = [
-  DefiProtocol.MAKERDAO_DSR,
-  DefiProtocol.YEARN_VAULTS,
-  DefiProtocol.YEARN_VAULTS_V2,
-];
+const model = defineModel<DefiProtocol | undefined>({ required: true });
+
+const props = withDefaults(defineProps<{
+  liabilities?: boolean;
+}>(), {
+  liabilities: false,
+});
+
+const dual = [DefiProtocol.AAVE, DefiProtocol.COMPOUND] as const;
+const borrowing = [DefiProtocol.MAKERDAO_VAULTS, DefiProtocol.LIQUITY] as const;
+const lending = [DefiProtocol.MAKERDAO_DSR, DefiProtocol.YEARN_VAULTS, DefiProtocol.YEARN_VAULTS_V2] as const;
 
 const { liabilities } = toRefs(props);
 const search = ref<string>('');
 
 const { t } = useI18n();
 
-function input(_selectedProtocol: DefiProtocol | null) {
-  emit('input', _selectedProtocol);
-}
+const protocols = computed<DefiProtocol[]>(() => get(liabilities) ? [...dual, ...borrowing] : [...dual, ...lending]);
 
-const protocols = computed<DefiProtocol[]>(() => {
-  if (get(liabilities))
-    return [...dual, ...borrowing];
+const protocolsData = computed<SupportedProtocol[]>(() => {
+  const data: SupportedProtocol[] = [];
+  for (const module of SUPPORTED_MODULES) {
+    const identifier = module.identifier;
+    if (isDefiProtocol(identifier) && get(protocols).includes(identifier)) {
+      data.push({
+        ...module,
+        identifier,
+      });
+    }
+  }
 
-  return [...dual, ...lending];
-});
+  return data;
+},
 
-const protocolsData = computed(() =>
-  SUPPORTED_MODULES.filter(({ identifier }) => {
-    if (!isDefiProtocol(identifier))
-      return false;
-
-    return get(protocols).includes(identifier);
-  }),
 );
 </script>
 
 <template>
   <RuiCard>
     <RuiAutoComplete
-      :value="value"
-      :search-input.sync="search"
+      v-model="model"
+      v-model:search-input="search"
       :options="protocolsData"
       hide-details
       hide-selected
@@ -72,7 +63,6 @@ const protocolsData = computed(() =>
       text-attr="name"
       key-attr="identifier"
       class="defi-protocol-selector"
-      @input="input($event)"
     >
       <template #selection="{ item }">
         <DefiIcon
@@ -88,11 +78,7 @@ const protocolsData = computed(() =>
       </template>
     </RuiAutoComplete>
     <div class="p-2 text-body-2 text-rui-text-secondary">
-      {{
-        value
-          ? t('defi_protocol_selector.filter_specific')
-          : t('defi_protocol_selector.filter_all')
-      }}
+      {{ model ? t('defi_protocol_selector.filter_specific') : t('defi_protocol_selector.filter_all') }}
     </div>
   </RuiCard>
 </template>

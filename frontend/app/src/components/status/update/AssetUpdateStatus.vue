@@ -4,7 +4,7 @@ const props = defineProps<{
   remoteVersion: number;
 }>();
 
-const { status, remoteVersion } = toRefs(props);
+const { remoteVersion, status } = toRefs(props);
 
 const { t } = useI18n();
 
@@ -37,7 +37,7 @@ const message = computed(() => {
     <template #header>
       {{ title }}
     </template>
-    <div class="flex items-center space-x-14">
+    <div class="flex items-center space-x-10">
       <RuiProgress
         color="primary"
         variant="indeterminate"

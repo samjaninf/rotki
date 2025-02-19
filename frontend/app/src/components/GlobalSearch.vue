@@ -1,8 +1,23 @@
 <script setup lang="ts">
+import { startPromise } from '@shared/utils';
 import { useAppRoutes } from '@/router/routes';
+import { useExchangesStore } from '@/store/exchanges';
+import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useInterop } from '@/composables/electron-interop';
+import { useLocations } from '@/composables/locations';
+import { useBalancesBreakdown } from '@/composables/balances/breakdown';
+import { useAggregatedBalances } from '@/composables/balances/aggregated';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import AppImage from '@/components/common/AppImage.vue';
+import LocationIcon from '@/components/history/LocationIcon.vue';
+import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+import type { RuiIcons } from '@rotki/ui-library';
 import type { AssetBalanceWithPrice, BigNumber } from '@rotki/common';
 import type { Exchange } from '@/types/exchanges';
 import type { TradeLocationData } from '@/types/history/trade/location';
+import type { RouteLocationRaw } from 'vue-router';
 
 interface SearchItem {
   value: number;
@@ -12,9 +27,9 @@ interface SearchItem {
   location?: TradeLocationData;
   price?: BigNumber;
   total?: BigNumber;
-  icon?: string;
+  icon?: RuiIcons;
   image?: string;
-  route?: string;
+  route?: RouteLocationRaw;
   action?: () => void;
   matchedPoints?: number;
 }
@@ -28,10 +43,10 @@ const open = ref<boolean>(false);
 const isMac = ref<boolean>(false);
 
 const input = ref<any>(null);
-const selected = ref<number | string>('');
+const selected = ref<number>();
 const search = ref<string>('');
 const loading = ref(false);
-const visibleItems: Ref<SearchItem[]> = ref([]);
+const visibleItems = ref<SearchItem[]>([]);
 
 const modifier = computed<string>(() => (get(isMac) ? 'Cmd' : 'Ctrl'));
 const key = '/';
@@ -56,62 +71,57 @@ function getItemText(item: SearchItemWithoutValue): string {
 }
 
 function filterItems(items: SearchItemWithoutValue[], keyword: string): SearchItemWithoutValue[] {
-  return items
-    .filter((item) => {
-      let matchedPoints = 0;
-      for (const word of keyword.trim().split(' ')) {
-        const indexOf = getItemText(item).toLowerCase().indexOf(word);
-        if (indexOf > -1)
-          matchedPoints++;
-
+  const splitKeyword = keyword.split(' ');
+  return items.filter((item) => {
+    let matchedPoints = 0;
+    for (const word of splitKeyword) {
+      const indexOf = getItemText(item).toLowerCase().indexOf(word);
+      if (indexOf > -1) {
+        matchedPoints++;
         if (indexOf === 0)
           matchedPoints += 0.5;
       }
-      item.matchedPoints = matchedPoints;
-      return matchedPoints > 0;
-    })
-    .sort((a, b) => (b.matchedPoints ?? 0) - (a.matchedPoints ?? 0));
+    }
+    item.matchedPoints = matchedPoints;
+    return matchedPoints > 0;
+  });
 }
 
 function getRoutes(keyword: string): SearchItemWithoutValue[] {
   const routeItems: SearchItemWithoutValue[] = [
     { ...Routes.DASHBOARD },
     {
-      ...Routes.ACCOUNTS_BALANCES_BLOCKCHAIN,
-      texts: [
-        Routes.ACCOUNTS_BALANCES.text,
-        Routes.ACCOUNTS_BALANCES_BLOCKCHAIN.text,
-      ],
+      ...Routes.ACCOUNTS_EVM,
+      texts: [Routes.ACCOUNTS.text, Routes.ACCOUNTS_EVM.text],
     },
     {
-      ...Routes.ACCOUNTS_BALANCES_EXCHANGE,
-      texts: [
-        Routes.ACCOUNTS_BALANCES.text,
-        Routes.ACCOUNTS_BALANCES_EXCHANGE.text,
-      ],
+      ...Routes.ACCOUNTS_BITCOIN,
+      texts: [Routes.ACCOUNTS.text, Routes.ACCOUNTS_BITCOIN.text],
     },
     {
-      ...Routes.ACCOUNTS_BALANCES_MANUAL,
-      texts: [
-        Routes.ACCOUNTS_BALANCES.text,
-        Routes.ACCOUNTS_BALANCES_MANUAL.text,
-      ],
+      ...Routes.ACCOUNTS_SUBSTRATE,
+      texts: [Routes.ACCOUNTS.text, Routes.ACCOUNTS_SUBSTRATE.text],
     },
     {
-      ...Routes.ACCOUNTS_BALANCES_NON_FUNGIBLE,
-      texts: [
-        Routes.ACCOUNTS_BALANCES.text,
-        Routes.ACCOUNTS_BALANCES_NON_FUNGIBLE.text,
-      ],
+      ...Routes.BALANCES_BLOCKCHAIN,
+      texts: [Routes.BALANCES.text, Routes.BALANCES_BLOCKCHAIN.text],
+    },
+    {
+      ...Routes.BALANCES_EXCHANGE,
+      texts: [Routes.BALANCES.text, Routes.BALANCES_EXCHANGE.text],
+    },
+    {
+      ...Routes.BALANCES_MANUAL,
+      texts: [Routes.BALANCES.text, Routes.BALANCES_MANUAL.text],
+    },
+    {
+      ...Routes.BALANCES_NON_FUNGIBLE,
+      texts: [Routes.BALANCES.text, Routes.BALANCES_NON_FUNGIBLE.text],
     },
     { ...Routes.NFTS },
     {
       ...Routes.HISTORY_TRADES,
       texts: [Routes.HISTORY.text, Routes.HISTORY_TRADES.text],
-    },
-    {
-      ...Routes.HISTORY_DEPOSITS_WITHDRAWALS,
-      texts: [Routes.HISTORY.text, Routes.HISTORY_DEPOSITS_WITHDRAWALS.text],
     },
     {
       ...Routes.HISTORY_EVENTS,
@@ -123,19 +133,11 @@ function getRoutes(keyword: string): SearchItemWithoutValue[] {
     },
     {
       ...Routes.DEFI_DEPOSITS_PROTOCOLS,
-      texts: [
-        Routes.DEFI.text,
-        Routes.DEFI_DEPOSITS.text,
-        Routes.DEFI_DEPOSITS_PROTOCOLS.text,
-      ],
+      texts: [Routes.DEFI.text, Routes.DEFI_DEPOSITS.text, Routes.DEFI_DEPOSITS_PROTOCOLS.text],
     },
     {
       ...Routes.DEFI_DEPOSITS_LIQUIDITY,
-      texts: [
-        Routes.DEFI.text,
-        Routes.DEFI_DEPOSITS.text,
-        Routes.DEFI_DEPOSITS_LIQUIDITY.text,
-      ],
+      texts: [Routes.DEFI.text, Routes.DEFI_DEPOSITS.text, Routes.DEFI_DEPOSITS_LIQUIDITY.text],
     },
     {
       ...Routes.DEFI_LIABILITIES,
@@ -148,6 +150,7 @@ function getRoutes(keyword: string): SearchItemWithoutValue[] {
     { ...Routes.STATISTICS },
     { ...Routes.STAKING },
     { ...Routes.PROFIT_LOSS_REPORTS },
+    { ...Routes.TAG_MANAGER },
     {
       ...Routes.ASSET_MANAGER_MANAGED,
       texts: [Routes.ASSET_MANAGER.text, Routes.ASSET_MANAGER_MANAGED.text],
@@ -157,11 +160,12 @@ function getRoutes(keyword: string): SearchItemWithoutValue[] {
       texts: [Routes.ASSET_MANAGER.text, Routes.ASSET_MANAGER_CUSTOM.text],
     },
     {
+      ...Routes.ASSET_MANAGER_CEX_MAPPING,
+      texts: [Routes.ASSET_MANAGER.text, Routes.ASSET_MANAGER_CEX_MAPPING.text],
+    },
+    {
       ...Routes.ASSET_MANAGER_NEWLY_DETECTED,
-      texts: [
-        Routes.ASSET_MANAGER.text,
-        Routes.ASSET_MANAGER_NEWLY_DETECTED.text,
-      ],
+      texts: [Routes.ASSET_MANAGER.text, Routes.ASSET_MANAGER_NEWLY_DETECTED.text],
     },
     {
       ...Routes.PRICE_MANAGER_LATEST,
@@ -186,20 +190,36 @@ function getRoutes(keyword: string): SearchItemWithoutValue[] {
     },
     { ...Routes.IMPORT },
     {
+      ...Routes.SETTINGS_ACCOUNT,
+      texts: [Routes.SETTINGS.text, Routes.SETTINGS_ACCOUNT.text],
+    },
+    {
       ...Routes.SETTINGS_GENERAL,
       texts: [Routes.SETTINGS.text, Routes.SETTINGS_GENERAL.text],
+    },
+    {
+      ...Routes.SETTINGS_DATABASE,
+      texts: [Routes.SETTINGS.text, Routes.SETTINGS_DATABASE.text],
     },
     {
       ...Routes.SETTINGS_ACCOUNTING,
       texts: [Routes.SETTINGS.text, Routes.SETTINGS_ACCOUNTING.text],
     },
     {
-      ...Routes.SETTINGS_DATA_SECURITY,
-      texts: [Routes.SETTINGS.text, Routes.SETTINGS_DATA_SECURITY.text],
+      ...Routes.SETTINGS_ORACLE,
+      texts: [Routes.SETTINGS.text, Routes.SETTINGS_ORACLE.text],
+    },
+    {
+      ...Routes.SETTINGS_RPC,
+      texts: [Routes.SETTINGS.text, Routes.SETTINGS_RPC.text],
     },
     {
       ...Routes.SETTINGS_MODULES,
       texts: [Routes.SETTINGS.text, Routes.SETTINGS_MODULES.text],
+    },
+    {
+      ...Routes.SETTINGS_INTERFACE,
+      texts: [Routes.SETTINGS.text, Routes.SETTINGS_INTERFACE.text],
     },
     {
       ...Routes.CALENDAR,
@@ -211,22 +231,16 @@ function getRoutes(keyword: string): SearchItemWithoutValue[] {
 
 function getExchanges(keyword: string): SearchItemWithoutValue[] {
   const exchanges = get(connectedExchanges);
-  const exchangeItems: SearchItemWithoutValue[] = exchanges.map(
-    (exchange: Exchange) => {
-      const identifier = exchange.location;
-      const name = exchange.name;
+  const exchangeItems: SearchItemWithoutValue[] = exchanges.map((exchange: Exchange) => {
+    const identifier = exchange.location;
+    const name = exchange.name;
 
-      return {
-        location: getLocationData(identifier) ?? undefined,
-        route: `${Routes.ACCOUNTS_BALANCES_EXCHANGE.route}/${identifier}`,
-        texts: [
-          Routes.ACCOUNTS_BALANCES.text,
-          Routes.ACCOUNTS_BALANCES_EXCHANGE.text,
-          name,
-        ],
-      };
-    },
-  );
+    return {
+      location: getLocationData(identifier) ?? undefined,
+      route: `${Routes.BALANCES_EXCHANGE.route}/${identifier}`,
+      texts: [Routes.BALANCES.text, Routes.BALANCES_EXCHANGE.text, name],
+    };
+  });
 
   return filterItems(exchangeItems, keyword);
 }
@@ -234,44 +248,54 @@ function getExchanges(keyword: string): SearchItemWithoutValue[] {
 function getActions(keyword: string): SearchItemWithoutValue[] {
   const actionItems: SearchItemWithoutValue[] = [
     {
-      text: t('exchange_settings.dialog.add.title'),
       route: `${Routes.API_KEYS_EXCHANGES.route}?add=true`,
+      text: t('exchange_settings.dialog.add.title'),
     },
     {
+      route: `${Routes.ACCOUNTS_EVM.route}?add=true`,
       text: t('blockchain_balances.form_dialog.add_title'),
-      route: `${Routes.ACCOUNTS_BALANCES_BLOCKCHAIN.route}?add=true`,
     },
     {
+      route: `${Routes.BALANCES_MANUAL.route}?add=true`,
       text: t('manual_balances.dialog.add.title'),
-      route: `${Routes.ACCOUNTS_BALANCES_MANUAL.route}?add=true`,
     },
     {
-      text: t('closed_trades.dialog.add.title'),
       route: `${Routes.HISTORY_TRADES.route}?add=true`,
+      text: t('closed_trades.dialog.add.title'),
     },
     {
-      text: t('asset_management.add_title'),
       route: `${Routes.ASSET_MANAGER.route}?add=true`,
+      text: t('asset_management.add_title'),
     },
     {
-      text: t('price_management.latest.add_title'),
       route: `${Routes.PRICE_MANAGER_LATEST.route}?add=true`,
+      text: t('price_management.latest.add_title'),
     },
     {
-      text: t('price_management.historic.add_title'),
       route: `${Routes.PRICE_MANAGER_HISTORIC.route}?add=true`,
+      text: t('price_management.historic.add_title'),
     },
-  ].map(item => ({ ...item, icon: 'add-circle-line' }));
+    {
+      route: `${Routes.ASSET_MANAGER_CEX_MAPPING.route}?add=true`,
+      text: t('asset_management.cex_mapping.add_title'),
+    },
+    {
+      route: `${Routes.TAG_MANAGER.route}?add=true`,
+      text: t('tag_manager.create_tag.title'),
+    },
+  ].map(item => ({ ...item, icon: 'lu-circle-plus' }));
 
   return filterItems(actionItems, keyword);
 }
 
 async function getAssets(keyword: string): Promise<SearchItemWithoutValue[]> {
-  const matches = await assetSearch(keyword, 5);
+  const matches = await assetSearch({
+    limit: 5,
+    value: keyword,
+  });
   const assetBalances = get(balances()) as AssetBalanceWithPrice[];
   const map: Record<string, string> = {};
-  for (const match of matches)
-    map[match.identifier] = match.symbol ?? match.name ?? '';
+  for (const match of matches) map[match.identifier] = match.symbol ?? match.name ?? '';
 
   const ids = matches.map(({ identifier }) => identifier);
 
@@ -282,13 +306,15 @@ async function getAssets(keyword: string): Promise<SearchItemWithoutValue[]> {
       const asset = balance.asset;
 
       return {
-        route: Routes.ASSETS.route.replace(
-          ':identifier',
-          encodeURIComponent(asset),
-        ),
-        texts: [t('common.asset'), map[asset] ?? ''],
-        price,
         asset,
+        price,
+        route: {
+          name: '/assets/[identifier]',
+          params: {
+            identifier: asset,
+          },
+        },
+        texts: [t('common.asset'), map[asset] ?? ''],
       };
     });
 }
@@ -303,9 +329,14 @@ function* transformLocations(): IterableIterator<SearchItemWithoutValue> {
 
     const total = locationBalances[identifier];
     yield {
-      route: Routes.LOCATIONS.route.replace(':identifier', location.identifier),
-      texts: [t('common.location'), location.name],
       location,
+      route: {
+        name: '/locations/[identifier]',
+        params: {
+          identifier: encodeURIComponent(location.identifier),
+        },
+      },
+      texts: [t('common.location'), location.name],
       total,
     } satisfies SearchItemWithoutValue;
   }
@@ -323,20 +354,21 @@ watchDebounced(
       return;
     }
 
-    const search = keyword.toLocaleLowerCase();
+    const search = keyword.toLocaleLowerCase().trim();
+
+    const staticData = [
+      ...getRoutes(search),
+      ...getExchanges(search),
+      ...getActions(search),
+      ...getLocations(search),
+    ].sort((a, b) => (b.matchedPoints ?? 0) - (a.matchedPoints ?? 0));
 
     set(
       visibleItems,
-      [
-        ...getRoutes(search),
-        ...getExchanges(search),
-        ...getActions(search),
-        ...(await getAssets(search)),
-        ...getLocations(search),
-      ].map((item, index) => ({
+      [...staticData, ...(await getAssets(search))].map((item, index) => ({
         ...item,
-        value: index,
         text: getItemText(item),
+        value: index,
       })),
     );
 
@@ -355,19 +387,22 @@ watch(open, (open) => {
   nextTick(() => {
     if (open) {
       setTimeout(() => {
-        get(input)?.$refs?.textInput?.focus?.();
+        get(input)?.focus?.();
       }, 100);
     }
-    set(selected, '');
+    set(selected, undefined);
     set(search, '');
   });
 });
 
-async function change(index: number) {
+function change(index?: number) {
+  if (!isDefined(index))
+    return;
+
   const item: SearchItem = get(visibleItems)[index];
   if (item) {
-    if (item.route)
-      await router.push(item.route);
+    if (item.route && get(router.currentRoute).fullPath !== item.route)
+      startPromise(router.push(item.route));
 
     item?.action?.();
     set(open, false);
@@ -380,10 +415,7 @@ onBeforeMount(async () => {
 
   window.addEventListener('keydown', (event) => {
     // Mac use Command, Others use Control
-    if (
-      ((get(isMac) && event.metaKey) || (!get(isMac) && event.ctrlKey))
-      && event.key === key
-    )
+    if (((get(isMac) && event.metaKey) || (!get(isMac) && event.ctrlKey)) && event.key === key)
       set(open, true);
   });
 });
@@ -395,7 +427,7 @@ onBeforeMount(async () => {
     max-width="800"
     content-class="mt-[16rem] !top-0 pb-2"
   >
-    <template #activator="{ on }">
+    <template #activator="{ attrs }">
       <MenuTooltipButton
         :tooltip="
           t('global_search.menu_tooltip', {
@@ -403,23 +435,23 @@ onBeforeMount(async () => {
             key,
           })
         "
-        v-on="on"
+        v-bind="attrs"
       >
-        <RuiIcon name="search-line" />
+        <RuiIcon name="lu-search" />
       </MenuTooltipButton>
     </template>
     <RuiCard
       variant="flat"
       no-padding
       rounded="sm"
-      class="[&>div:last-child]:overflow-hidden"
+      content-class="overflow-hidden"
     >
       <RuiAutoComplete
         ref="input"
         v-model="selected"
+        v-model:search-input="search"
         no-filter
         :no-data-text="t('global_search.no_actions')"
-        :search-input.sync="search"
         hide-details
         :loading="loading"
         :item-height="50"
@@ -429,7 +461,7 @@ onBeforeMount(async () => {
         label=""
         auto-select-first
         :placeholder="t('global_search.search_placeholder')"
-        @input="change($event)"
+        @update:model-value="change($event)"
       >
         <template #selection>
           <span />
@@ -453,7 +485,6 @@ onBeforeMount(async () => {
                 v-else-if="item.image"
                 class="icon-bg"
                 :src="item.image"
-                :alt="item.location.name"
                 contain
                 size="26px"
               />
@@ -481,7 +512,7 @@ onBeforeMount(async () => {
                     <RuiIcon
                       class="d-inline mx-2"
                       size="16"
-                      name="arrow-right-s-line"
+                      name="lu-chevron-right"
                     />
                   </div>
                 </div>

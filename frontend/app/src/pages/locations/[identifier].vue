@@ -1,4 +1,20 @@
 <script setup lang="ts">
+import { NoteLocation } from '@/types/notes';
+import { useLocations } from '@/composables/locations';
+import ClosedTrades from '@/components/history/trades/ClosedTrades.vue';
+import LocationAssets from '@/components/locations/LocationAssets.vue';
+import LocationValueRow from '@/components/locations/LocationValueRow.vue';
+import LocationIcon from '@/components/history/LocationIcon.vue';
+import TablePageLayout from '@/components/layout/TablePageLayout.vue';
+
+definePage({
+  meta: {
+    canNavigateBack: true,
+    noteLocation: NoteLocation.LOCATIONS,
+  },
+  props: true,
+});
+
 defineOptions({
   name: 'LocationBreakdown',
 });
@@ -34,7 +50,6 @@ const location = locationData(identifier);
       <LocationValueRow :identifier="identifier" />
       <LocationAssets :identifier="identifier" />
       <ClosedTrades :location-overview="identifier" />
-      <DepositsWithdrawalsContent :location-overview="identifier" />
     </div>
   </TablePageLayout>
 </template>

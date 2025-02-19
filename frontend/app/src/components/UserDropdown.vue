@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { useBreakpoint } from '@rotki/ui-library-compat';
+import { useConfirmStore } from '@/store/confirm';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { useSessionStore } from '@/store/session';
+import { usePrivacyMode } from '@/composables/privacy';
+import { useDarkMode } from '@/composables/dark-mode';
+import { useInterop } from '@/composables/electron-interop';
+import ThemeControl from '@/components/premium/ThemeControl.vue';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
 
 const { t } = useI18n();
 
@@ -7,7 +14,7 @@ const KEY_REMEMBER_PASSWORD = 'rotki.remember_password';
 
 const { logout } = useSessionStore();
 const { username } = storeToRefs(useSessionAuthStore());
-const { isPackaged, clearPassword } = useInterop();
+const { clearPassword, isPackaged } = useInterop();
 const { privacyModeIcon, togglePrivacyMode } = usePrivacyMode();
 const { isXs } = useBreakpoint();
 
@@ -16,10 +23,10 @@ const savedRememberPassword = useLocalStorage(KEY_REMEMBER_PASSWORD, null);
 const { show } = useConfirmStore();
 
 function showConfirmation() {
-  return show(
+  show(
     {
-      title: t('user_dropdown.confirmation.title'),
       message: t('user_dropdown.confirmation.message'),
+      title: t('user_dropdown.confirmation.title'),
       type: 'info',
     },
     async () => {
@@ -37,17 +44,17 @@ const { darkModeEnabled } = useDarkMode();
 <template>
   <div>
     <RuiMenu
-      id="user-dropdown"
-      menu-class="user-dropdown__menu min-w-[10rem] max-w-[22rem]"
+      data-cy="user-menu"
+      menu-class="min-w-[10rem] max-w-[22rem]"
       close-on-content-click
     >
-      <template #activator="{ on }">
+      <template #activator="{ attrs }">
         <MenuTooltipButton
           tooltip="Account"
-          class-name="user-dropdown"
-          v-on="on"
+          data-cy="user-menu-button"
+          v-bind="attrs"
         >
-          <RuiIcon name="account-circle-line" />
+          <RuiIcon name="lu-circle-user" />
         </MenuTooltipButton>
       </template>
       <div
@@ -55,22 +62,21 @@ const { darkModeEnabled } = useDarkMode();
         class="py-2"
       >
         <div
-          key="username"
-          class="py-3 user-username font-bold text-center"
+          data-cy="username"
+          class="py-3 font-bold text-center"
         >
           {{ username }}
         </div>
         <RuiDivider />
-        <RouterLink to="/settings/general">
+        <RouterLink :to="{ path: '/settings' }">
           <RuiButton
-            key="settings"
             variant="list"
-            class="user-dropdown__settings"
+            data-cy="settings-button"
           >
             <template #prepend>
               <RuiIcon
                 color="primary"
-                name="settings-4-line"
+                name="lu-settings"
               />
             </template>
             {{ t('user_dropdown.settings') }}
@@ -79,7 +85,7 @@ const { darkModeEnabled } = useDarkMode();
 
         <RuiButton
           v-if="isXs"
-          key="privacy-mode"
+          data-cy="privacy-mode-button"
           variant="list"
           @click="togglePrivacyMode()"
         >
@@ -91,26 +97,24 @@ const { darkModeEnabled } = useDarkMode();
           </template>
           {{ t('user_dropdown.change_privacy_mode.label') }}
         </RuiButton>
-
         <ThemeControl
           v-if="isXs"
           :dark-mode-enabled="darkModeEnabled"
           menu
+          data-cy="theme-control"
         >
           {{ t('user_dropdown.switch_theme') }}
         </ThemeControl>
-
         <RuiDivider />
         <RuiButton
-          key="logout"
           variant="list"
-          class="user-dropdown__logout"
+          data-cy="logout-button"
           @click="showConfirmation()"
         >
           <template #prepend>
             <RuiIcon
               color="primary"
-              name="logout-box-r-line"
+              name="lu-log-out"
             />
           </template>
           {{ t('user_dropdown.logout') }}

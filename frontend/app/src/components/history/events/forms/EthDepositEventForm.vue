@@ -1,152 +1,116 @@
 <script setup lang="ts">
-import { HistoryEventEntryType } from '@rotki/common/lib/history/events';
+import { Blockchain, HistoryEventEntryType } from '@rotki/common';
 import dayjs from 'dayjs';
 import { helpers, required, requiredIf } from '@vuelidate/validators';
-import { Blockchain } from '@rotki/common/lib/blockchain';
-import { isEmpty } from 'lodash-es';
+import { isEmpty } from 'es-toolkit/compat';
+import useVuelidate from '@vuelidate/core';
 import { toMessages } from '@/utils/validation';
-import HistoryEventAssetPriceForm from '@/components/history/events/forms/HistoryEventAssetPriceForm.vue';
 import { DateFormat } from '@/types/date-format';
-import type {
-  EthDepositEvent,
-  NewEthDepositEventPayload,
-} from '@/types/history/events';
+import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
+import { bigNumberifyFromRef } from '@/utils/bignumbers';
+import HistoryEventAssetPriceForm from '@/components/history/events/forms/HistoryEventAssetPriceForm.vue';
+import { useBlockchainStore } from '@/store/blockchain';
+import { useHistoryEventsForm } from '@/composables/history/events/form';
+import JsonInput from '@/components/inputs/JsonInput.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
+import AutoCompleteWithSearchSync from '@/components/inputs/AutoCompleteWithSearchSync.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
+import { useFormStateWatcher } from '@/composables/form';
+import type { EthDepositEvent, NewEthDepositEventPayload } from '@/types/history/events';
 
-const props = withDefaults(
-  defineProps<{
-    editableItem?: EthDepositEvent;
-    nextSequence?: string;
-    groupHeader?: EthDepositEvent;
-  }>(),
-  {
-    editableItem: undefined,
-    nextSequence: '',
-    groupHeader: undefined,
-  },
-);
+interface EthDepositEventFormProps {
+  editableItem?: EthDepositEvent;
+  nextSequence?: string;
+  groupHeader?: EthDepositEvent;
+}
+
+const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
+const props = withDefaults(defineProps<EthDepositEventFormProps>(), {
+  editableItem: undefined,
+  groupHeader: undefined,
+  nextSequence: '',
+});
 
 const { t } = useI18n();
 
 const { editableItem, groupHeader, nextSequence } = toRefs(props);
 
-const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
+const assetPriceForm = ref<InstanceType<typeof HistoryEventAssetPriceForm>>();
 
-const assetPriceForm: Ref<InstanceType<
-  typeof HistoryEventAssetPriceForm
-> | null> = ref(null);
-
-const txHash: Ref<string> = ref('');
-const eventIdentifier: Ref<string | undefined> = ref();
-const datetime: Ref<string> = ref('');
-const amount: Ref<string> = ref('');
-const usdValue: Ref<string> = ref('');
-const sequenceIndex: Ref<string> = ref('');
-const validatorIndex: Ref<string> = ref('');
-const depositor: Ref<string> = ref('');
-const extraData: Ref<object> = ref({});
+const txHash = ref<string>('');
+const eventIdentifier = ref<string>('');
+const datetime = ref<string>('');
+const amount = ref<string>('');
+const sequenceIndex = ref<string>('');
+const validatorIndex = ref<string>('');
+const depositor = ref<string>('');
+const extraData = ref<object>({});
 
 const errorMessages = ref<Record<string, string[]>>({});
 
 const rules = {
-  timestamp: { externalServerValidation: () => true },
-  txHash: {
-    required: helpers.withMessage(
-      t('transactions.events.form.tx_hash.validation.non_empty'),
-      required,
-    ),
-    isValid: helpers.withMessage(
-      t('transactions.events.form.tx_hash.validation.valid'),
-      (value: string) => isValidTxHash(value),
-    ),
+  amount: {
+    required: helpers.withMessage(t('transactions.events.form.amount.validation.non_empty'), required),
+  },
+  depositor: {
+    isValid: helpers.withMessage(t('transactions.events.form.depositor.validation.valid'), (value: string) =>
+      isValidEthAddress(value)),
+    required: helpers.withMessage(t('transactions.events.form.depositor.validation.non_empty'), required),
   },
   eventIdentifier: {
     required: helpers.withMessage(
-      t(
-        'transactions.events.form.event_identifier.validation.non_empty',
-      ),
+      t('transactions.events.form.event_identifier.validation.non_empty'),
       requiredIf(() => !!get(editableItem)),
     ),
   },
-  amount: {
-    required: helpers.withMessage(
-      t('transactions.events.form.amount.validation.non_empty'),
-      required,
-    ),
-  },
-  usdValue: {
-    required: helpers.withMessage(
-      t('transactions.events.form.fiat_value.validation.non_empty', {
-        currency: get(currencySymbol),
-      }),
-      required,
-    ),
-  },
   sequenceIndex: {
-    required: helpers.withMessage(
-      t(
-        'transactions.events.form.sequence_index.validation.non_empty',
-      ),
-      required,
-    ),
+    required: helpers.withMessage(t('transactions.events.form.sequence_index.validation.non_empty'), required),
   },
-
+  timestamp: { externalServerValidation: () => true },
+  txHash: {
+    isValid: helpers.withMessage(t('transactions.events.form.tx_hash.validation.valid'), (value: string) =>
+      isValidTxHash(value)),
+    required: helpers.withMessage(t('transactions.events.form.tx_hash.validation.non_empty'), required),
+  },
   validatorIndex: {
-    required: helpers.withMessage(
-      t(
-        'transactions.events.form.validator_index.validation.non_empty',
-      ),
-      required,
-    ),
-  },
-  depositor: {
-    required: helpers.withMessage(
-      t('transactions.events.form.depositor.validation.non_empty'),
-      required,
-    ),
-    isValid: helpers.withMessage(
-      t('transactions.events.form.depositor.validation.valid'),
-      (value: string) => isValidEthAddress(value),
-    ),
+    required: helpers.withMessage(t('transactions.events.form.validator_index.validation.non_empty'), required),
   },
 };
 
 const numericAmount = bigNumberifyFromRef(amount);
-const numericUsdValue = bigNumberifyFromRef(usdValue);
 
-const { setValidation, setSubmitFunc, saveHistoryEventHandler } = useHistoryEventsForm();
+const { saveHistoryEventHandler } = useHistoryEventsForm();
+const { getAddresses } = useBlockchainStore();
 
-const v$ = setValidation(
+const states = {
+  amount,
+  depositor,
+  eventIdentifier,
+  sequenceIndex,
+  timestamp: datetime,
+  txHash,
+  validatorIndex,
+};
+
+const v$ = useVuelidate(
   rules,
-  {
-    timestamp: datetime,
-    eventIdentifier,
-    txHash,
-    amount,
-    usdValue,
-    sequenceIndex,
-    validatorIndex,
-    depositor,
-  },
+  states,
   {
     $autoDirty: true,
     $externalResults: errorMessages,
   },
 );
 
+useFormStateWatcher(states, stateUpdated);
+
+const depositorSuggestions = computed(() => getAddresses(Blockchain.ETH));
+
 function reset() {
   set(sequenceIndex, get(nextSequence) || '0');
   set(txHash, '');
   set(eventIdentifier, null);
-  set(
-    datetime,
-    convertFromTimestamp(
-      dayjs().valueOf(),
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
+  set(datetime, convertFromTimestamp(dayjs().valueOf(), DateFormat.DateMonthYearHourMinuteSecond, true));
   set(amount, '0');
-  set(usdValue, '0');
   set(validatorIndex, '');
   set(depositor, '');
   set(extraData, {});
@@ -159,16 +123,8 @@ function applyEditableData(entry: EthDepositEvent) {
   set(sequenceIndex, entry.sequenceIndex?.toString() ?? '');
   set(txHash, entry.txHash);
   set(eventIdentifier, entry.eventIdentifier);
-  set(
-    datetime,
-    convertFromTimestamp(
-      entry.timestamp,
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
-  set(amount, entry.balance.amount.toFixed());
-  set(usdValue, entry.balance.usdValue.toFixed());
+  set(datetime, convertFromTimestamp(entry.timestamp, DateFormat.DateMonthYearHourMinuteSecond, true));
+  set(amount, entry.amount.toFixed());
   set(validatorIndex, entry.validatorIndex.toString());
   set(depositor, entry.locationLabel);
   set(extraData, entry.extraData || {});
@@ -180,15 +136,7 @@ function applyGroupHeaderData(entry: EthDepositEvent) {
   set(txHash, entry.txHash);
   set(validatorIndex, entry.validatorIndex.toString());
   set(depositor, entry.locationLabel ?? '');
-  set(
-    datetime,
-    convertFromTimestamp(
-      entry.timestamp,
-      DateFormat.DateMonthYearHourMinuteSecond,
-      true,
-    ),
-  );
-  set(usdValue, '0');
+  set(datetime, convertFromTimestamp(entry.timestamp, DateFormat.DateMonthYearHourMinuteSecond, true));
 }
 
 watch(errorMessages, (errors) => {
@@ -197,25 +145,21 @@ watch(errorMessages, (errors) => {
 });
 
 async function save(): Promise<boolean> {
-  const timestamp = convertToTimestamp(
-    get(datetime),
-    DateFormat.DateMonthYearHourMinuteSecond,
-    true,
-  );
+  if (!(await get(v$).$validate()))
+    return false;
+
+  const timestamp = convertToTimestamp(get(datetime), DateFormat.DateMonthYearHourMinuteSecond, true);
 
   const payload: NewEthDepositEventPayload = {
+    amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
+    depositor: get(depositor),
     entryType: HistoryEventEntryType.ETH_DEPOSIT_EVENT,
-    txHash: get(txHash),
     eventIdentifier: get(eventIdentifier) ?? null,
+    extraData: get(extraData) || null,
     sequenceIndex: get(sequenceIndex) || '0',
     timestamp,
-    balance: {
-      amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
-      usdValue: get(numericUsdValue).isNaN() ? Zero : get(numericUsdValue),
-    },
+    txHash: get(txHash),
     validatorIndex: parseInt(get(validatorIndex)),
-    depositor: get(depositor),
-    extraData: get(extraData) || null,
   };
 
   const edit = get(editableItem);
@@ -227,8 +171,6 @@ async function save(): Promise<boolean> {
     reset,
   );
 }
-
-setSubmitFunc(save);
 
 function checkPropsData() {
   const editable = get(editableItem);
@@ -245,13 +187,14 @@ function checkPropsData() {
 }
 
 watch([groupHeader, editableItem], checkPropsData);
+
 onMounted(() => {
   checkPropsData();
 });
 
-const { getAddresses } = useBlockchainStore();
-
-const depositorSuggestions = computed(() => getAddresses(Blockchain.ETH));
+defineExpose({
+  save,
+});
 </script>
 
 <template>
@@ -293,21 +236,19 @@ const depositorSuggestions = computed(() => getAddresses(Blockchain.ETH));
 
     <HistoryEventAssetPriceForm
       ref="assetPriceForm"
+      v-model:amount="amount"
       asset="ETH"
       :v$="v$"
       :datetime="datetime"
-      :amount.sync="amount"
-      :usd-value.sync="usdValue"
       disable-asset
     />
 
     <RuiDivider class="my-10" />
 
     <div class="grid md:grid-cols-2 gap-4">
-      <ComboboxWithCustomInput
+      <AutoCompleteWithSearchSync
         v-model="depositor"
         :items="depositorSuggestions"
-        outlined
         data-cy="depositor"
         :label="t('transactions.events.form.depositor.label')"
         :error-messages="toMessages(v$.depositor)"
